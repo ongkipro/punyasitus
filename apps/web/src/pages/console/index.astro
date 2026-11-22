@@ -1,0 +1,319 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  authorizeConsoleRequest,
+  DEFAULT_SECOND_FACTOR_WINDOW_MS,
+  type ConsoleRuntimeEnv,
+} from "@punyasitus/auth/platform/index";
+import type { CloudflareSendEmailBinding } from "@punyasitus/core/email/index";
+import {
+  queryPlatformAuditPage,
+  readPlatformOverviewSummary,
+  type PlatformHealthStatus,
+} from "@punyasitus/db/platform";
+import ConsoleLayout from "../../layouts/ConsoleLayout.astro";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const runtimeEnv = env as typeof env & {
+  readonly AUTH_SECRET?: string;
+  readonly CONSOLE_AUTH_SECRET?: string;
+};
+const consoleEnv: ConsoleRuntimeEnv = {
+  APP_ENV: runtimeEnv.APP_ENV,
+  PLATFORM_DOMAIN: runtimeEnv.PLATFORM_DOMAIN,
+  PLATFORM_DB: runtimeEnv.PLATFORM_DB,
+  BACKUP_BUCKET: runtimeEnv.BACKUP_BUCKET,
+  AUTH_SECRET: runtimeEnv.AUTH_SECRET,
+  CONSOLE_AUTH_SECRET: runtimeEnv.CONSOLE_AUTH_SECRET,
+  EMAIL: runtimeEnv.EMAIL as unknown as CloudflareSendEmailBinding | undefined,
+};
+
+const authz = await authorizeConsoleRequest(
+  Astro.request,
+  consoleEnv,
+  { action: "console.overview.view", requireStepUp: false },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>Akses Console Operasional Dibatasi</title></head><body><main><h1>Akses Console Operasional Dibatasi</h1><p>Halaman ini hanya tersedia bagi operator platform terverifikasi di host console.</p></main></body></html>`,
+    {
+      status: authz.response.status,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    },
+  );
+}
+
+const { actor, platformDb, nowMs, host } = authz.ctx;
+const [overview, recentAudit] = await Promise.all([
+  readPlatformOverviewSummary(platformDb, {
+    backupBucket: consoleEnv.BACKUP_BUCKET ?? null,
+    nowMs,
+  }),
+  queryPlatformAuditPage(platformDb, { limit: 6 }),
+]);
+
+const stepUpFresh =
+  actor.twoFactorVerifiedAtMs !== null &&
+  nowMs - actor.twoFactorVerifiedAtMs <= DEFAULT_SECOND_FACTOR_WINDOW_MS;
+
+function healthBadgeMeta(status: PlatformHealthStatus): { label: string; cls: string } {
+  switch (status) {
+    case "healthy":
+      return {
+        label: "Sehat (healthy)",
+        cls: "border-success-border bg-success-soft text-success",
+      };
+    case "degraded":
+      return {
+        label: "Menurun (degraded)",
+        cls: "border-destructive-border bg-destructive-soft text-destructive",
+      };
+    case "stale":
+      return {
+        label: "Usang (stale)",
+        cls: "border-warning-border bg-warning-soft text-warning",
+      };
+    case "unknown":
+      return {
+        label: "Belum Terukur (unknown)",
+        cls: "border-border bg-secondary text-secondary-foreground",
+      };
+  }
+}
+
+const healthBadge = healthBadgeMeta(overview.healthStatus);
+const navLinks = [
+  { href: "/console", label: "Ringkasan", current: true },
+  { href: "/console/operators", label: "Operator", current: false },
+  { href: "/console/audit", label: "Audit Log", current: false },
+  { href: "/console/health", label: "Kesehatan", current: false },
+  { href: "/console/settings", label: "Pengaturan", current: false },
+];
+---
+
+<ConsoleLayout
+  title="Ringkasan Operasional"
+  workspaceSubtitle={host.host}
+  activeNavId="home"
+  basePath="/console"
+  userDisplayName={actor.grant.name ?? actor.grant.email ?? "Operator Platform"}
+  userRoleLabel={actor.grant.role === "platform_support" ? "Dukungan Platform" : "Superadmin Platform"}
+>
+  <div class="space-y-5" data-testid="console-overview-page">
+    <!-- Explicit Platform Context Banner (visible across 360/768/1440px) -->
+    <section
+      data-testid="console-context-banner"
+      aria-label="Konteks akses platform"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning-border bg-warning-soft px-4 py-3 text-xs text-warning md:text-sm"
+    >
+      <p class="font-medium">
+        Console Operasional Platform — Akses istimewa — bukan penyamaran akun tenant
+      </p>
+      <div class="flex flex-wrap items-center gap-2">
+        <span class="rounded border border-warning-border bg-card px-2 py-0.5 text-xs font-medium text-foreground">
+          {stepUpFresh ? "2FA Step-Up Aktif (<10m)" : "2FA Perlu Verifikasi Ulang"}
+        </span>
+      </div>
+    </section>
+
+    <!-- Console Section Navigation -->
+    <nav
+      aria-label="Navigasi modul console"
+      data-testid="console-section-nav"
+      class="flex flex-wrap items-center gap-2 border-b border-border pb-3"
+    >
+      {
+        navLinks.map((link) => (
+          <a
+            href={link.href}
+            aria-current={link.current ? "page" : undefined}
+            class:list={[
+              "inline-flex min-h-11 items-center rounded-md border px-3.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9",
+              link.current
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card text-foreground hover:bg-muted",
+            ]}
+          >
+            {link.label}
+          </a>
+        ))
+      }
+    </nav>
+
+    <!-- Page Header -->
+    <header class="flex flex-wrap items-start justify-between gap-3">
+      <div class="space-y-1">
+        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+          Ringkasan Operasional Platform
+        </h1>
+        <p class="text-sm text-muted-foreground">
+          Ringkasan metadata control-plane <code class="font-mono">PLATFORM_DB</code> tanpa akses isi konten atau pesan pelanggan tenant.
+        </p>
+      </div>
+      <span
+        data-testid="overview-health-badge"
+        class:list={[
+          "inline-flex h-7 items-center rounded-md border px-2.5 text-xs font-medium",
+          healthBadge.cls,
+        ]}
+      >
+        Kesehatan: {healthBadge.label}
+      </span>
+    </header>
+
+    <!-- Exceptions & Operational Metrics First (PLAN §13, DESIGN.md §3.3) -->
+    <section aria-label="Metrik operasional utama" class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="rounded-lg border border-border bg-card p-4">
+        <p class="text-xs font-medium text-muted-foreground">Total Tenant Terdaftar</p>
+        <p class="mt-1 text-2xl font-semibold tabular-nums text-foreground" data-testid="overview-total-tenants">
+          {overview.totalTenants}
+        </p>
+        <p class="mt-1 text-xs text-muted-foreground tabular-nums">
+          Aktif: {overview.tenantsByStatus.active ?? 0} • Trial: {overview.tenantsByStatus.trial ?? 0} • Ditangguhkan: {overview.tenantsByStatus.suspended ?? 0}
+        </p>
+      </div>
+
+      <div class="rounded-lg border border-border bg-card p-4">
+        <p class="text-xs font-medium text-muted-foreground">Antrean Gagal / Dead-Letter</p>
+        <p class="mt-1 text-2xl font-semibold tabular-nums text-foreground">
+          {
+            overview.failedJobsCount === null || overview.deadLetterJobsCount === null
+              ? "Belum terukur"
+              : `${overview.failedJobsCount} / ${overview.deadLetterJobsCount}`
+          }
+        </p>
+        <p class="mt-1 text-xs text-muted-foreground">
+          Data usang/kosong tidak dianggap sehat
+        </p>
+      </div>
+
+      <div class="rounded-lg border border-border bg-card p-4">
+        <p class="text-xs font-medium text-muted-foreground">Domain Kustom Terkendala</p>
+        <p class="mt-1 text-2xl font-semibold tabular-nums text-foreground">
+          {overview.stuckDomainsCount === null ? "Belum terukur" : overview.stuckDomainsCount}
+        </p>
+        <p class="mt-1 text-xs text-muted-foreground">
+          Laporan penyalahgunaan terbuka: {overview.openAbuseReportsCount ?? "Belum terukur"}
+        </p>
+      </div>
+
+      <div class="rounded-lg border border-border bg-card p-4">
+        <p class="text-xs font-medium text-muted-foreground">Operator Platform Aktif</p>
+        <p class="mt-1 text-2xl font-semibold tabular-nums text-foreground" data-testid="overview-active-operators">
+          {overview.activeOperatorsCount}
+        </p>
+        <p class="mt-1 text-xs text-muted-foreground tabular-nums">
+          Dicabut: {overview.revokedOperatorsCount} • Audit 24j: {overview.auditEntriesLast24h}
+        </p>
+      </div>
+    </section>
+
+    <!-- Quick Module Links -->
+    <section aria-label="Modul operasional platform" class="grid grid-cols-1 gap-3 md:grid-cols-2">
+      <a
+        href="/console/operators"
+        class="flex min-h-11 flex-col justify-between gap-2 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <div>
+          <h2 class="text-base font-semibold text-foreground">Manajemen Operator Platform</h2>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Berikan atau cabut peran superadmin/dukungan dengan step-up 2FA, alasan audit wajib, dan perlindungan atomik operator terakhir.
+          </p>
+        </div>
+        <span class="text-xs font-medium text-primary">Buka Manajemen Operator &rarr;</span>
+      </a>
+
+      <a
+        href="/console/audit"
+        class="flex min-h-11 flex-col justify-between gap-2 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <div>
+          <h2 class="text-base font-semibold text-foreground">Penjelajah Audit Log (Hanya Baca)</h2>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Telusuri riwayat tindakan istimewa append-only yang tersensor otomatis dari token, kata sandi, dan PII.
+          </p>
+        </div>
+        <span class="text-xs font-medium text-primary">Buka Audit Log &rarr;</span>
+      </a>
+
+      <a
+        href="/console/health"
+        class="flex min-h-11 flex-col justify-between gap-2 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <div>
+          <h2 class="text-base font-semibold text-foreground">Kesehatan & Status Dependensi</h2>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Pantau kesiapan PLATFORM_DB, antrean cron, cadangan harian, uji pemulihan, dan domain kustom secara jujur (healthy/degraded/stale/unknown).
+          </p>
+        </div>
+        <span class="text-xs font-medium text-primary">Buka Status Kesehatan &rarr;</span>
+      </a>
+
+      <a
+        href="/console/settings"
+        class="flex min-h-11 flex-col justify-between gap-2 rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted/50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <div>
+          <h2 class="text-base font-semibold text-foreground">Pengaturan Publik Platform</h2>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Kelola WhatsApp penjualan E.164, email dukungan, tautan Syarat &amp; Privasi HTTPS, serta harga langganan teraudit.
+          </p>
+        </div>
+        <span class="text-xs font-medium text-primary">Buka Pengaturan Platform &rarr;</span>
+      </a>
+    </section>
+
+    <!-- Recent Redacted Audit Preview -->
+    <section aria-label="Aktivitas audit terbaru" class="rounded-lg border border-border bg-card p-4">
+      <div class="flex flex-wrap items-center justify-between gap-2 border-b border-border pb-3">
+        <div>
+          <h2 class="text-base font-semibold text-foreground">Aktivitas Audit Terbaru</h2>
+          <p class="text-xs text-muted-foreground">6 catatan tersensor terbaru di <code class="font-mono">platform_audit</code></p>
+        </div>
+        <a
+          href="/console/audit"
+          class="inline-flex min-h-11 items-center rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted md:min-h-8"
+        >
+          Lihat semua log audit
+        </a>
+      </div>
+
+      {
+        recentAudit.items.length === 0 ? (
+          <p class="pt-4 text-sm text-muted-foreground">Belum ada catatan audit terbaru.</p>
+        ) : (
+          <ul class="divide-y divide-border pt-2">
+            {recentAudit.items.map((item) => (
+              <li class="flex flex-wrap items-start justify-between gap-2 py-2.5 text-xs">
+                <div class="min-w-0 space-y-0.5">
+                  <p class="font-mono font-semibold text-foreground">{item.action}</p>
+                  <p class="break-words text-muted-foreground">
+                    {item.reason ?? `${item.targetType} / ${item.targetId}`}
+                  </p>
+                </div>
+                <span class="shrink-0 font-mono text-muted-foreground tabular-nums">
+                  {item.outcome}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )
+      }
+    </section>
+  </div>
+</ConsoleLayout>

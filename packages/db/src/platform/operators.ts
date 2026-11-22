@@ -50,12 +50,70 @@ export class PlatformOperatorError extends Error {
   }
 }
 
+export const PLATFORM_OPERATOR_ROLES = [
+  "platform_superadmin",
+  "platform_support",
+] as const;
+export type PlatformOperatorRole = (typeof PLATFORM_OPERATOR_ROLES)[number];
+
+export function isValidPlatformOperatorRole(raw: unknown): raw is PlatformOperatorRole {
+  return (
+    typeof raw === "string" &&
+    (PLATFORM_OPERATOR_ROLES as readonly string[]).includes(raw)
+  );
+}
+
+interface TableInfoColumnRow {
+  readonly name: string;
+}
+
+async function hasOperatorRoleColumns(platformDb: D1Database): Promise<boolean> {
+  try {
+    const info = await platformDb
+      .prepare("PRAGMA table_info(platform_operators)")
+      .all<TableInfoColumnRow>();
+    const names = new Set((info.results ?? []).map((r) => r.name));
+    return names.has("role") && names.has("version");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Idempotently applies migration `0005_platform_operator_roles` in local/test runtimes
+ * without altering `PLATFORM_MIGRATIONS` (preserving TASK-001/049/067 checksums).
+ */
+export async function ensurePlatformOperatorRolesSchema(
+  platformDb: D1Database,
+): Promise<void> {
+  const info = await platformDb
+    .prepare("PRAGMA table_info(platform_operators)")
+    .all<TableInfoColumnRow>();
+  const existing = new Set((info.results ?? []).map((r) => r.name));
+  if (existing.size === 0) return;
+
+  if (!existing.has("role")) {
+    await platformDb
+      .prepare(
+        "ALTER TABLE platform_operators ADD COLUMN role TEXT NOT NULL DEFAULT 'platform_superadmin' CHECK (role IN ('platform_superadmin', 'platform_support'))",
+      )
+      .run();
+  }
+  if (!existing.has("version")) {
+    await platformDb
+      .prepare("ALTER TABLE platform_operators ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+      .run();
+  }
+}
+
 export interface PlatformOperatorRecord {
   readonly userId: string;
   readonly email: string | null;
   readonly name: string | null;
   readonly emailVerified: boolean;
   readonly twoFactorEnabled: boolean;
+  readonly role: PlatformOperatorRole;
+  readonly version: number;
   readonly grantedBy: string | null;
   readonly reason: string;
   readonly grantedAt: number;
@@ -80,7 +138,9 @@ export interface BootstrapPlatformOperatorInput {
 
 export interface GrantPlatformOperatorInput {
   readonly actorUserId: string;
-  readonly targetUserId: string;
+  readonly targetUserId?: string;
+  readonly targetEmail?: string;
+  readonly role?: PlatformOperatorRole;
   readonly reason: string;
   readonly requestId?: string;
   readonly nowMs?: number;
@@ -105,6 +165,8 @@ interface OperatorJoinedRow {
   readonly name: string | null;
   readonly email_verified: number;
   readonly two_factor_enabled: number;
+  readonly role?: string | null;
+  readonly version?: number | null;
   readonly granted_by: string | null;
   readonly reason: string;
   readonly granted_at: number;
@@ -122,12 +184,17 @@ interface UserLookupRow {
 }
 
 function mapOperatorRow(row: OperatorJoinedRow): PlatformOperatorRecord {
+  const role: PlatformOperatorRole = isValidPlatformOperatorRole(row.role)
+    ? row.role
+    : "platform_superadmin";
   return {
     userId: row.user_id,
     email: row.email,
     name: row.name,
     emailVerified: row.email_verified === 1,
     twoFactorEnabled: row.two_factor_enabled === 1,
+    role,
+    version: typeof row.version === "number" && Number.isFinite(row.version) ? row.version : 1,
     grantedBy: row.granted_by,
     reason: row.reason,
     grantedAt: row.granted_at,
@@ -193,6 +260,9 @@ export async function getActivePlatformOperator(
   const cleanUserId = userId.trim();
   if (!cleanUserId) return null;
 
+  const hasRoles = await hasOperatorRoleColumns(platformDb);
+  const roleSelect = hasRoles ? "po.role, po.version," : "";
+
   const row = await platformDb
     .prepare(
       `
@@ -202,6 +272,7 @@ export async function getActivePlatformOperator(
         u.name,
         u.email_verified,
         u.two_factor_enabled,
+        ${roleSelect}
         po.granted_by,
         po.reason,
         po.granted_at,
@@ -230,6 +301,9 @@ export async function getPlatformOperatorGrant(
   const cleanUserId = userId.trim();
   if (!cleanUserId) return null;
 
+  const hasRoles = await hasOperatorRoleColumns(platformDb);
+  const roleSelect = hasRoles ? "po.role, po.version," : "";
+
   const row = await platformDb
     .prepare(
       `
@@ -239,6 +313,7 @@ export async function getPlatformOperatorGrant(
         u.name,
         u.email_verified,
         u.two_factor_enabled,
+        ${roleSelect}
         po.granted_by,
         po.reason,
         po.granted_at,
@@ -267,6 +342,8 @@ export async function listPlatformOperators(
   const includeRevoked = options.includeRevoked ?? true;
   const boundedLimit = Math.max(1, Math.min(100, Math.trunc(options.limit ?? 50)));
   const whereClause = includeRevoked ? "" : "WHERE po.revoked_at IS NULL";
+  const hasRoles = await hasOperatorRoleColumns(platformDb);
+  const roleSelect = hasRoles ? "po.role, po.version," : "";
 
   const result = await platformDb
     .prepare(
@@ -277,6 +354,7 @@ export async function listPlatformOperators(
         u.name,
         u.email_verified,
         u.two_factor_enabled,
+        ${roleSelect}
         po.granted_by,
         po.reason,
         po.granted_at,
@@ -463,12 +541,22 @@ export async function grantPlatformOperator(
   input: GrantPlatformOperatorInput,
 ): Promise<PlatformOperatorMutationResult> {
   const actorUserId = input.actorUserId.trim();
-  const targetUserId = input.targetUserId.trim();
-  if (!actorUserId || !targetUserId) {
+  const rawTargetUserId = input.targetUserId?.trim() ?? "";
+  const rawTargetEmail = input.targetEmail?.trim().toLowerCase() ?? "";
+  if (!actorUserId || (!rawTargetUserId && !rawTargetEmail)) {
     throw new PlatformOperatorError(
       422,
       "VALIDATION_ERROR",
-      "Both actorUserId and targetUserId are required.",
+      "Both actorUserId and either targetUserId or targetEmail are required.",
+    );
+  }
+
+  const assignedRole: PlatformOperatorRole = input.role ?? "platform_superadmin";
+  if (!isValidPlatformOperatorRole(assignedRole)) {
+    throw new PlatformOperatorError(
+      422,
+      "VALIDATION_ERROR",
+      `Unsupported platform operator role "${String(input.role)}".`,
     );
   }
 
@@ -484,10 +572,14 @@ export async function grantPlatformOperator(
     );
   }
 
-  const targetUser = await lookupUserByIdOrEmail(platformDb, { userId: targetUserId });
+  const targetUser = await lookupUserByIdOrEmail(platformDb, {
+    userId: rawTargetUserId || undefined,
+    email: rawTargetEmail || undefined,
+  });
   if (!targetUser) {
     throw new PlatformOperatorError(404, "USER_NOT_FOUND", "Target user account was not found.");
   }
+  const targetUserId = targetUser.id;
   if (targetUser.email_verified !== 1) {
     throw new PlatformOperatorError(
       403,
@@ -505,41 +597,81 @@ export async function grantPlatformOperator(
     );
   }
 
-  const upsertSql = `
-    INSERT INTO platform_operators (
-      user_id, granted_by, reason, granted_at, revoked_at, revoked_by, revoke_reason
-    )
-    SELECT ?, ?, ?, ?, NULL, NULL, NULL
-    WHERE EXISTS (
-      SELECT 1 FROM platform_operators WHERE user_id = ? AND revoked_at IS NULL
-    )
-      AND EXISTS (
-        SELECT 1 FROM users WHERE id = ? AND email_verified = 1
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM platform_operators WHERE user_id = ? AND revoked_at IS NULL
-      )
-    ON CONFLICT(user_id) DO UPDATE SET
-      granted_by = excluded.granted_by,
-      reason = excluded.reason,
-      granted_at = excluded.granted_at,
-      revoked_at = NULL,
-      revoked_by = NULL,
-      revoke_reason = NULL
-    WHERE platform_operators.revoked_at IS NOT NULL
-  `;
-
-  const upsertStmt = platformDb
-    .prepare(upsertSql)
-    .bind(
-      targetUserId,
-      actorUserId,
-      cleanReason,
-      nowMs,
-      actorUserId,
-      targetUserId,
-      targetUserId,
-    );
+  const hasRoles = await hasOperatorRoleColumns(platformDb);
+  const upsertStmt = hasRoles
+    ? platformDb
+        .prepare(
+          `
+          INSERT INTO platform_operators (
+            user_id, role, version, granted_by, reason, granted_at, revoked_at, revoked_by, revoke_reason
+          )
+          SELECT ?, ?, 1, ?, ?, ?, NULL, NULL, NULL
+          WHERE EXISTS (
+            SELECT 1 FROM platform_operators WHERE user_id = ? AND revoked_at IS NULL
+          )
+            AND EXISTS (
+              SELECT 1 FROM users WHERE id = ? AND email_verified = 1
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM platform_operators WHERE user_id = ? AND revoked_at IS NULL
+            )
+          ON CONFLICT(user_id) DO UPDATE SET
+            role = excluded.role,
+            version = platform_operators.version + 1,
+            granted_by = excluded.granted_by,
+            reason = excluded.reason,
+            granted_at = excluded.granted_at,
+            revoked_at = NULL,
+            revoked_by = NULL,
+            revoke_reason = NULL
+          WHERE platform_operators.revoked_at IS NOT NULL
+        `,
+        )
+        .bind(
+          targetUserId,
+          assignedRole,
+          actorUserId,
+          cleanReason,
+          nowMs,
+          actorUserId,
+          targetUserId,
+          targetUserId,
+        )
+    : platformDb
+        .prepare(
+          `
+          INSERT INTO platform_operators (
+            user_id, granted_by, reason, granted_at, revoked_at, revoked_by, revoke_reason
+          )
+          SELECT ?, ?, ?, ?, NULL, NULL, NULL
+          WHERE EXISTS (
+            SELECT 1 FROM platform_operators WHERE user_id = ? AND revoked_at IS NULL
+          )
+            AND EXISTS (
+              SELECT 1 FROM users WHERE id = ? AND email_verified = 1
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM platform_operators WHERE user_id = ? AND revoked_at IS NULL
+            )
+          ON CONFLICT(user_id) DO UPDATE SET
+            granted_by = excluded.granted_by,
+            reason = excluded.reason,
+            granted_at = excluded.granted_at,
+            revoked_at = NULL,
+            revoked_by = NULL,
+            revoke_reason = NULL
+          WHERE platform_operators.revoked_at IS NOT NULL
+        `,
+        )
+        .bind(
+          targetUserId,
+          actorUserId,
+          cleanReason,
+          nowMs,
+          actorUserId,
+          targetUserId,
+          targetUserId,
+        );
 
   const { statement: auditStmt, entry: auditEntry } = buildPlatformAuditStatement(
     platformDb,
@@ -555,6 +687,7 @@ export async function grantPlatformOperator(
       requestId: input.requestId ?? null,
       metadata: {
         reactivated: existingGrant !== null,
+        role: assignedRole,
       },
       createdAtMs: nowMs,
     },
@@ -655,24 +788,51 @@ export async function revokePlatformOperator(
     );
   }
 
-  const conditionalRevokeStmt = platformDb
-    .prepare(
-      `
-      UPDATE platform_operators
-      SET revoked_at = ?, revoked_by = ?, revoke_reason = ?
-      WHERE user_id = ?
-        AND revoked_at IS NULL
-        AND EXISTS (
-          SELECT 1 FROM platform_operators
-          WHERE user_id = ? AND revoked_at IS NULL
+  const hasRoles = await hasOperatorRoleColumns(platformDb);
+  const conditionalRevokeStmt = hasRoles
+    ? platformDb
+        .prepare(
+          `
+          UPDATE platform_operators
+          SET revoked_at = ?, revoked_by = ?, revoke_reason = ?, version = version + 1
+          WHERE user_id = ?
+            AND revoked_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM platform_operators
+              WHERE user_id = ? AND revoked_at IS NULL
+            )
+            AND (
+              SELECT COUNT(*) FROM platform_operators
+              WHERE revoked_at IS NULL
+            ) > 1
+            AND (
+              role != 'platform_superadmin'
+              OR (
+                SELECT COUNT(*) FROM platform_operators
+                WHERE revoked_at IS NULL AND role = 'platform_superadmin'
+              ) > 1
+            )
+          `,
         )
-        AND (
-          SELECT COUNT(*) FROM platform_operators
-          WHERE revoked_at IS NULL
-        ) > 1
-      `,
-    )
-    .bind(nowMs, actorUserId, cleanReason, targetUserId, actorUserId);
+        .bind(nowMs, actorUserId, cleanReason, targetUserId, actorUserId)
+    : platformDb
+        .prepare(
+          `
+          UPDATE platform_operators
+          SET revoked_at = ?, revoked_by = ?, revoke_reason = ?
+          WHERE user_id = ?
+            AND revoked_at IS NULL
+            AND EXISTS (
+              SELECT 1 FROM platform_operators
+              WHERE user_id = ? AND revoked_at IS NULL
+            )
+            AND (
+              SELECT COUNT(*) FROM platform_operators
+              WHERE revoked_at IS NULL
+            ) > 1
+          `,
+        )
+        .bind(nowMs, actorUserId, cleanReason, targetUserId, actorUserId);
 
   const { statement: auditStmt, entry: auditEntry } = buildPlatformAuditStatement(
     platformDb,
