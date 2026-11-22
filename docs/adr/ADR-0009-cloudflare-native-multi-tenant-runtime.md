@@ -1,0 +1,69 @@
+# ADR-0009: Cloudflare-Native Multi-Tenant Runtime (Aligned with adsbook.id)
+
+- **Status:** Accepted (owner decision 2026-11-18: "oke setuju samakan dengan adsbook untuk cloudflare saas", DEC-036)
+- **Date:** 2026-11-17 (accepted and finalized 2026-11-18)
+- **Author:** Specification review
+- **Deciders:** Paduka Ongki
+- **Supersedes:** DEC-005 hosting part (Vultr VPS + self-hosted Coolify), ADR-0006 item 1 (Vultr/Coolify execution baseline) and PostgreSQL-specific persistence notes, ADR-0007 Node adapter and `apps/jobs` Node process, DEC-011 Node ffmpeg worker, DEC-024 "Vultr region" wording. Keeps ADR-0006 items 2-4 (authoritative host check, fail-closed 503, trusted theme registry, host-derived public forms), ADR-0007 single-app surface split, DEC-018 separate registrable domains, DEC-035 merged product decisions.
+- **Evidence:** `punyasitus-docs/docs/research/2026-11-17-cloudflare-saas-runtime.md`; proven production architecture of `adsbook.id` (`~/Projects/adsbook.id-docs/docs/architecture/MULTI-TENANT-DESIGN.md`, verified 2026-11-18); official Cloudflare documentation for Cloudflare for SaaS, D1, SQLite Durable Objects, Images, Queues and Containers.
+
+## 1. Context
+
+On 2026-11-17 Paduka Ongki restarted PunyaSitus from zero (DEC-033) and asked to run the entire multi-tenant platform on Cloudflare around Cloudflare for SaaS. On 2026-11-18 Paduka confirmed adopting the exact Cloudflare multi-tenant architecture proven in `adsbook.id`: **100% Cloudflare database and compute without Supabase or external PostgreSQL** (`PLATFORM_DB` D1 control plane + per-tenant `TenantStore` SQLite Durable Object), **Cloudflare Images + on-demand Cloudflare Containers (`ffmpeg`)** for media, and **`shadcn/ui` `base-nova` (`@base-ui/react`)** for admin surfaces.
+
+Key platform facts verified from official documentation and `adsbook.id` production measurements:
+
+1. **Cloudflare for SaaS (non-Enterprise):** 100 custom hostnames included, USD 0.10 per extra hostname/month up to 50,000; every custom hostname (including `pending` and `moved`) counts toward billing until `DELETE`d; wildcard custom hostnames, `request.cf.hostMetadata` and fixed-IP apex proxying are Enterprise-only.
+2. **Worker as fallback origin:** An originless proxied record (`AAAA fallback 100::`) on the dedicated SaaS zone (`situsku.click`) plus Worker route `*/*` (and an explicit route for `cname.situsku.click/*` for O2O customers on Cloudflare) sends all tenant traffic to one Worker (`punyasitus-web`). HTTP DCV paths (`/.well-known/pki-validation/*`, `/.well-known/acme-challenge/*`) must pass through untouched before any pending/unknown host rejection so 90-day SSL issuance and renewal succeed.
+3. **Database limits & physical isolation:** A single D1 database has a hard 10 GB cap and no PostgreSQL RLS. However, SQLite-backed Durable Objects provide **10 GB per object (per tenant)**, single-threaded synchronous `ctx.storage.transactionSync(fn)` transactions, 30-day Point-in-Time Recovery (PITR) bookmarks, and `locationHint: "apac-se"`. Pairing one `PLATFORM_DB` (D1, 10 GB) for cross-tenant control-plane records with one `TenantStore` Durable Object per tenant removes the 10 GB shared bottleneck and gives physical database isolation per website.
+4. **Media & PDF on Workers:** Cloudflare Images binding accepts PNG, JPEG, GIF, WebP, HEIC and TIFF up to 20 MB per `.input()` call (AVIF input is Enterprise-only; BMP is unsupported). Workers isolates cannot run native `ffmpeg`, and Media Transformations only accepts MP4 H.264 up to 60 s output; **Cloudflare Containers** (GA on Workers Paid, scale-to-zero, 25 GiB-hours RAM & 375 vCPU-min included/month) runs a bounded `ffmpeg` container on demand when a tenant uploads MOV/WebM. Numbered PDF receipts (`REQ-081`) are generated in pure JS (`pdf-lib`) inside the Worker and stored immutably in R2.
+5. **AutoLaris egress:** AutoLaris production whitelists at most 5 static egress IPs, while Workers egress IPs are shared. A tiny stateless static-IP HTTP relay (or written vendor alternative) handles outbound AutoLaris H2H calls only.
+
+## 2. Decision
+
+### A. Two-Zone Edge & Host Routing (adsbook.id pattern)
+
+- **Account hygiene:** Every Cloudflare resource is prefixed `punyasitus-*` (`punyasitus-web`, `punyasitus-platform`, `punyasitus-media`, `punyasitus-backup`, `punyasitus-jobs`) and never reads, binds or modifies resources belonging to other projects (`adsbook-*`, etc.) on the same Cloudflare account.
+- **Platform zone (`punyasitus.com`):** Serves `punyasitus.com` (`www` -> 308 apex, marketing site `REQ-087`), `app.punyasitus.com` (tenant dashboard `/dashboard/{handle}`, agency portal `/agency`, affiliate portal `/affiliate`, `/auth`, `/account`, `/api`, and `/mcp`), and `console.punyasitus.com` (superadmin console `REQ-049`). Connected to `punyasitus-web` via Workers Custom Domains / routes.
+- **SaaS zone (`situsku.click`, verified against Indonesian ISP Trust+ blocklists before launch; `.my.id` fallback if blocked):** Cloudflare for SaaS enabled here only. DNS records: proxied `AAAA @ 100::`, `AAAA * 100::`, `AAAA fallback 100::` (fallback origin), and `CNAME cname -> fallback.situsku.click` (customer CNAME target). Worker routes: `*/*` and `cname.situsku.click/*` -> `punyasitus-web`.
+- **Step 0 — Certificate DCV pass-through:** Before host classification, `/.well-known/pki-validation/*` and `/.well-known/acme-challenge/*` pass through unmodified (`return fetch(request)`) so pending custom hostnames complete HTTP DCV issuance and renewal.
+- **Step 1 & 2 — Authoritative `Host` resolution:** Never read KV or client headers (`X-Forwarded-Host`, `X-Tenant-ID`). Resolve tenant hosts from `PLATFORM_DB` (`tenant_hosts JOIN tenants`), with an optional in-isolate memory cache of **5 seconds** for active hosts only and a **60-second** quarantine on moved/revoked hosts (`cache_version` bumped on every status, domain or publish change).
+- **Custom hostname rules:** Refuse the zone name, platform domains, reserved labels (`cname`, `fallback`, `www`, `mail`, etc.) and hostnames >64 chars (Error 1469). Create custom hostname **before** customer saves an orange-cloud CNAME (avoids O2O Error 1014); instruct O2O customers to use SSL `Full` or `Full (strict)`. Activate routing only when `status == "active"` and `ssl.status == "active"` and DNS matches; promote to primary only after an HTTPS tenant-marker probe succeeds. Reap stale `pending`/`failed`/`moved` hostnames after 7 days via `DELETE`.
+
+### B. Compute, Background Jobs & Housekeeping
+
+- **Single Astro Worker (`apps/web`):** `@astrojs/cloudflare` on Workers (`output: "server"`, `session: false` so Astro does not demand a KV session namespace; `nodejs_compat` enabled), exporting the default fetch handler, Queue consumer, Cron `scheduled` handler, `TenantStore` Durable Object class, and `VideoTranscoder` Container class. `workers.dev` and preview URLs disabled or returning 404 in production.
+- **Queues + Cron + Per-Tenant Alarms:** Cloudflare Queues (`punyasitus-jobs`) handles async tasks (domain reconciliation, AutoLaris Advice checks, outbound transactional emails via Cloudflare Email Service `env.EMAIL.send()`, media processing, IndexNow pings, plugin Queue hooks) backed by an idempotent ledger in `PLATFORM_DB`. Each active `TenantStore` runs an hourly `alarm()` for per-tenant housekeeping (trash/lead/dedup expiry, 404 rollups), while the hourly platform Cron (`7 * * * *`) runs `PLATFORM_DB` daily R2 backups, custom-hostname reaper/reconciliation, billing sweeps, affiliate batches (15th & 30th), and bounded quiet-tenant schema migration sweeps.
+
+### C. Two-Tier Cloudflare Database (No External DB Vendor)
+
+- **Tier 1 — `PLATFORM_DB` (Cloudflare D1, `apac`, 10 GB):** Authoritative cross-tenant store accessed via Drizzle ORM (`drizzle-orm/d1`) and per-request Better Auth (`drizzleAdapter(..., { provider: "sqlite" })`, `advanced.database.joins: true`, `ipAddressHeaders: ["cf-connecting-ip"]`). Holds:
+  - Auth & IAM: users, sessions, accounts (Google OAuth + email), 2FA (`twoFactor`), organizations/memberships, `platform_operators`, OAuth/MCP clients & tokens.
+  - Tenancy & Routing: `tenants` (ULID `id` = Durable Object name, immutable `handle`, lifecycle state & deadlines, `cache_version`, `schema_version`), `tenant_hosts`, `migration_bookmarks`, `deletion_tombstones`.
+  - Commercial & Growth: `agencies` & client links, `affiliates`, `affiliate_commissions`, `affiliate_payout_batches`, `coupons`, `billing_obligations`, `payment_attempts`, `settlements`, `receipts` (gap-free yearly sequential numbers via D1 atomic update), `service_packages`, `service_requests`, `marketing_funnel_events`, `abuse_reports`, `platform_settings`, `platform_audit`, `email_suppressions`, `job_ledger`.
+- **Tier 2 — `TenantStore` (SQLite Durable Object per tenant, 10 GB per website, `locationHint: "apac-se"`):** Accessed exclusively through `locals.tenantDb` (a `D1Database`-compatible RPC adapter with `ctx.storage.transactionSync` atomic batches and protocol-versioned RPC, identical to `adsbook.id`). Holds only that tenant's website data:
+  - Content & Offerings: `site_settings`, `business_profile`, `branches` (<=10), `menus`, `pages` (ordered typed sections), `posts`, `offerings` (`service`, `product`, `tour`, `vehicle` + validated JSON attributes & gallery), `taxonomies`, `resource_slugs` (308 former-slug table), `content_revisions` (latest 20), `media_items`, `storage_usage` (atomic quota & rate counters).
+  - Conversion & Visibility: `tenant_forms` (versioned definitions) & `leads` (with definition snapshot), `analytics_daily`, `analytics_hourly_sources`, `analytics_event_dedup` (24h), `redirects` & `not_found_daily` (release 1.1), `ai_writing_usage`, `tenant_activity_log`.
+- **Safe Per-Tenant Migration Protocol:** `TenantStore` constructor never migrates; it only reads `_tenant_migrations` inside `blockConcurrencyWhile`. When behind, the Worker records a PITR bookmark in `PLATFORM_DB.migration_bookmarks`, then calls `applyMigrations` inside `transactionSync`. On failure, `tenants.status` becomes `recovery` (503, auto-migration paused, operator `restore(bookmark)` available). Schema changes follow expand-and-contract with a >=300 s deploy drain.
+
+### D. Media, Video & PDF Pipeline
+
+- **Images (`REQ-010`):** Streamed upload <= 5 MB; accept PNG, JPEG, WebP, HEIC/HEIF, GIF (first frame), TIFF by magic bytes (client-side Canvas converts AVIF to PNG/WebP before upload; SVG and BMP rejected). Normalize via Cloudflare Images binding (`<= 20 MB` binding limit, EXIF/location stripped) to <= 2 MB source + responsive WebP variants (`400, 800, 1200, 1600` + byte-budgeted `1200` 3:2 mobile hero) stored under `t/<tenantId>/media/...` in R2.
+- **Short Video (`REQ-062`) & YouTube (`REQ-089`):** Upload <= 10 MB MP4, MOV or WebM (max 20/website). Valid H.264/AAC MP4 uses a pure-JS box rewrite in a Queue worker (strips metadata, moves `moov` first); MOV/WebM invokes an on-demand, scale-to-zero **Cloudflare Container (`VideoTranscoder`, `ffmpeg`)** to transcode to H.264/AAC MP4 and extract a frame for WebP poster generation. Longer videos use privacy-preserving click-to-load YouTube embeds (11-char ID only).
+- **PDF Receipts (`REQ-081`) & Transactional Email (`REQ-077`, `DEC-038`):** Receipts are generated in the Worker with `pdf-lib` and stored immutably in R2. Outbound transactional emails (including Base64 PDF receipt attachments) use **Cloudflare Email Service (`env.EMAIL.send()` Workers binding on Workers Paid: 3,000 free/mo + $0.35/1k, built-in suppression list)** behind a provider-neutral `EmailPort` (keeping Resend HTTP as an optional fallback switch).
+
+### E. AutoLaris Static-IP Egress (`E-1`)
+
+- Worker calls AutoLaris H2H (`/list_payment`, `/submit`, `/advice`) through a minimal stateless static-IP HTTPS relay authenticated by mutual HMAC/bearer secret; the AutoLaris merchant credentials stay in Worker secrets, and the relay stores zero state. Replaced by direct calls only if AutoLaris provides written non-IP-whitelist authentication.
+
+## 3. Consequences
+
+- **Positive:** 100% Cloudflare application, storage, media and database stack (zero Supabase/Neon/Coolify/VPS maintenance); physical per-tenant SQLite isolation (10 GB per site); proven in production on `adsbook.id`; full support for cross-tenant agency/affiliate/billing queries in `PLATFORM_DB` and conflict-free per-tenant transactions in `TenantStore`.
+- **Negative / Bounds:** Cross-tenant content search does not exist by design (superadmin only sees metadata in `PLATFORM_DB`, matching our privacy rule); Worker->DO adapter adds ~1–5 ms per SQL batch (keep page reads batched to <= 7 RPCs and cache anonymous HTML in `caches.default` after `resolveTenant`); AutoLaris still needs the tiny static-IP relay.
+- **Data location & subprocessors (`DEC-024`, `DEC-025`, `DEC-038`):** Cloudflare global edge + `apac` / `apac-se` hints for D1, Durable Objects, R2 and Cloudflare Email Service (latency hints, not statutory Indonesian residency; 10-year billing exports can additionally mirror to R2/archive), Resend (only if fallback email switch is enabled), Telegram Bot API (only for tenants enabling `lead-notifier` Telegram linking), AutoLaris + static-IP relay, Google OAuth, and the chosen AI writing provider (M2).
+
+## 4. Confirmation
+
+- `TASK-023` (Bootstrap & Spike): proves `@astrojs/cloudflare` (`session: false`), `PLATFORM_DB` (D1), `TenantStore` (`new_sqlite_classes` + `D1Database` adapter + migration bookmark protocol), Better Auth (`provider: "sqlite"`), and `shadcn/ui` `base-nova` (`@base-ui/react`) in local `workerd` (`wrangler dev`).
+- `TASK-003` & `TASK-045`: prove DCV pass-through, O2O route, 64-char guard, HTTPS primary-promotion probe, and 7-day hostname reaper.
+- `TASK-007` & `TASK-060`: prove Cloudflare Images binding normalization (incl. HEIC) and `VideoTranscoder` Container (`ffmpeg`) fallback.

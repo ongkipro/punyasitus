@@ -1,0 +1,7 @@
+__pycache__/
+.DS_Store
+.pi/
+.wrangler/
+.astro/
+dist/
+node_modules/

@@ -1,0 +1,19 @@
+{
+  "activeRun": null,
+  "lastCheckpoint": {
+    "eventId": "d9ebb6fcc2014faa927a47820176222e",
+    "head": "ff7a3b1d94f1366f3a8ff032691e98d2c2ff8e7b",
+    "note": "Planning checkpoint at ff7a3b1 (2026-11-18). State PLANNED; no code exists. Spec: 110 requirements, 110 tasks, 0 structural errors, 12 checker tests pass. Decisions through DEC-043, ADR-0010. Session added: CNAME connect modes (DEC-040), routing order and account email (DEC-041), verified Cloudflare facts, spec consistency fixes (DEC-042), trust/support/retention scope REQ-103..110 (DEC-043). Open: decree text of Kepmen Komdigi 127/128 of 2026, Trust+ IP list URL re-check, three live verifications in STATUS.md, tenant TLD choice, AI writing provider. Next: owner authorization to start TASK-023.",
+    "runId": null,
+    "state": "PLANNED",
+    "time": "2026-11-22T12:14:44Z",
+    "type": "checkpoint"
+  },
+  "lastRun": null,
+  "observedHead": "ff7a3b1d94f1366f3a8ff032691e98d2c2ff8e7b",
+  "observedState": "PLANNED",
+  "project": "punyasitus",
+  "schemaVersion": 1,
+  "statusAuthority": "STATUS.md",
+  "updatedAt": "2026-11-22T12:14:44Z"
+}
