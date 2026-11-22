@@ -1,0 +1,508 @@
+---
+import "../../styles/site/tokens.css";
+import "../../styles/site/base.css";
+import { sanitizeNavigationHref } from "@punyasitus/core/content/index";
+import Consent, {
+  type MapEmbedConfig,
+  type VendorScriptSlot,
+} from "../../components/Consent.astro";
+import {
+  buildSafeThemeStyleBlock,
+  resolveSafeShellLayoutMode,
+  type PublicMenuItem,
+  type ShellLayoutMode,
+  type TenantShellData,
+} from "../../core/public-data.ts";
+
+export interface Props {
+  readonly shell: TenantShellData;
+  readonly pageTitle?: string;
+  readonly pageDescription?: string;
+  readonly layoutMode?: ShellLayoutMode;
+  readonly currentPath?: string;
+  readonly privacyPolicyUrl?: string;
+  readonly showConsent?: boolean;
+  readonly vendorScripts?: readonly VendorScriptSlot[];
+  readonly mapEmbed?: MapEmbedConfig;
+  readonly initialCookieHeader?: string | null;
+  readonly logoUrl?: string | null;
+  readonly logoAlt?: string;
+  readonly logoWidth?: number;
+  readonly logoHeight?: number;
+  readonly headerCtaLabel?: string | null;
+  readonly headerCtaHref?: string | null;
+}
+
+const {
+  shell,
+  pageTitle,
+  pageDescription,
+  layoutMode,
+  currentPath = "/",
+  privacyPolicyUrl = "/kebijakan-privasi",
+  showConsent = true,
+  vendorScripts = [],
+  mapEmbed,
+  initialCookieHeader,
+  logoUrl = null,
+  logoAlt,
+  logoWidth = 36,
+  logoHeight = 36,
+  headerCtaLabel = null,
+  headerCtaHref = null,
+} = Astro.props;
+
+// Defensively re-validate theme tokens before SSR inline injection so malformed
+// or untrusted shell props can never emit executable CSS or break out of <style>.
+const safeTheme = buildSafeThemeStyleBlock(
+  {
+    themeId: shell.themeId,
+    tokens: shell.themeStyle.tokens,
+    variants: shell.themeStyle.variants,
+  },
+  shell.themeId,
+);
+
+const effectiveLayoutMode = resolveSafeShellLayoutMode(layoutMode ?? shell.layoutMode);
+const isFocused = effectiveLayoutMode === "focused";
+
+const htmlLang = shell.site.locale.split("-")[0]?.toLowerCase() || "id";
+const brandName = shell.business.name || shell.site.title || "PunyaSitus";
+const resolvedTitle = pageTitle
+  ? `${pageTitle} — ${shell.site.title}`
+  : shell.page?.title
+    ? `${shell.page.title} — ${shell.site.title}`
+    : shell.site.title;
+const resolvedDescription =
+  pageDescription ?? shell.site.tagline ?? shell.business.description ?? null;
+
+const brandInitials = brandName
+  .split(/\s+/)
+  .filter(Boolean)
+  .slice(0, 2)
+  .map((part) => part.charAt(0).toUpperCase())
+  .join("") || "PS";
+
+const desktopNavItems: readonly PublicMenuItem[] = shell.menus.header;
+const mobileNavItems: readonly PublicMenuItem[] =
+  shell.menus.mobile.length > 0 ? shell.menus.mobile : shell.menus.header;
+const footerNavItems: readonly PublicMenuItem[] = shell.menus.footer;
+
+let safeHeaderCtaHref: string | null = null;
+if (headerCtaLabel && headerCtaHref) {
+  try {
+    safeHeaderCtaHref = sanitizeNavigationHref(headerCtaHref);
+  } catch {
+    safeHeaderCtaHref = null;
+  }
+}
+
+let safePrivacyPolicyUrl: string;
+try {
+  safePrivacyPolicyUrl = sanitizeNavigationHref(privacyPolicyUrl);
+} catch {
+  safePrivacyPolicyUrl = "/kebijakan-privasi";
+}
+
+const addressLine = [
+  shell.business.address,
+  shell.business.city,
+  shell.business.province,
+  shell.business.postalCode,
+]
+  .filter((part): part is string => Boolean(part && part.trim()))
+  .join(", ");
+
+const currentYear = new Date().getUTCFullYear();
+const hasConnectColumn =
+  shell.business.socialLinks.length > 0 || Boolean(shell.business.mapsUrl);
+
+const socialLabels: Readonly<Record<string, string>> = {
+  instagram: "Instagram",
+  facebook: "Facebook",
+  tiktok: "TikTok",
+  youtube: "YouTube",
+  linkedin: "LinkedIn",
+  x: "X",
+  website: "Situs Resmi",
+};
+
+function isCurrentNavPath(href: string, activePath: string): boolean {
+  const normHref = href.length > 1 && href.endsWith("/") ? href.slice(0, -1) : href;
+  const normActive =
+    activePath.length > 1 && activePath.endsWith("/") ? activePath.slice(0, -1) : activePath;
+  return normHref === normActive;
+}
+---
+
+<!doctype html>
+<html lang={htmlLang} data-ps-theme={safeTheme.baseThemeId}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{resolvedTitle}</title>
+    {resolvedDescription && <meta name="description" content={resolvedDescription} />}
+    {(shell.isPreview || shell.site.siteVisibility === "noindex") && (
+      <meta name="robots" content="noindex, nofollow" />
+    )}
+    <slot name="head" />
+    <style is:inline set:html={safeTheme.css} />
+  </head>
+  <body
+    data-ps-theme={safeTheme.baseThemeId}
+    data-layout-mode={effectiveLayoutMode}
+    data-header-variant={safeTheme.variants.headerVariant}
+    data-footer-variant={safeTheme.variants.footerVariant}
+    data-preview={shell.isPreview ? "true" : undefined}
+  >
+    <a class="ps-skip-link" href="#main-content" data-testid="skip-to-content">
+      Lewati ke konten utama
+    </a>
+
+    {shell.isPreview && (
+      <div class="ps-preview-bar" role="status" data-testid="preview-mode-banner">
+        Mode Pratinjau Draf — Perubahan belum diterbitkan ke pengunjung publik.
+      </div>
+    )}
+
+    {!isFocused && (
+      <header class="ps-header" data-testid="site-header">
+        <div class="ps-container ps-header-inner">
+          <a href="/" class="ps-brand" data-testid="site-brand-link">
+            {logoUrl ? (
+              <img
+                src={logoUrl}
+                alt={logoAlt ?? brandName}
+                width={logoWidth}
+                height={logoHeight}
+                class="ps-brand-logo"
+              />
+            ) : (
+              <span class="ps-brand-mark" aria-hidden="true">
+                {brandInitials}
+              </span>
+            )}
+            <span class="ps-brand-text">
+              <span class="ps-brand-name">{brandName}</span>
+              {shell.site.tagline && <span class="ps-brand-tagline">{shell.site.tagline}</span>}
+            </span>
+          </a>
+
+          {desktopNavItems.length > 0 && (
+            <nav class="ps-desktop-nav" aria-label="Navigasi utama" data-testid="desktop-nav">
+              <ul class="ps-nav-list">
+                {desktopNavItems.map((item) => (
+                  <li class="ps-nav-item">
+                    <a
+                      href={item.href}
+                      class="ps-nav-link"
+                      aria-current={isCurrentNavPath(item.href, currentPath) ? "page" : undefined}
+                      target={item.openInNewTab ? "_blank" : undefined}
+                      rel={item.openInNewTab ? "noopener noreferrer" : undefined}
+                    >
+                      {item.label}
+                    </a>
+                    {item.children.length > 0 && (
+                      <ul class="ps-nav-submenu">
+                        {item.children.map((child) => (
+                          <li>
+                            <a
+                              href={child.href}
+                              class="ps-nav-sublink"
+                              aria-current={
+                                isCurrentNavPath(child.href, currentPath) ? "page" : undefined
+                              }
+                              target={child.openInNewTab ? "_blank" : undefined}
+                              rel={child.openInNewTab ? "noopener noreferrer" : undefined}
+                            >
+                              {child.label}
+                            </a>
+                            {child.children.length > 0 && (
+                              <ul class="ps-nav-submenu-nested">
+                                {child.children.map((grandchild) => (
+                                  <li>
+                                    <a
+                                      href={grandchild.href}
+                                      class="ps-nav-sublink"
+                                      target={grandchild.openInNewTab ? "_blank" : undefined}
+                                      rel={
+                                        grandchild.openInNewTab ? "noopener noreferrer" : undefined
+                                      }
+                                    >
+                                      {grandchild.label}
+                                    </a>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          )}
+
+          {headerCtaLabel && safeHeaderCtaHref && (
+            <a href={safeHeaderCtaHref} class="ps-header-cta" data-testid="header-cta">
+              {headerCtaLabel}
+            </a>
+          )}
+
+          {(mobileNavItems.length > 0 || (headerCtaLabel && safeHeaderCtaHref)) && (
+            <details class="ps-mobile-nav" data-ps-mobile-nav data-testid="mobile-nav-details">
+              <summary
+                class="ps-mobile-nav-trigger"
+                aria-label="Buka menu navigasi"
+                data-testid="mobile-nav-toggle"
+              >
+                <svg
+                  class="ps-mobile-icon-open"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <line x1="3" y1="6" x2="21" y2="6" />
+                  <line x1="3" y1="12" x2="21" y2="12" />
+                  <line x1="3" y1="18" x2="21" y2="18" />
+                </svg>
+                <svg
+                  class="ps-mobile-icon-close"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+                <span>Menu</span>
+              </summary>
+
+              <nav
+                class="ps-mobile-nav-panel"
+                aria-label="Navigasi seluler"
+                data-testid="mobile-nav-panel"
+              >
+                {mobileNavItems.length > 0 && (
+                  <ul class="ps-mobile-nav-list">
+                    {mobileNavItems.map((item) => (
+                      <li>
+                        <a
+                          href={item.href}
+                          class="ps-mobile-nav-link"
+                          aria-current={
+                            isCurrentNavPath(item.href, currentPath) ? "page" : undefined
+                          }
+                          target={item.openInNewTab ? "_blank" : undefined}
+                          rel={item.openInNewTab ? "noopener noreferrer" : undefined}
+                        >
+                          {item.label}
+                        </a>
+                        {item.children.length > 0 && (
+                          <ul class="ps-mobile-nav-sublist">
+                            {item.children.map((child) => (
+                              <li>
+                                <a
+                                  href={child.href}
+                                  class="ps-mobile-nav-link"
+                                  target={child.openInNewTab ? "_blank" : undefined}
+                                  rel={child.openInNewTab ? "noopener noreferrer" : undefined}
+                                >
+                                  {child.label}
+                                </a>
+                                {child.children.length > 0 && (
+                                  <ul class="ps-mobile-nav-sublist">
+                                    {child.children.map((grandchild) => (
+                                      <li>
+                                        <a
+                                          href={grandchild.href}
+                                          class="ps-mobile-nav-link"
+                                          target={grandchild.openInNewTab ? "_blank" : undefined}
+                                          rel={
+                                            grandchild.openInNewTab
+                                              ? "noopener noreferrer"
+                                              : undefined
+                                          }
+                                        >
+                                          {grandchild.label}
+                                        </a>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {headerCtaLabel && safeHeaderCtaHref && (
+                  <a href={safeHeaderCtaHref} class="ps-mobile-nav-cta">
+                    {headerCtaLabel}
+                  </a>
+                )}
+              </nav>
+            </details>
+          )}
+        </div>
+      </header>
+    )}
+
+    <main id="main-content" class="ps-main" tabindex="-1">
+      <slot />
+    </main>
+
+    {!isFocused && (
+      <footer class="ps-footer" data-testid="site-footer">
+        <div class="ps-container">
+          <div class="ps-footer-grid">
+            <div>
+              <p class="ps-footer-brand-name">{brandName}</p>
+              {shell.business.description && (
+                <p class="ps-footer-text">{shell.business.description}</p>
+              )}
+              <ul class="ps-footer-meta">
+                {addressLine && <li>{addressLine}</li>}
+                {shell.business.weekdayHours && (
+                  <li>Jam operasional: {shell.business.weekdayHours}</li>
+                )}
+                {shell.business.holidayHours && <li>Hari libur: {shell.business.holidayHours}</li>}
+                {shell.business.phone && (
+                  <li>
+                    <a href={`tel:${shell.business.phone}`} class="ps-footer-link">
+                      Telepon: {shell.business.phone}
+                    </a>
+                  </li>
+                )}
+                {shell.business.email && (
+                  <li>
+                    <a href={`mailto:${shell.business.email}`} class="ps-footer-link">
+                      Email: {shell.business.email}
+                    </a>
+                  </li>
+                )}
+              </ul>
+            </div>
+
+            <nav aria-label="Navigasi footer" data-testid="footer-nav">
+              <h2 class="ps-footer-heading">Tautan</h2>
+              <ul class="ps-footer-list">
+                {footerNavItems.map((item) => (
+                  <li>
+                    <a
+                      href={item.href}
+                      class="ps-footer-link"
+                      target={item.openInNewTab ? "_blank" : undefined}
+                      rel={item.openInNewTab ? "noopener noreferrer" : undefined}
+                    >
+                      {item.label}
+                    </a>
+                  </li>
+                ))}
+                <li>
+                  <a href={safePrivacyPolicyUrl} class="ps-footer-link">
+                    Kebijakan Privasi
+                  </a>
+                </li>
+              </ul>
+            </nav>
+
+            {hasConnectColumn && (
+              <div>
+                <h2 class="ps-footer-heading">Hubungi &amp; Lokasi</h2>
+                <ul class="ps-footer-list">
+                  {shell.business.mapsUrl && (
+                    <li>
+                      <a
+                        href={shell.business.mapsUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="ps-footer-link"
+                      >
+                        Buka Lokasi di Peta
+                      </a>
+                    </li>
+                  )}
+                  {shell.business.socialLinks.map((social) => (
+                    <li>
+                      <a
+                        href={social.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="ps-footer-link"
+                      >
+                        {socialLabels[social.platform] ?? social.platform}
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+
+          <div class="ps-footer-bottom">
+            <p class="ps-footer-notice">
+              &copy; {currentYear} {brandName}. Seluruh hak cipta dilindungi.
+            </p>
+            <p class="ps-footer-notice">Informasi pada situs ini dikelola langsung oleh pemilik usaha.</p>
+          </div>
+        </div>
+      </footer>
+    )}
+
+    <div class="ps-floating-dock" data-testid="site-floating-dock">
+      <slot name="floating" />
+    </div>
+
+    {showConsent && (
+      <Consent
+        siteName={brandName}
+        privacyPolicyUrl={safePrivacyPolicyUrl}
+        initialCookieHeader={initialCookieHeader}
+        vendorScripts={vendorScripts}
+        mapEmbed={mapEmbed}
+      />
+    )}
+
+    {!isFocused && (
+      <script is:inline>
+        (() => {
+          const mobileNav = document.querySelector("[data-ps-mobile-nav]");
+          if (!(mobileNav instanceof HTMLDetailsElement)) return;
+          const summary = mobileNav.querySelector("summary");
+          document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && mobileNav.open) {
+              mobileNav.open = false;
+              if (summary instanceof HTMLElement) summary.focus();
+            }
+          });
+          document.addEventListener("click", (event) => {
+            if (
+              mobileNav.open &&
+              event.target instanceof Node &&
+              !mobileNav.contains(event.target)
+            ) {
+              mobileNav.open = false;
+            }
+          });
+        })();
+      </script>
+    )}
+  </body>
+</html>
