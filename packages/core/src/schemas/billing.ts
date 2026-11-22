@@ -39,6 +39,47 @@ export const PaymentAttemptStateSchema = z
   .enum(["creating", "creation_unknown", "pending", "expired", "failed", "paid", "review"])
   .meta({ description: "Local AutoLaris payment attempt state machine (PLAN §16.3)." });
 
+export const BillingRenewalAnchorSchema = z
+  .enum(["current_period_end", "trial_end_preserved", "settlement_time"])
+  .meta({ description: "Server-computed calendar-period renewal anchor (PLAN §17.1)." });
+
+export const BillingPricingPlanOptionSchema = z
+  .object({
+    plan: BillingPlanSchema,
+    months: z.union([z.literal(1), z.literal(12)]),
+    baseAmountIdr: IdrAmountSchema,
+    currency: z.literal("IDR"),
+    savingsIdr: IdrAmountSchema,
+  })
+  .strict()
+  .meta({ description: "Server-owned subscription plan pricing option." });
+
+export const BillingObligationSnapshotSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    plan: BillingPlanSchema,
+    months: z.union([z.literal(1), z.literal(12)]),
+    currency: z.literal("IDR"),
+    baseAmountIdr: IdrAmountSchema,
+    discountAmountIdr: IdrAmountSchema,
+    netAmountIdr: IdrAmountSchema,
+    estimatedChannelFeeIdr: IdrAmountSchema,
+    pricingSource: z.enum(["platform_settings", "default"]),
+    periodStartAt: IsoDatetimeSchema,
+    periodEndAt: IsoDatetimeSchema,
+    renewalAnchor: BillingRenewalAnchorSchema,
+    nonPkp: z.literal(true),
+    taxNotice: z.string().min(1).max(200),
+    noRefundPolicy: z.literal(true),
+    noRefundNotice: z.string().min(1).max(300),
+    snapshotCreatedAt: IsoDatetimeSchema,
+  })
+  .strict()
+  .meta({
+    description:
+      "Immutable pricing, period, non-PKP tax, and no-refund snapshot persisted on a billing obligation.",
+  });
+
 export const PaymentChannelOptionSchema = z
   .object({
     code: z.string().min(1).max(40),
@@ -56,7 +97,7 @@ export const PaymentChannelListResponseSchema = z
     monthlyBasePriceIdr: IdrAmountSchema,
     yearlyBasePriceIdr: IdrAmountSchema,
     currency: z.literal("IDR"),
-    taxNotice: z.string().min(1).max(160),
+    taxNotice: z.string().min(1).max(200),
   })
   .strict();
 
@@ -83,9 +124,28 @@ export const CouponPreviewResponseSchema = z
     discountAmountIdr: IdrAmountSchema,
     netAmountIdr: IdrAmountSchema,
     currency: z.literal("IDR"),
-    taxNotice: z.string().min(1).max(160),
+    taxNotice: z.string().min(1).max(200),
   })
   .strict();
+
+export const ObligationCreateRequestSchema = z
+  .object({
+    plan: BillingPlanSchema,
+    channelCode: z.string().min(1).max(40),
+    channelKind: PaymentChannelKindSchema.optional(),
+    couponCode: z
+      .string()
+      .trim()
+      .min(2)
+      .max(40)
+      .regex(/^[A-Z0-9_-]+$/)
+      .optional(),
+  })
+  .strict()
+  .meta({
+    description:
+      "Create or retrieve a serialized subscription obligation and AutoLaris QRIS/VA payment instruction (rejects client-supplied amounts, prices, status, provider IDs, or tenantId; REQ-056).",
+  });
 
 export const CheckoutAttemptCreateRequestSchema = z
   .object({
@@ -121,7 +181,7 @@ export const CheckoutInstructionSchema = z
     channelFeeIdr: IdrAmountSchema,
     totalPayableIdr: IdrAmountSchema,
     currency: z.literal("IDR"),
-    taxNotice: z.string().min(1).max(160),
+    taxNotice: z.string().min(1).max(200),
     qrisPayload: z.string().max(4096).nullable(),
     vaNumber: z.string().max(64).nullable(),
     bankName: z.string().max(80).nullable(),
@@ -152,6 +212,25 @@ export const BillingObligationSummarySchema = z
   })
   .strict();
 
+export const BillingObligationDetailResponseSchema = z
+  .object({
+    obligation: BillingObligationSummarySchema,
+    snapshot: BillingObligationSnapshotSchema,
+    attempt: CheckoutInstructionSchema.nullable(),
+    replayed: z.boolean().optional(),
+  })
+  .strict()
+  .meta({
+    description:
+      "Tenant-scoped subscription obligation with immutable pricing/period snapshot and AutoLaris payment instruction.",
+  });
+
+export const BillingObligationListResponseSchema = z
+  .object({
+    items: z.array(BillingObligationSummarySchema).max(50),
+  })
+  .strict();
+
 export const BillingSummaryResponseSchema = z
   .object({
     tenantStatus: TenantStatusSchema,
@@ -161,6 +240,11 @@ export const BillingSummaryResponseSchema = z
     lockedEndsAt: IsoDatetimeSchema.nullable(),
     deletionDueAt: IsoDatetimeSchema.nullable(),
     activeObligation: BillingObligationSummarySchema.nullable(),
+    activeAttempt: CheckoutInstructionSchema.nullable().optional(),
+    obligations: z.array(BillingObligationSummarySchema).max(50).optional(),
+    pricingPlans: z.array(BillingPricingPlanOptionSchema).max(4).optional(),
+    channels: z.array(PaymentChannelOptionSchema).max(50).optional(),
+    taxNotice: z.string().min(1).max(200).optional(),
     noRefundNotice: z.string().min(1).max(300),
   })
   .strict()
@@ -185,7 +269,7 @@ export const ReceiptSummarySchema = z
     channelFeeIdr: IdrAmountSchema,
     totalPaidIdr: IdrAmountSchema,
     currency: z.literal("IDR"),
-    taxNotice: z.string().min(1).max(160),
+    taxNotice: z.string().min(1).max(200),
     isCreditNote: z.boolean(),
     downloadPath: z.string().startsWith("/api/tenants/").max(256),
   })
@@ -205,13 +289,21 @@ const ATTEMPT_ID_PATH_PARAM = {
   schema: UlidSchema,
 };
 
+const OBLIGATION_ID_PATH_PARAM = {
+  name: "obligationId",
+  in: "path" as const,
+  required: true,
+  description: "Billing obligation ULID.",
+  schema: UlidSchema,
+};
+
 export const BILLING_ROUTES: readonly RouteContract[] = [
   {
     path: "/api/tenants/{tenantId}/billing",
     method: "get",
     operationId: "tenantGetBillingSummary",
     tag: "Billing",
-    summary: "Read tenant subscription state, deadlines, and active billing obligation",
+    summary: "Read tenant subscription state, deadlines, pricing, channels, and active billing obligation",
     surface: "app",
     auth: "app_session",
     requiredRoles: ["owner", "agency_admin"],
@@ -234,6 +326,54 @@ export const BILLING_ROUTES: readonly RouteContract[] = [
     parameters: [TENANT_HANDLE_PATH_PARAM],
     successStatus: 200,
     successSchemaId: "PaymentChannelListResponse",
+    errorStatuses: [401, 403, 404, 503],
+  },
+  {
+    path: "/api/tenants/{tenantId}/billing/obligations",
+    method: "get",
+    operationId: "tenantListBillingObligations",
+    tag: "Billing",
+    summary: "List subscription billing obligations for the scoped tenant",
+    surface: "app",
+    auth: "app_session",
+    requiredRoles: ["owner", "agency_admin"],
+    requiredPermission: "billing:read",
+    parameters: [TENANT_HANDLE_PATH_PARAM],
+    successStatus: 200,
+    successSchemaId: "BillingObligationListResponse",
+    errorStatuses: [401, 403, 404, 503],
+  },
+  {
+    path: "/api/tenants/{tenantId}/billing/obligations",
+    method: "post",
+    operationId: "tenantCreateBillingObligation",
+    tag: "Billing",
+    summary: "Create or replay an immutable subscription obligation and AutoLaris QRIS/VA payment instruction",
+    surface: "app",
+    auth: "app_session",
+    requiredRoles: ["owner", "agency_admin"],
+    requiredPermission: "billing:pay",
+    parameters: [TENANT_HANDLE_PATH_PARAM, IDEMPOTENCY_HEADER_PARAM],
+    requestBodySchemaId: "ObligationCreateRequest",
+    successStatus: 201,
+    successSchemaId: "BillingObligationDetailResponse",
+    errorStatuses: [400, 401, 403, 404, 409, 413, 415, 422, 429, 503],
+    rateLimited: true,
+    idempotent: true,
+  },
+  {
+    path: "/api/tenants/{tenantId}/billing/obligations/{obligationId}",
+    method: "get",
+    operationId: "tenantGetBillingObligation",
+    tag: "Billing",
+    summary: "Read a single tenant-scoped billing obligation, immutable snapshot, and payment instruction",
+    surface: "app",
+    auth: "app_session",
+    requiredRoles: ["owner", "agency_admin"],
+    requiredPermission: "billing:read",
+    parameters: [TENANT_HANDLE_PATH_PARAM, OBLIGATION_ID_PATH_PARAM],
+    successStatus: 200,
+    successSchemaId: "BillingObligationDetailResponse",
     errorStatuses: [401, 403, 404, 503],
   },
   {
@@ -325,13 +465,19 @@ export const BILLING_DOMAIN_MODULE: DomainSchemaModule = {
     PaymentChannelKind: PaymentChannelKindSchema,
     BillingObligationState: BillingObligationStateSchema,
     PaymentAttemptState: PaymentAttemptStateSchema,
+    BillingRenewalAnchor: BillingRenewalAnchorSchema,
+    BillingPricingPlanOption: BillingPricingPlanOptionSchema,
+    BillingObligationSnapshot: BillingObligationSnapshotSchema,
     PaymentChannelOption: PaymentChannelOptionSchema,
     PaymentChannelListResponse: PaymentChannelListResponseSchema,
     CouponApplyRequest: CouponApplyRequestSchema,
     CouponPreviewResponse: CouponPreviewResponseSchema,
+    ObligationCreateRequest: ObligationCreateRequestSchema,
     CheckoutAttemptCreateRequest: CheckoutAttemptCreateRequestSchema,
     CheckoutInstruction: CheckoutInstructionSchema,
     BillingObligationSummary: BillingObligationSummarySchema,
+    BillingObligationDetailResponse: BillingObligationDetailResponseSchema,
+    BillingObligationListResponse: BillingObligationListResponseSchema,
     BillingSummaryResponse: BillingSummaryResponseSchema,
     BillingRecheckResponse: BillingRecheckResponseSchema,
     ReceiptSummary: ReceiptSummarySchema,

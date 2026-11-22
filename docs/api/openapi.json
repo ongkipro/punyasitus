@@ -266,6 +266,172 @@
         ],
         "type": "object"
       },
+      "BillingObligationDetailResponse": {
+        "additionalProperties": false,
+        "description": "Tenant-scoped subscription obligation with immutable pricing/period snapshot and AutoLaris payment instruction.",
+        "properties": {
+          "attempt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckoutInstruction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "obligation": {
+            "$ref": "#/components/schemas/BillingObligationSummary"
+          },
+          "replayed": {
+            "type": "boolean"
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/BillingObligationSnapshot"
+          }
+        },
+        "required": [
+          "obligation",
+          "snapshot",
+          "attempt"
+        ],
+        "type": "object"
+      },
+      "BillingObligationListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BillingObligationSummary"
+            },
+            "maxItems": 50,
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
+      "BillingObligationSnapshot": {
+        "additionalProperties": false,
+        "description": "Immutable pricing, period, non-PKP tax, and no-refund snapshot persisted on a billing obligation.",
+        "properties": {
+          "baseAmountIdr": {
+            "description": "Nonnegative whole IDR integer amount (0 to 999,999,999,999; PLAN §5).",
+            "maximum": 999999999999,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "currency": {
+            "const": "IDR",
+            "type": "string"
+          },
+          "discountAmountIdr": {
+            "description": "Nonnegative whole IDR integer amount (0 to 999,999,999,999; PLAN §5).",
+            "maximum": 999999999999,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "estimatedChannelFeeIdr": {
+            "description": "Nonnegative whole IDR integer amount (0 to 999,999,999,999; PLAN §5).",
+            "maximum": 999999999999,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "months": {
+            "anyOf": [
+              {
+                "const": 1,
+                "type": "number"
+              },
+              {
+                "const": 12,
+                "type": "number"
+              }
+            ]
+          },
+          "netAmountIdr": {
+            "description": "Nonnegative whole IDR integer amount (0 to 999,999,999,999; PLAN §5).",
+            "maximum": 999999999999,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "noRefundNotice": {
+            "maxLength": 300,
+            "minLength": 1,
+            "type": "string"
+          },
+          "noRefundPolicy": {
+            "const": true,
+            "type": "boolean"
+          },
+          "nonPkp": {
+            "const": true,
+            "type": "boolean"
+          },
+          "periodEndAt": {
+            "description": "UTC ISO-8601 timestamp string.",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "type": "string"
+          },
+          "periodStartAt": {
+            "description": "UTC ISO-8601 timestamp string.",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/BillingPlan"
+          },
+          "pricingSource": {
+            "enum": [
+              "platform_settings",
+              "default"
+            ],
+            "type": "string"
+          },
+          "renewalAnchor": {
+            "$ref": "#/components/schemas/BillingRenewalAnchor"
+          },
+          "schemaVersion": {
+            "const": 1,
+            "type": "number"
+          },
+          "snapshotCreatedAt": {
+            "description": "UTC ISO-8601 timestamp string.",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$",
+            "type": "string"
+          },
+          "taxNotice": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "plan",
+          "months",
+          "currency",
+          "baseAmountIdr",
+          "discountAmountIdr",
+          "netAmountIdr",
+          "estimatedChannelFeeIdr",
+          "pricingSource",
+          "periodStartAt",
+          "periodEndAt",
+          "renewalAnchor",
+          "nonPkp",
+          "taxNotice",
+          "noRefundPolicy",
+          "noRefundNotice",
+          "snapshotCreatedAt"
+        ],
+        "type": "object"
+      },
       "BillingObligationState": {
         "description": "Platform subscription billing obligation status.",
         "enum": [
@@ -386,6 +552,51 @@
         ],
         "type": "string"
       },
+      "BillingPricingPlanOption": {
+        "additionalProperties": false,
+        "description": "Server-owned subscription plan pricing option.",
+        "properties": {
+          "baseAmountIdr": {
+            "description": "Nonnegative whole IDR integer amount (0 to 999,999,999,999; PLAN §5).",
+            "maximum": 999999999999,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "currency": {
+            "const": "IDR",
+            "type": "string"
+          },
+          "months": {
+            "anyOf": [
+              {
+                "const": 1,
+                "type": "number"
+              },
+              {
+                "const": 12,
+                "type": "number"
+              }
+            ]
+          },
+          "plan": {
+            "$ref": "#/components/schemas/BillingPlan"
+          },
+          "savingsIdr": {
+            "description": "Nonnegative whole IDR integer amount (0 to 999,999,999,999; PLAN §5).",
+            "maximum": 999999999999,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "plan",
+          "months",
+          "baseAmountIdr",
+          "currency",
+          "savingsIdr"
+        ],
+        "type": "object"
+      },
       "BillingRecheckResponse": {
         "additionalProperties": false,
         "properties": {
@@ -414,10 +625,29 @@
         ],
         "type": "object"
       },
+      "BillingRenewalAnchor": {
+        "description": "Server-computed calendar-period renewal anchor (PLAN §17.1).",
+        "enum": [
+          "current_period_end",
+          "trial_end_preserved",
+          "settlement_time"
+        ],
+        "type": "string"
+      },
       "BillingSummaryResponse": {
         "additionalProperties": false,
         "description": "Owner/payer subscription status and active billing obligation summary.",
         "properties": {
+          "activeAttempt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CheckoutInstruction"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "activeObligation": {
             "anyOf": [
               {
@@ -427,6 +657,13 @@
                 "type": "null"
               }
             ]
+          },
+          "channels": {
+            "items": {
+              "$ref": "#/components/schemas/PaymentChannelOption"
+            },
+            "maxItems": 50,
+            "type": "array"
           },
           "deletionDueAt": {
             "anyOf": [
@@ -472,6 +709,13 @@
             "minLength": 1,
             "type": "string"
           },
+          "obligations": {
+            "items": {
+              "$ref": "#/components/schemas/BillingObligationSummary"
+            },
+            "maxItems": 50,
+            "type": "array"
+          },
           "paidThrough": {
             "anyOf": [
               {
@@ -484,6 +728,18 @@
                 "type": "null"
               }
             ]
+          },
+          "pricingPlans": {
+            "items": {
+              "$ref": "#/components/schemas/BillingPricingPlanOption"
+            },
+            "maxItems": 4,
+            "type": "array"
+          },
+          "taxNotice": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
           },
           "tenantStatus": {
             "$ref": "#/components/schemas/TenantStatus"
@@ -1012,7 +1268,7 @@
             "$ref": "#/components/schemas/PaymentAttemptState"
           },
           "taxNotice": {
-            "maxLength": 160,
+            "maxLength": 200,
             "minLength": 1,
             "type": "string"
           },
@@ -1936,7 +2192,7 @@
             "$ref": "#/components/schemas/BillingPlan"
           },
           "taxNotice": {
-            "maxLength": 160,
+            "maxLength": 200,
             "minLength": 1,
             "type": "string"
           }
@@ -3196,6 +3452,34 @@
         ],
         "type": "string"
       },
+      "ObligationCreateRequest": {
+        "additionalProperties": false,
+        "description": "Create or retrieve a serialized subscription obligation and AutoLaris QRIS/VA payment instruction (rejects client-supplied amounts, prices, status, provider IDs, or tenantId; REQ-056).",
+        "properties": {
+          "channelCode": {
+            "maxLength": 40,
+            "minLength": 1,
+            "type": "string"
+          },
+          "channelKind": {
+            "$ref": "#/components/schemas/PaymentChannelKind"
+          },
+          "couponCode": {
+            "maxLength": 40,
+            "minLength": 2,
+            "pattern": "^[A-Z0-9_-]+$",
+            "type": "string"
+          },
+          "plan": {
+            "$ref": "#/components/schemas/BillingPlan"
+          }
+        },
+        "required": [
+          "plan",
+          "channelCode"
+        ],
+        "type": "object"
+      },
       "OfferingCreateRequest": {
         "additionalProperties": false,
         "description": "Create a draft typed offering (service, product, tour, or vehicle; showcase only, no cart/checkout).",
@@ -4309,7 +4593,7 @@
             "type": "integer"
           },
           "taxNotice": {
-            "maxLength": 160,
+            "maxLength": 200,
             "minLength": 1,
             "type": "string"
           },
@@ -6886,7 +7170,7 @@
             "type": "string"
           },
           "taxNotice": {
-            "maxLength": 160,
+            "maxLength": 200,
             "minLength": 1,
             "type": "string"
           },
@@ -10235,7 +10519,7 @@
             "appSessionCookie": []
           }
         ],
-        "summary": "Read tenant subscription state, deadlines, and active billing obligation",
+        "summary": "Read tenant subscription state, deadlines, pricing, channels, and active billing obligation",
         "tags": [
           "Billing"
         ],
@@ -10647,6 +10931,246 @@
         ],
         "x-rate-limited": true,
         "x-required-permission": "billing:pay",
+        "x-required-roles": [
+          "owner",
+          "agency_admin"
+        ],
+        "x-surface": "app"
+      }
+    },
+    "/api/tenants/{tenantId}/billing/obligations": {
+      "get": {
+        "operationId": "tenantListBillingObligations",
+        "parameters": [
+          {
+            "description": "Immutable tenant handle selector (3-40 lowercase chars, PLAN §6 & §7.1). Selector only; never authorization.",
+            "in": "path",
+            "name": "tenantId",
+            "required": true,
+            "schema": {
+              "description": "Immutable lowercase tenant handle (3-40 chars) used in admin URLs and *.situsku.click.",
+              "examples": [
+                "alpha-studio"
+              ],
+              "maxLength": 40,
+              "minLength": 3,
+              "pattern": "^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingObligationListResponse"
+                }
+              }
+            },
+            "description": "Operation succeeded."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "appSessionCookie": []
+          }
+        ],
+        "summary": "List subscription billing obligations for the scoped tenant",
+        "tags": [
+          "Billing"
+        ],
+        "x-required-permission": "billing:read",
+        "x-required-roles": [
+          "owner",
+          "agency_admin"
+        ],
+        "x-surface": "app"
+      },
+      "post": {
+        "operationId": "tenantCreateBillingObligation",
+        "parameters": [
+          {
+            "description": "Immutable tenant handle selector (3-40 lowercase chars, PLAN §6 & §7.1). Selector only; never authorization.",
+            "in": "path",
+            "name": "tenantId",
+            "required": true,
+            "schema": {
+              "description": "Immutable lowercase tenant handle (3-40 chars) used in admin URLs and *.situsku.click.",
+              "examples": [
+                "alpha-studio"
+              ],
+              "maxLength": 40,
+              "minLength": 3,
+              "pattern": "^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Fresh UUID per attempt; retained on retries to guarantee deduplication.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "Client-generated UUID idempotency key retained across retries of the same attempt.",
+              "format": "uuid",
+              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObligationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingObligationDetailResponse"
+                }
+              }
+            },
+            "description": "Operation succeeded."
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          },
+          "422": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "appSessionCookie": []
+          }
+        ],
+        "summary": "Create or replay an immutable subscription obligation and AutoLaris QRIS/VA payment instruction",
+        "tags": [
+          "Billing"
+        ],
+        "x-idempotent": true,
+        "x-rate-limited": true,
+        "x-required-permission": "billing:pay",
+        "x-required-roles": [
+          "owner",
+          "agency_admin"
+        ],
+        "x-surface": "app"
+      }
+    },
+    "/api/tenants/{tenantId}/billing/obligations/{obligationId}": {
+      "get": {
+        "operationId": "tenantGetBillingObligation",
+        "parameters": [
+          {
+            "description": "Immutable tenant handle selector (3-40 lowercase chars, PLAN §6 & §7.1). Selector only; never authorization.",
+            "in": "path",
+            "name": "tenantId",
+            "required": true,
+            "schema": {
+              "description": "Immutable lowercase tenant handle (3-40 chars) used in admin URLs and *.situsku.click.",
+              "examples": [
+                "alpha-studio"
+              ],
+              "maxLength": 40,
+              "minLength": 3,
+              "pattern": "^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])$",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Billing obligation ULID.",
+            "in": "path",
+            "name": "obligationId",
+            "required": true,
+            "schema": {
+              "description": "Immutable 26-character Crockford Base32 ULID identifier.",
+              "examples": [
+                "01JTESTTENANTALPHA00000001"
+              ],
+              "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingObligationDetailResponse"
+                }
+              }
+            },
+            "description": "Operation succeeded."
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        },
+        "security": [
+          {
+            "appSessionCookie": []
+          }
+        ],
+        "summary": "Read a single tenant-scoped billing obligation, immutable snapshot, and payment instruction",
+        "tags": [
+          "Billing"
+        ],
+        "x-required-permission": "billing:read",
         "x-required-roles": [
           "owner",
           "agency_admin"
