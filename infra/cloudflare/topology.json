@@ -1,0 +1,459 @@
+{
+  "schemaVersion": "1.0",
+  "project": "punyasitus",
+  "contractOwners": [
+    "PRD.md#REQ-041",
+    "PRD.md#REQ-095",
+    "PLAN.md#section-2",
+    "PLAN.md#section-3",
+    "PLAN.md#section-12",
+    "docs/adr/ADR-0009-cloudflare-native-multi-tenant-runtime.md"
+  ],
+  "resourcePrefix": "punyasitus-",
+  "forbiddenResourcePrefixes": ["adsbook-"],
+  "worker": {
+    "name": "punyasitus-web",
+    "workers_dev": false,
+    "preview_urls": false,
+    "limits": {
+      "cpu_ms": 50
+    },
+    "dcvPassThroughPaths": [
+      "/.well-known/pki-validation/*",
+      "/.well-known/acme-challenge/*"
+    ],
+    "dcvExcludedPaths": [
+      "/.well-known/cf-custom-hostname-challenge/*"
+    ],
+    "unknownHostPolicy": {
+      "status": 404,
+      "cacheControl": "no-store",
+      "xRobotsTag": "noindex, nofollow",
+      "csp": "default-src 'none'",
+      "apiJsonError": {
+        "success": false,
+        "code": "NOT_FOUND"
+      }
+    }
+  },
+  "enterpriseOnlyFeatures": {
+    "wildcard_custom_hostnames": false,
+    "custom_metadata": false,
+    "apex_proxying": false
+  },
+  "environments": {
+    "production": {
+      "workerName": "punyasitus-web",
+      "appEnv": "production",
+      "platformZone": {
+        "zone": "punyasitus.com",
+        "cloudflareForSaas": false,
+        "customDomains": [
+          {
+            "hostname": "punyasitus.com",
+            "surface": "marketing",
+            "worker": "punyasitus-web"
+          },
+          {
+            "hostname": "www.punyasitus.com",
+            "surface": "marketing",
+            "worker": "punyasitus-web",
+            "redirect": {
+              "status": 308,
+              "target": "https://punyasitus.com"
+            }
+          },
+          {
+            "hostname": "app.punyasitus.com",
+            "surface": "app",
+            "worker": "punyasitus-web"
+          },
+          {
+            "hostname": "console.punyasitus.com",
+            "surface": "console",
+            "worker": "punyasitus-web"
+          }
+        ],
+        "emailSubdomain": "notif.punyasitus.com",
+        "zoneSettings": {
+          "ssl_mode": "strict",
+          "always_use_https": true,
+          "min_tls_version": "1.2",
+          "bot_fight_mode": false
+        },
+        "waf": {
+          "planTier": "free",
+          "maxCustomRulesPerZone": 5,
+          "maxRateLimitRulesPerZone": 1,
+          "customRules": [
+            {
+              "id": "ps-prod-platform-block-sensitive-probes",
+              "description": "Block probes for dotfiles and legacy PHP admin endpoints on platform hosts",
+              "expression": "(http.request.uri.path matches \"^/(\\\\.env|\\\\.git|wp-login\\\\.php|xmlrpc\\\\.php)\")",
+              "action": "block"
+            },
+            {
+              "id": "ps-prod-platform-console-method-guard",
+              "description": "Block unexpected HTTP methods on console.punyasitus.com",
+              "expression": "(http.host eq \"console.punyasitus.com\" and not http.request.method in {\"GET\" \"HEAD\" \"POST\" \"PUT\" \"PATCH\" \"DELETE\" \"OPTIONS\"})",
+              "action": "block"
+            }
+          ],
+          "rateLimitRules": [
+            {
+              "id": "ps-prod-platform-auth-ratelimit",
+              "description": "Edge burst cap for auth endpoints on app.punyasitus.com (complements D1 atomic limits)",
+              "expression": "(http.host eq \"app.punyasitus.com\" and starts_with(http.request.uri.path, \"/api/auth/\"))",
+              "characteristics": ["ip.src"],
+              "requestsPerPeriod": 60,
+              "periodSeconds": 10,
+              "mitigationTimeoutSeconds": 10,
+              "action": "block"
+            }
+          ]
+        }
+      },
+      "saasZone": {
+        "zone": "situsku.click",
+        "cloudflareForSaas": true,
+        "fallbackOrigin": "fallback.situsku.click",
+        "cnameTarget": "cname.situsku.click",
+        "trustPlusCheckRequired": true,
+        "trustPlusFallbackTld": ".my.id",
+        "dnsRecords": [
+          {
+            "type": "AAAA",
+            "name": "@",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "originless-saas-zone-apex-redirect"
+          },
+          {
+            "type": "AAAA",
+            "name": "*",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "originless-tenant-subdomains"
+          },
+          {
+            "type": "AAAA",
+            "name": "fallback",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "cloudflare-for-saas-fallback-origin"
+          },
+          {
+            "type": "CNAME",
+            "name": "cname",
+            "content": "fallback.situsku.click",
+            "proxied": true,
+            "purpose": "customer-custom-hostname-cname-target"
+          }
+        ],
+        "workerRoutes": [
+          {
+            "pattern": "*/*",
+            "worker": "punyasitus-web",
+            "purpose": "all-saas-subdomains-and-custom-hostnames"
+          },
+          {
+            "pattern": "cname.situsku.click/*",
+            "worker": "punyasitus-web",
+            "purpose": "o2o-proxied-cloudflare-customer-zones"
+          }
+        ],
+        "reservedHandles": [
+          "www",
+          "fallback",
+          "cname",
+          "app",
+          "console",
+          "admin",
+          "api",
+          "mail",
+          "notif"
+        ],
+        "o2o": {
+          "supported": true,
+          "indicatorHeader": "cf-connecting-o2o",
+          "expectedIndicatorValue": "1",
+          "createHostnameBeforeCustomerCname": true,
+          "requiredCustomerSslModes": ["full", "strict"],
+          "preValidationSupported": false
+        },
+        "zoneSettings": {
+          "markdown_for_agents": true,
+          "bot_fight_mode": false,
+          "ssl_mode": "strict",
+          "always_use_https": true,
+          "min_tls_version": "1.2",
+          "allowedAiSearchFetchers": [
+            "Googlebot",
+            "Bingbot",
+            "OAI-SearchBot",
+            "ChatGPT-User",
+            "Claude-SearchBot",
+            "Claude-User",
+            "PerplexityBot",
+            "Perplexity-User",
+            "Applebot"
+          ]
+        },
+        "waf": {
+          "planTier": "free",
+          "maxCustomRulesPerZone": 5,
+          "maxRateLimitRulesPerZone": 1,
+          "customRules": [
+            {
+              "id": "ps-prod-saas-skip-http-dcv",
+              "description": "Bypass WAF challenges for HTTP DCV certificate issuance and renewal paths",
+              "expression": "(starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\") or starts_with(http.request.uri.path, \"/.well-known/pki-validation/\"))",
+              "action": "skip"
+            },
+            {
+              "id": "ps-prod-saas-block-sensitive-probes",
+              "description": "Block dotfile and legacy PHP probes without challenging verified search/AI fetchers",
+              "expression": "(http.request.uri.path matches \"^/(\\\\.env|\\\\.git|wp-login\\\\.php|xmlrpc\\\\.php)\")",
+              "action": "block"
+            }
+          ],
+          "rateLimitRules": [
+            {
+              "id": "ps-prod-saas-public-writes-ratelimit",
+              "description": "Edge burst cap for anonymous public POST endpoints on tenant hosts",
+              "expression": "(http.request.method eq \"POST\" and http.request.uri.path in {\"/api/leads\" \"/api/events\" \"/api/abuse-report\"})",
+              "characteristics": ["ip.src"],
+              "requestsPerPeriod": 30,
+              "periodSeconds": 10,
+              "mitigationTimeoutSeconds": 10,
+              "action": "block"
+            }
+          ]
+        }
+      },
+      "secretsAndVars": {
+        "turnstile": {
+          "publicFormsSiteKeyVar": "TURNSTILE_SITE_KEY",
+          "publicFormsSecretName": "TURNSTILE_SECRET_KEY",
+          "authSiteKeyVar": "TURNSTILE_AUTH_SITE_KEY",
+          "authSecretName": "TURNSTILE_AUTH_SECRET_KEY"
+        },
+        "cloudflareForSaasZoneIdVar": "CF_SAAS_ZONE_ID",
+        "cloudflareForSaasApiTokenSecretName": "CF_SAAS_ZONE_API_TOKEN",
+        "authSecretName": "AUTH_SECRET",
+        "consoleAuthSecretName": "CONSOLE_AUTH_SECRET"
+      },
+      "resources": {
+        "d1": "punyasitus-platform",
+        "r2Media": "punyasitus-media",
+        "r2Backup": "punyasitus-backup",
+        "queue": "punyasitus-jobs",
+        "dlq": "punyasitus-jobs-dlq"
+      }
+    },
+    "staging": {
+      "workerName": "punyasitus-web-staging",
+      "appEnv": "staging",
+      "platformZone": {
+        "zone": "punyasitus.com",
+        "cloudflareForSaas": false,
+        "customDomains": [
+          {
+            "hostname": "staging.punyasitus.com",
+            "surface": "marketing",
+            "worker": "punyasitus-web-staging"
+          },
+          {
+            "hostname": "www.staging.punyasitus.com",
+            "surface": "marketing",
+            "worker": "punyasitus-web-staging",
+            "redirect": {
+              "status": 308,
+              "target": "https://staging.punyasitus.com"
+            }
+          },
+          {
+            "hostname": "app.staging.punyasitus.com",
+            "surface": "app",
+            "worker": "punyasitus-web-staging"
+          },
+          {
+            "hostname": "console.staging.punyasitus.com",
+            "surface": "console",
+            "worker": "punyasitus-web-staging"
+          }
+        ],
+        "emailSubdomain": "notif.punyasitus.com",
+        "zoneSettings": {
+          "ssl_mode": "strict",
+          "always_use_https": true,
+          "min_tls_version": "1.2",
+          "bot_fight_mode": false
+        },
+        "waf": {
+          "planTier": "free",
+          "maxCustomRulesPerZone": 5,
+          "maxRateLimitRulesPerZone": 1,
+          "customRules": [
+            {
+              "id": "ps-stg-platform-block-sensitive-probes",
+              "description": "Block dotfile and legacy PHP probes on staging platform hosts",
+              "expression": "(http.request.uri.path matches \"^/(\\\\.env|\\\\.git|wp-login\\\\.php|xmlrpc\\\\.php)\")",
+              "action": "block"
+            }
+          ],
+          "rateLimitRules": [
+            {
+              "id": "ps-stg-platform-auth-ratelimit",
+              "description": "Edge burst cap for staging auth endpoints",
+              "expression": "(http.host eq \"app.staging.punyasitus.com\" and starts_with(http.request.uri.path, \"/api/auth/\"))",
+              "characteristics": ["ip.src"],
+              "requestsPerPeriod": 60,
+              "periodSeconds": 10,
+              "mitigationTimeoutSeconds": 10,
+              "action": "block"
+            }
+          ]
+        }
+      },
+      "saasZone": {
+        "zone": "situsku-staging.click",
+        "cloudflareForSaas": true,
+        "fallbackOrigin": "fallback.situsku-staging.click",
+        "cnameTarget": "cname.situsku-staging.click",
+        "isolationNote": "Cloudflare fallback_origin is a per-zone setting (PUT /zones/{zone_id}/custom_hostnames/fallback_origin), so staging MUST own a dedicated SaaS zone separate from production situsku.click.",
+        "trustPlusCheckRequired": true,
+        "trustPlusFallbackTld": ".my.id",
+        "dnsRecords": [
+          {
+            "type": "AAAA",
+            "name": "@",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "originless-staging-saas-apex-redirect"
+          },
+          {
+            "type": "AAAA",
+            "name": "*",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "originless-staging-tenant-subdomains"
+          },
+          {
+            "type": "AAAA",
+            "name": "fallback",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "staging-cloudflare-for-saas-fallback-origin"
+          },
+          {
+            "type": "CNAME",
+            "name": "cname",
+            "content": "fallback.situsku-staging.click",
+            "proxied": true,
+            "purpose": "staging-customer-custom-hostname-cname-target"
+          }
+        ],
+        "workerRoutes": [
+          {
+            "pattern": "*/*",
+            "worker": "punyasitus-web-staging",
+            "purpose": "all-staging-saas-subdomains-and-custom-hostnames"
+          },
+          {
+            "pattern": "cname.situsku-staging.click/*",
+            "worker": "punyasitus-web-staging",
+            "purpose": "staging-o2o-proxied-cloudflare-customer-zones"
+          }
+        ],
+        "reservedHandles": [
+          "www",
+          "fallback",
+          "cname",
+          "app",
+          "console",
+          "admin",
+          "api",
+          "mail",
+          "notif"
+        ],
+        "o2o": {
+          "supported": true,
+          "indicatorHeader": "cf-connecting-o2o",
+          "expectedIndicatorValue": "1",
+          "createHostnameBeforeCustomerCname": true,
+          "requiredCustomerSslModes": ["full", "strict"],
+          "preValidationSupported": false
+        },
+        "zoneSettings": {
+          "markdown_for_agents": true,
+          "bot_fight_mode": false,
+          "ssl_mode": "strict",
+          "always_use_https": true,
+          "min_tls_version": "1.2",
+          "allowedAiSearchFetchers": [
+            "Googlebot",
+            "Bingbot",
+            "OAI-SearchBot",
+            "ChatGPT-User",
+            "Claude-SearchBot",
+            "Claude-User",
+            "PerplexityBot",
+            "Perplexity-User",
+            "Applebot"
+          ]
+        },
+        "waf": {
+          "planTier": "free",
+          "maxCustomRulesPerZone": 5,
+          "maxRateLimitRulesPerZone": 1,
+          "customRules": [
+            {
+              "id": "ps-stg-saas-skip-http-dcv",
+              "description": "Bypass WAF challenges for HTTP DCV certificate issuance and renewal paths on staging",
+              "expression": "(starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\") or starts_with(http.request.uri.path, \"/.well-known/pki-validation/\"))",
+              "action": "skip"
+            },
+            {
+              "id": "ps-stg-saas-block-sensitive-probes",
+              "description": "Block dotfile and legacy PHP probes without challenging verified search/AI fetchers",
+              "expression": "(http.request.uri.path matches \"^/(\\\\.env|\\\\.git|wp-login\\\\.php|xmlrpc\\\\.php)\")",
+              "action": "block"
+            }
+          ],
+          "rateLimitRules": [
+            {
+              "id": "ps-stg-saas-public-writes-ratelimit",
+              "description": "Edge burst cap for anonymous public POST endpoints on staging tenant hosts",
+              "expression": "(http.request.method eq \"POST\" and http.request.uri.path in {\"/api/leads\" \"/api/events\" \"/api/abuse-report\"})",
+              "characteristics": ["ip.src"],
+              "requestsPerPeriod": 30,
+              "periodSeconds": 10,
+              "mitigationTimeoutSeconds": 10,
+              "action": "block"
+            }
+          ]
+        }
+      },
+      "secretsAndVars": {
+        "turnstile": {
+          "publicFormsSiteKeyVar": "TURNSTILE_SITE_KEY",
+          "publicFormsSecretName": "TURNSTILE_SECRET_KEY",
+          "authSiteKeyVar": "TURNSTILE_AUTH_SITE_KEY",
+          "authSecretName": "TURNSTILE_AUTH_SECRET_KEY"
+        },
+        "cloudflareForSaasZoneIdVar": "CF_SAAS_ZONE_ID",
+        "cloudflareForSaasApiTokenSecretName": "CF_SAAS_ZONE_API_TOKEN",
+        "authSecretName": "AUTH_SECRET",
+        "consoleAuthSecretName": "CONSOLE_AUTH_SECRET"
+      },
+      "resources": {
+        "d1": "punyasitus-platform-staging",
+        "r2Media": "punyasitus-media-staging",
+        "r2Backup": "punyasitus-backup-staging",
+        "queue": "punyasitus-jobs-staging",
+        "dlq": "punyasitus-jobs-dlq-staging"
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 # Architecture — punyasitus
 
 Updated: 2026-11-23
-Current state: Foundation Spine (`F0`–`F4`) complete — Wave 0 (`TASK-023`), Wave 1 (`TASK-001`, `024`, `010`, `011`, `032`), Wave 2 F2 (`TASK-002`, `028`), Wave 2 F3 (`TASK-077`, `029`, `031`), and Wave 2 F4 (`TASK-025`, `030`, `037`) implemented; all 95 downstream feature tasks unlocked.
+Current state: Foundation Spine (`F0`–`F4`) + Wave 2 Closing Batch A (`TASK-045`, `TASK-049`) complete; remaining Wave 2 tasks are `TASK-067` (Operator 2FA) and `TASK-090` (Google Sign-In & Turnstile), while all M1 feature waves are unlocked.
 
 ## Pinned Workspace & Runtime Versions (`TASK-023`)
 

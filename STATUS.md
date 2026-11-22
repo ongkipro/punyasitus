@@ -11,11 +11,11 @@ Independent-Review-Head: UNSET
 
 ## Now
 
-Foundation Spine (`F0`–`F4`) complete: Wave 0 (`TASK-023`, `19c2b0a`), Wave 1 (`TASK-001`, `024`, `010`, `011`, `032`, `ff9505d`), F2 (`TASK-002`, `028`, `dc052fd`), F3 (`TASK-077`, `029`, `031`, `54e17db`), and F4 (`TASK-025` Better Auth Organization Sessions & RBAC, `TASK-030` First-Party Click Counters & Admin Metrics, `TASK-037` Telemetry, Backups & Observability, `RUN-20261122T173325Z-0490c7cc`) implemented via 3 parallel child worktrees (`f4-auth`, `f4-metrics`, `f4-telemetry`). Production Worker `queue()` now wires retention, email, and daily `PLATFORM_DB` R2 backup handlers.
+Foundation Spine (`F0`–`F4`) and Wave 2 Closing Batch A (`TASK-045` Cloudflare SaaS Topology & `TASK-049` Platform Grant/Bootstrap/Audit, `RUN-20261122T180337Z-af4e28aa`) implemented via 2 parallel child worktrees (`w2-topology`, `w2-platform-ops`). `TASK-045` adds declarative Cloudflare two-zone SaaS topology (`infra/cloudflare/topology.json`, `wrangler.jsonc` `preview_urls: false`, `Markdown for Agents` on / Free Bot Fight Mode off, O2O + `workers.dev`/preview 404 verification, `scripts/verify/routes.mjs`, `docs/operations/hosting.md`). `TASK-049` adds verified-account operator bootstrap, live session + active grant guard, atomic `platform_audit` + state rollback on audit failure, concurrent final-operator revocation protection, `scripts/platform-operator.mjs`, and `docs/operations/platform-access.md`.
 
 ## Next
 
-Complete independent cross-family R3 review and `delivery-ledger finish` for Foundation Step F4 (`TASK-025`, `TASK-030`, `TASK-037`), commit/push to `main`, and unlock parallel feature waves (starting with Wave 2 security/topology `TASK-045`, `TASK-049`, `TASK-067`, `TASK-090` and parallel M1 feature tracks).
+Complete independent cross-family R3 review and `delivery-ledger finish` for `TASK-045` + `TASK-049`, commit/push to `main`, then finish Wave 2 security gates (`TASK-067` Operator Mandatory 2FA -> `TASK-090` Primary Google Sign-In & Turnstile) and fan out M1 feature waves in parallel.
 
 ## Blockers
 
