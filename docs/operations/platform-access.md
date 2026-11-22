@@ -142,8 +142,22 @@ Before any row is prepared for `platform_audit`:
 - Sensitive metadata keys (`password`, `secret`, `token`, `cookie`, `authorization`, `totp`, `backup_codes`, `lead_body`, `customer_message`, `raw_body`, `payload`, `headers`) are unconditionally replaced with `[REDACTED]`.
 
 ### Automated Verification Commands
-Run inside the repository workspace to verify all `TASK-049` invariants in Node and Cloudflare `workerd`:
+Run inside the repository workspace to verify all `TASK-049`, `TASK-067`, and `TASK-048` invariants in Node, Cloudflare `workerd`, and Chromium:
 
 ```bash
-pnpm lint && pnpm typecheck && pnpm test:unit && pnpm test:integration
+pnpm spec:check && pnpm lint && pnpm typecheck && pnpm build && pnpm test:unit && pnpm test:integration && node tests/task-048/e2e.mjs
 ```
+
+---
+
+## 7. Console Screens & API Boundaries (`TASK-048`, `REQ-051`)
+
+All platform console views and APIs are served strictly on `console.punyasitus.com` (returning neutral `404` on `app.punyasitus.com`, `punyasitus.com`, and tenant hosts), with `Cache-Control: private, no-store` and `X-Robots-Tag: noindex, nofollow`.
+
+| Screen / Endpoint | Capabilities & Hard Invariants |
+|---|---|
+| `/console` | Read-only operational overview from `PLATFORM_DB` metadata (tenant counts by status, failed/dead-letter jobs, stuck custom domains, active operators, recent redacted audit preview). Never opens `TenantStore` or displays customer content/PII. |
+| `/console/operators` & `/api/console/operators/**` | Live DB list of active/revoked grants (`platform_superadmin`, `platform_support`), reauthenticated (`requireRecentSecondFactor` -> `403 REAUTH_REQUIRED` if stale) grant & revoke with mandatory 10–500 char reason, atomic `platform_audit` batch, concurrent final-operator protection (`409 LAST_OPERATOR_PROTECTED`), and CLI-only bootstrap (`POST /api/console/operators/bootstrap` rejects anonymous & HTTP bootstrap). |
+| `/console/audit` & `/api/console/audit/**` | Read-only filterable (`action`, `actorUserId`, `targetType`, `targetId`, `tenantId`, `outcome`, `from`, `to`) and cursor-paginated audit explorer with defense-in-depth read-side redaction. Any `POST`/`PUT`/`PATCH`/`DELETE` returns `405 METHOD_NOT_ALLOWED`. |
+| `/console/health` & `/api/console/health` | Read-only real-time health snapshot of `PLATFORM_DB`, `job_ledger`, daily R2 backup freshness, restore drill evidence, custom domains, and dependency heartbeats. Explicitly distinguishes `healthy`, `degraded`, `stale`, and `unknown` — never fabricates `healthy` when data is absent or stale, and exposes no deploy/restart/SQL controls. |
+| `/console/settings` & `/api/console/settings` | Operator-only, reauthenticated, versioned (`expectedVersion`) editor for `platform_settings`: `salesWhatsapp` (Indonesian E.164 via TASK-010), `supportEmail`, `termsUrl` & `privacyUrl` (public HTTPS via TASK-011; rejects `http:`, `javascript:`, private/loopback hosts), optional support hours/response target and monthly/yearly IDR pricing (mirrored to `billing.pricing`). Rejects unknown & forbidden keys; rolls back completely if `platform_audit` persistence fails. |

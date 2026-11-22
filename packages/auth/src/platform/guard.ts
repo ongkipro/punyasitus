@@ -3,8 +3,11 @@ import {
   getPlatformOperatorGrant,
   grantPlatformOperator,
   revokePlatformOperator,
+  updatePlatformSettings,
   type PlatformAuditRecord,
   type PlatformOperatorRecord,
+  type PlatformOperatorRole,
+  type PlatformSettingsRecord,
 } from "@punyasitus/db/platform";
 import { DEFAULT_REAUTH_WINDOW_MS, verifyUserPassword } from "../account.ts";
 import { SESSION_LIFETIME_POLICIES } from "../google.ts";
@@ -513,7 +516,9 @@ export async function requireRecentSecondFactor(
 export interface AuditedPlatformOperatorActionParams {
   readonly session: PlatformSessionInput | null | undefined;
   readonly user: PlatformUserInput | null | undefined;
-  readonly targetUserId: string;
+  readonly targetUserId?: string;
+  readonly targetEmail?: string;
+  readonly role?: PlatformOperatorRole;
   readonly reason: string;
   readonly requestId?: string;
   readonly reauthenticatedAtMs?: number | null;
@@ -568,6 +573,8 @@ export async function executeAuditedPlatformGrant(
   const { operator, audit } = await grantPlatformOperator(platformDb, {
     actorUserId: actor.userId,
     targetUserId: params.targetUserId,
+    targetEmail: params.targetEmail,
+    role: params.role,
     reason: params.reason,
     requestId: params.requestId,
     nowMs: params.nowMs,
@@ -611,11 +618,60 @@ export async function executeAuditedPlatformRevoke(
 
   const { operator, audit } = await revokePlatformOperator(platformDb, {
     actorUserId: actor.userId,
-    targetUserId: params.targetUserId,
+    targetUserId: params.targetUserId ?? "",
     reason: params.reason,
     requestId: params.requestId,
     nowMs: params.nowMs,
   });
 
   return { actor, operator, audit };
+}
+
+export interface AuditedPlatformSettingsUpdateParams {
+  readonly session: PlatformSessionInput | null | undefined;
+  readonly user: PlatformUserInput | null | undefined;
+  readonly payload: Readonly<Record<string, unknown>>;
+  readonly requestId?: string | null;
+  readonly reauthWindowMs?: number;
+  readonly nowMs?: number;
+}
+
+export interface AuditedPlatformSettingsUpdateResult {
+  readonly actor: VerifiedRecentSecondFactorContext;
+  readonly settings: PlatformSettingsRecord;
+  readonly audit: PlatformAuditRecord;
+  readonly changedFields: readonly string[];
+}
+
+/**
+ * High-level audited `platform_settings` update service for `TASK-048`.
+ * Enforces live session + active operator grant + recent second-factor verification
+ * (10-minute step-up window), then atomically commits `platform_settings` + `platform_audit`.
+ */
+export async function executeAuditedPlatformSettingsUpdate(
+  platformDb: D1Database,
+  params: AuditedPlatformSettingsUpdateParams,
+): Promise<AuditedPlatformSettingsUpdateResult> {
+  const actor = await requireRecentSecondFactor(platformDb, {
+    session: params.session,
+    user: params.user,
+    windowMs: params.reauthWindowMs,
+    nowMs: params.nowMs,
+    requestId: params.requestId,
+    action: "platform_settings.update",
+  });
+
+  const result = await updatePlatformSettings(platformDb, {
+    actorUserId: actor.userId,
+    payload: params.payload,
+    requestId: params.requestId,
+    nowMs: params.nowMs,
+  });
+
+  return {
+    actor,
+    settings: result.settings,
+    audit: result.audit,
+    changedFields: result.changedFields,
+  };
 }

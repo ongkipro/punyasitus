@@ -121,8 +121,36 @@ export interface ListPlatformAuditFilter {
   readonly tenantId?: string;
   readonly outcome?: PlatformAuditOutcome;
   readonly requestId?: string;
+  readonly fromCreatedAtMs?: number;
+  readonly toCreatedAtMs?: number;
   readonly beforeCreatedAtMs?: number;
+  readonly beforeId?: string;
   readonly limit?: number;
+}
+
+export interface RedactedPlatformAuditRecord {
+  readonly id: string;
+  readonly actorUserId: string | null;
+  readonly actorRole: string;
+  readonly action: string;
+  readonly targetType: string;
+  readonly targetId: string;
+  readonly tenantId: string | null;
+  readonly reason: string | null;
+  readonly outcome: PlatformAuditOutcome;
+  readonly requestId: string | null;
+  readonly metadata: Readonly<Record<string, unknown>> | null;
+  readonly createdAt: number;
+  readonly createdAtIso: string;
+}
+
+export interface PlatformAuditPageResult {
+  readonly items: readonly RedactedPlatformAuditRecord[];
+  readonly hasMore: boolean;
+  readonly nextCursor: {
+    readonly beforeCreatedAtMs: number;
+    readonly beforeId: string;
+  } | null;
 }
 
 interface PlatformAuditDbRow {
@@ -560,9 +588,23 @@ export async function listPlatformAuditEntries(
     clauses.push("request_id = ?");
     bindings.push(filter.requestId);
   }
+  if (typeof filter.fromCreatedAtMs === "number" && Number.isFinite(filter.fromCreatedAtMs)) {
+    clauses.push("created_at >= ?");
+    bindings.push(Math.trunc(filter.fromCreatedAtMs));
+  }
+  if (typeof filter.toCreatedAtMs === "number" && Number.isFinite(filter.toCreatedAtMs)) {
+    clauses.push("created_at <= ?");
+    bindings.push(Math.trunc(filter.toCreatedAtMs));
+  }
   if (typeof filter.beforeCreatedAtMs === "number" && Number.isFinite(filter.beforeCreatedAtMs)) {
-    clauses.push("created_at < ?");
-    bindings.push(Math.trunc(filter.beforeCreatedAtMs));
+    if (filter.beforeId?.trim()) {
+      clauses.push("(created_at < ? OR (created_at = ? AND id < ?))");
+      const cursorTs = Math.trunc(filter.beforeCreatedAtMs);
+      bindings.push(cursorTs, cursorTs, filter.beforeId.trim());
+    } else {
+      clauses.push("created_at < ?");
+      bindings.push(Math.trunc(filter.beforeCreatedAtMs));
+    }
   }
 
   const rawLimit = filter.limit ?? DEFAULT_AUDIT_LIST_LIMIT;
@@ -595,4 +637,74 @@ export async function listPlatformAuditEntries(
     .all<PlatformAuditDbRow>();
 
   return (result.results ?? []).map(mapAuditRow);
+}
+
+/**
+ * Defense-in-depth read-side redaction for `platform_audit` records returned to the console UI/API.
+ * Ensures even legacy or direct-DB rows with secrets, tokens, passwords, cookies, or PII are scrubbed.
+ */
+export function redactAuditRecordForRead(
+  record: PlatformAuditRecord,
+): RedactedPlatformAuditRecord {
+  let parsedMetadata: Readonly<Record<string, unknown>> | null = null;
+  if (record.metadataJson) {
+    try {
+      const raw = JSON.parse(record.metadataJson) as unknown;
+      if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+        parsedMetadata = redactAuditMetadata(raw as Record<string, unknown>);
+      }
+    } catch {
+      parsedMetadata = { redactedMalformedMetadata: REDACTED_VALUE };
+    }
+  }
+
+  return {
+    id: record.id,
+    actorUserId: record.actorUserId ? redactAuditText(record.actorUserId) : null,
+    actorRole: redactAuditText(record.actorRole),
+    action: redactAuditText(record.action),
+    targetType: redactAuditText(record.targetType),
+    targetId: redactAuditText(record.targetId),
+    tenantId: record.tenantId ? redactAuditText(record.tenantId) : null,
+    reason: record.reason ? redactAuditText(record.reason) : null,
+    outcome: record.outcome,
+    requestId: record.requestId ? sanitizeAuditRequestId(record.requestId) : null,
+    metadata: parsedMetadata,
+    createdAt: record.createdAt,
+    createdAtIso: new Date(record.createdAt).toISOString(),
+  };
+}
+
+/**
+ * Paginated, redacted read-only query over `PLATFORM_DB.platform_audit`.
+ */
+export async function queryPlatformAuditPage(
+  platformDb: D1Database,
+  filter: ListPlatformAuditFilter = {},
+): Promise<PlatformAuditPageResult> {
+  const rawLimit = filter.limit ?? DEFAULT_AUDIT_LIST_LIMIT;
+  const pageLimit = Math.max(1, Math.min(MAX_AUDIT_LIST_LIMIT, Math.trunc(rawLimit)));
+
+  // Fetch limit + 1 to accurately compute hasMore without a separate COUNT(*) scan
+  const rows = await listPlatformAuditEntries(platformDb, {
+    ...filter,
+    limit: Math.min(MAX_AUDIT_LIST_LIMIT, pageLimit + 1),
+  });
+
+  const hasMore = rows.length > pageLimit;
+  const pageRows = hasMore ? rows.slice(0, pageLimit) : rows;
+  const items = pageRows.map(redactAuditRecordForRead);
+  const last = items[items.length - 1];
+
+  return {
+    items,
+    hasMore,
+    nextCursor:
+      hasMore && last
+        ? {
+            beforeCreatedAtMs: last.createdAt,
+            beforeId: last.id,
+          }
+        : null,
+  };
 }

@@ -1,0 +1,133 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  authorizeConsoleRequest,
+  DEFAULT_SECOND_FACTOR_WINDOW_MS,
+  type ConsoleRuntimeEnv,
+} from "@punyasitus/auth/platform/index";
+import type { CloudflareSendEmailBinding } from "@punyasitus/core/email/index";
+import { listPlatformOperators } from "@punyasitus/db/platform";
+import ConsoleLayout from "../../../layouts/ConsoleLayout.astro";
+import { OperatorsPanel } from "./_OperatorsPanel";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const runtimeEnv = env as typeof env & {
+  readonly AUTH_SECRET?: string;
+  readonly CONSOLE_AUTH_SECRET?: string;
+};
+const consoleEnv: ConsoleRuntimeEnv = {
+  APP_ENV: runtimeEnv.APP_ENV,
+  PLATFORM_DOMAIN: runtimeEnv.PLATFORM_DOMAIN,
+  PLATFORM_DB: runtimeEnv.PLATFORM_DB,
+  AUTH_SECRET: runtimeEnv.AUTH_SECRET,
+  CONSOLE_AUTH_SECRET: runtimeEnv.CONSOLE_AUTH_SECRET,
+  EMAIL: runtimeEnv.EMAIL as unknown as CloudflareSendEmailBinding | undefined,
+};
+
+const authz = await authorizeConsoleRequest(
+  Astro.request,
+  consoleEnv,
+  { action: "console.operators.view", requireStepUp: false },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>Akses Console Operasional Dibatasi</title></head><body><main><h1>Akses Console Operasional Dibatasi</h1><p>Hanya operator platform aktif dengan 2FA terverifikasi yang dapat mengelola operator.</p></main></body></html>`,
+    {
+      status: authz.response.status,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    },
+  );
+}
+
+const { actor, platformDb, nowMs, host } = authz.ctx;
+const operators = await listPlatformOperators(platformDb, { includeRevoked: true, limit: 100 });
+const stepUpFresh =
+  actor.twoFactorVerifiedAtMs !== null &&
+  nowMs - actor.twoFactorVerifiedAtMs <= DEFAULT_SECOND_FACTOR_WINDOW_MS;
+
+const navLinks = [
+  { href: "/console", label: "Ringkasan", current: false },
+  { href: "/console/operators", label: "Operator", current: true },
+  { href: "/console/audit", label: "Audit Log", current: false },
+  { href: "/console/health", label: "Kesehatan", current: false },
+  { href: "/console/settings", label: "Pengaturan", current: false },
+];
+---
+
+<ConsoleLayout
+  title="Manajemen Operator Platform"
+  workspaceSubtitle={host.host}
+  activeNavId="home"
+  basePath="/console"
+  userDisplayName={actor.grant.name ?? actor.grant.email ?? "Operator Platform"}
+  userRoleLabel={actor.grant.role === "platform_support" ? "Dukungan Platform" : "Superadmin Platform"}
+>
+  <div class="space-y-5" data-testid="console-operators-page">
+    <section
+      data-testid="console-context-banner"
+      aria-label="Konteks akses platform"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning-border bg-warning-soft px-4 py-3 text-xs text-warning md:text-sm"
+    >
+      <p class="font-medium">
+        Console Operasional Platform — Akses istimewa — bukan penyamaran akun tenant
+      </p>
+      <span class="rounded border border-warning-border bg-card px-2 py-0.5 text-xs font-medium text-foreground">
+        {stepUpFresh ? "2FA Step-Up Aktif (<10m)" : "2FA Perlu Verifikasi Ulang"}
+      </span>
+    </section>
+
+    <nav
+      aria-label="Navigasi modul console"
+      data-testid="console-section-nav"
+      class="flex flex-wrap items-center gap-2 border-b border-border pb-3"
+    >
+      {
+        navLinks.map((link) => (
+          <a
+            href={link.href}
+            aria-current={link.current ? "page" : undefined}
+            class:list={[
+              "inline-flex min-h-11 items-center rounded-md border px-3.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9",
+              link.current
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card text-foreground hover:bg-muted",
+            ]}
+          >
+            {link.label}
+          </a>
+        ))
+      }
+    </nav>
+
+    <header class="space-y-1">
+      <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+        Manajemen Operator Platform
+      </h1>
+      <p class="text-sm text-muted-foreground">
+        Kelola pemberian dan pencabutan hak akses operator platform dengan reautentikasi 2FA, alasan audit wajib, dan perlindungan atomik operator terakhir.
+      </p>
+    </header>
+
+    <OperatorsPanel
+      client:load
+      initialOperators={operators}
+      currentUserId={actor.userId}
+      stepUpFresh={stepUpFresh}
+    />
+  </div>
+</ConsoleLayout>
