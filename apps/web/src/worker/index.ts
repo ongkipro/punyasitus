@@ -9,6 +9,10 @@ import { dispatchScheduledCron } from "./cron/index.ts";
 import type { JobQueuePayload, PunyasitusEnv } from "./env.d.ts";
 import { EMAIL_DELIVERY_TOPIC, createEmailQueueHandler } from "./queues/email/handler.ts";
 import { processDurableQueueBatch, type DurableJobRegistry } from "./queues/index.ts";
+import {
+  createMediaJobRegistry,
+  sweepAllTenantsExpiredQuarantine,
+} from "./queues/media/index.ts";
 import { createRetentionJobRegistry } from "./queues/retention/index.ts";
 
 // Durable Object class export (only handlers + DO classes may be exported by a Worker entrypoint)
@@ -20,6 +24,7 @@ type AstroCtx = Parameters<typeof handle>[2];
 
 const WORKER_JOB_REGISTRY: DurableJobRegistry = {
   ...createRetentionJobRegistry(),
+  ...createMediaJobRegistry(),
   [EMAIL_DELIVERY_TOPIC]: createEmailQueueHandler({
     onOwnerSuppressionNotice(event) {
       console.warn(
@@ -64,5 +69,6 @@ export default {
 
   async scheduled(controller: ScheduledController, env: PunyasitusEnv): Promise<void> {
     await dispatchScheduledCron(controller, env);
+    await sweepAllTenantsExpiredQuarantine(env, { nowMs: controller.scheduledTime });
   },
 };
