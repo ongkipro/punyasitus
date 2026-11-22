@@ -1,0 +1,69 @@
+---
+import {
+  generateOpenGraphMetadata,
+  renderSeoHeadHtml,
+  type GenerateOpenGraphInput,
+  type SocialMetadataDto,
+} from "@punyasitus/core/og-generator";
+
+/**
+ * Reusable `<SEOHead.astro>` component (REQ-023, REQ-026, PLAN §15, TASK-016).
+ *
+ * Drops cleanly into `apps/web/src/themes/default/Layout.astro`'s `<slot name="head" />`
+ * or any Astro `<head>` shell. Strictly public-surface only with zero admin styles or UI runtime deps.
+ *
+ * Security & SEO Invariants:
+ * - Never trusts raw request `Host` header; consumes verified `SocialMetadataDto` produced
+ *   by `generateOpenGraphMetadata` (which enforces TASK-051 `resolvePublishedSeoDecision`).
+ * - Renders through `renderSeoHeadHtml`, applying TASK-051's `escapeHtmlText`,
+ *   `escapeHtmlAttribute` (neutralizing `&`, `<`, `>`, `"`, `'`), and `safeJsonLdStringify`
+ *   so hostile strings (`" onclick=`, `</title><script>`, `</script>`) never appear unescaped.
+ * - Draft, preview, trial, private, error, suspended, and unknown_host routes ALWAYS emit
+ *   `<meta name="robots" content="noindex, nofollow" />`.
+ * - Drafts, previews, private, and error routes NEVER emit `<link rel="canonical">` or `og:url`.
+ */
+
+export interface Props {
+  /** Pre-computed metadata DTO from `generateOpenGraphMetadata`. */
+  readonly metadata?: SocialMetadataDto;
+  /** Optional typed input; used when `metadata` is omitted. */
+  readonly input?: GenerateOpenGraphInput;
+  /** Optional Schema.org JSON-LD object or array of objects (escaped via `safeJsonLdStringify`). */
+  readonly jsonLd?: unknown | readonly unknown[];
+  /** Suppress `<title>` if the parent layout already renders it (default: `false`). */
+  readonly omitTitle?: boolean;
+  /** Suppress `<meta name="description">` if the parent layout already renders it (default: `false`). */
+  readonly omitDescription?: boolean;
+}
+
+const {
+  metadata,
+  input,
+  jsonLd,
+  omitTitle = false,
+  omitDescription = false,
+} = Astro.props;
+
+// Fail closed when neither `metadata` nor `input` is supplied: private noindex, no canonical.
+const resolved: SocialMetadataDto =
+  metadata ??
+  (input
+    ? generateOpenGraphMetadata(input)
+    : generateOpenGraphMetadata({
+        seo: {
+          surface: "error",
+          routeKind: "error_404",
+          pathname: "/",
+          tenant: null,
+        },
+        siteName: "PunyaSitus",
+      }));
+
+const headHtml = renderSeoHeadHtml(resolved, {
+  jsonLd,
+  includeTitle: !omitTitle,
+  includeDescription: !omitDescription,
+});
+---
+
+<Fragment set:html={headHtml} />
