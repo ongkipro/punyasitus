@@ -7,6 +7,7 @@ import {
   type PlatformOperatorRecord,
 } from "@punyasitus/db/platform";
 import { DEFAULT_REAUTH_WINDOW_MS, verifyUserPassword } from "../account.ts";
+import { SESSION_LIFETIME_POLICIES } from "../google.ts";
 import {
   DEFAULT_SECOND_FACTOR_WINDOW_MS,
   getSessionSecondFactorState,
@@ -108,6 +109,8 @@ interface SessionDbRow {
   readonly id: string;
   readonly user_id: string;
   readonly token: string;
+  readonly created_at: number;
+  readonly updated_at: number;
   readonly expires_at: number;
 }
 
@@ -194,9 +197,11 @@ export async function requireActivePlatformOperator(
     );
   }
 
-  // 1. Live session verification in PLATFORM_DB.sessions (revoked/deleted sessions fail immediately)
+  // 1. Live session verification in PLATFORM_DB.sessions (revoked/deleted/expired sessions fail immediately)
   const sessionRow = await platformDb
-    .prepare("SELECT id, user_id, token, expires_at FROM sessions WHERE id = ? AND user_id = ? LIMIT 1")
+    .prepare(
+      "SELECT id, user_id, token, created_at, updated_at, expires_at FROM sessions WHERE id = ? AND user_id = ? LIMIT 1",
+    )
     .bind(sessionId, userId)
     .first<SessionDbRow>();
 
@@ -236,7 +241,16 @@ export async function requireActivePlatformOperator(
     throw new PlatformGuardError(401, "SESSION_REVOKED", "Session token is invalid.");
   }
 
-  if (sessionRow.expires_at <= nowMs) {
+  const superadminAbsoluteMs = SESSION_LIFETIME_POLICIES.superadmin.absoluteTimeoutSeconds * 1000;
+  const superadminIdleMs = SESSION_LIFETIME_POLICIES.superadmin.idleTimeoutSeconds * 1000;
+  const exceededAbsolute = nowMs - sessionRow.created_at > superadminAbsoluteMs;
+  const exceededIdle = nowMs - sessionRow.updated_at > superadminIdleMs;
+
+  if (sessionRow.expires_at <= nowMs || exceededAbsolute || exceededIdle) {
+    await platformDb
+      .prepare("DELETE FROM sessions WHERE id = ? AND user_id = ?")
+      .bind(sessionId, userId)
+      .run();
     await recordDeniedPlatformAccess(platformDb, {
       enabled: auditOnDeny,
       actorUserId: userId,
@@ -244,7 +258,11 @@ export async function requireActivePlatformOperator(
       action,
       targetType: "session",
       targetId: sessionId,
-      reason: "Expired session rejected on platform boundary",
+      reason: exceededIdle
+        ? "Platform operator session exceeded 30-minute idle timeout (DEC-045)"
+        : exceededAbsolute
+          ? "Platform operator session exceeded 8-hour absolute ceiling (DEC-045)"
+          : "Expired session rejected on platform boundary",
       requestId: params.requestId,
       code: "SESSION_EXPIRED",
       nowMs,

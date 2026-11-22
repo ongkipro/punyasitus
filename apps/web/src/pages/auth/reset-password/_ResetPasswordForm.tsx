@@ -17,10 +17,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { HoneypotField, TurnstileField } from "../_AuthShared";
 
 export interface ResetPasswordFormProps {
   readonly token: string | null;
   readonly tokenExpiredOrInvalid?: boolean;
+  readonly turnstileSiteKey?: string;
 }
 
 const SIMPLE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -28,11 +30,14 @@ const SIMPLE_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 export function ResetPasswordForm({
   token,
   tokenExpiredOrInvalid = false,
+  turnstileSiteKey = "",
 }: ResetPasswordFormProps) {
   const hasToken = Boolean(token && token.trim().length > 0 && !tokenExpiredOrInvalid);
 
   // Request reset link state
   const [email, setEmail] = React.useState("");
+  const [honeypot, setHoneypot] = React.useState("");
+  const [turnstileToken, setTurnstileToken] = React.useState("");
   const [emailError, setEmailError] = React.useState<string | null>(null);
   const [requestError, setRequestError] = React.useState<string | null>(null);
   const [requestSubmitted, setRequestSubmitted] = React.useState(false);
@@ -72,17 +77,32 @@ export function ResetPasswordForm({
 
     setRequestPending(true);
     try {
+      const payload: Record<string, unknown> = {
+        email: trimmedEmail,
+        redirectTo: `${window.location.origin}/auth/reset-password`,
+      };
+      if (turnstileToken) {
+        payload["cf-turnstile-response"] = turnstileToken;
+      }
+      if (honeypot) {
+        payload.hp_website = honeypot;
+      }
+
       const response = await fetch("/api/auth/request-password-reset", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         credentials: "same-origin",
-        body: JSON.stringify({
-          email: trimmedEmail,
-          redirectTo: `${window.location.origin}/auth/reset-password`,
-        }),
+        body: JSON.stringify(payload),
       });
+
+      if (!response.ok && response.status === 403) {
+        setRequestError(
+          "Verifikasi keamanan Turnstile diperlukan atau sudah kedaluwarsa. Selesaikan verifikasi lalu coba lagi.",
+        );
+        return;
+      }
 
       if (!response.ok && response.status >= 500) {
         setRequestError(
@@ -339,9 +359,11 @@ export function ResetPasswordForm({
             <form
               onSubmit={handleRequestReset}
               noValidate
-              className="space-y-4"
+              className="relative space-y-4"
               data-testid="reset-request-form"
             >
+              <HoneypotField id="reset-hp-website" value={honeypot} onChange={setHoneypot} />
+
               <div className="space-y-1.5">
                 <label
                   htmlFor="reset-email"
@@ -378,10 +400,16 @@ export function ResetPasswordForm({
                 )}
               </div>
 
+              <TurnstileField
+                siteKey={turnstileSiteKey}
+                action="auth_reset_password"
+                onTokenChange={setTurnstileToken}
+              />
+
               <Button
                 type="submit"
                 disabled={requestPending}
-                className="min-h-11 w-full md:min-h-10"
+                className="min-h-11 w-full focus-visible:outline-solid md:min-h-10"
                 data-testid="reset-request-submit"
               >
                 <MailIcon className="size-4" aria-hidden="true" />

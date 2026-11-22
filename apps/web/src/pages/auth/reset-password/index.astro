@@ -1,14 +1,23 @@
 ---
+import { env } from "cloudflare:workers";
 import "../../../styles/admin/globals.css";
 import { ResetPasswordForm } from "./_ResetPasswordForm";
+
+const runtimeEnv = env as typeof env & {
+  readonly TURNSTILE_SITE_KEY?: string;
+};
 
 const tokenParam = Astro.url.searchParams.get("token");
 const errorParam = Astro.url.searchParams.get("error");
 const expiredParam = Astro.url.searchParams.get("expired");
+const turnstileSiteKey = runtimeEnv.TURNSTILE_SITE_KEY?.trim() ?? "";
 
 const tokenExpiredOrInvalid =
   expiredParam === "1" ||
   (typeof errorParam === "string" && errorParam.trim().length > 0);
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
 ---
 
 <!doctype html>
@@ -58,6 +67,7 @@ const tokenExpiredOrInvalid =
         client:load
         token={tokenParam}
         tokenExpiredOrInvalid={tokenExpiredOrInvalid}
+        turnstileSiteKey={turnstileSiteKey}
       />
     </main>
   </body>

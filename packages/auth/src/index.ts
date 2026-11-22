@@ -16,6 +16,7 @@ import {
 } from "@punyasitus/db/platform";
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
+import { APIError } from "better-auth/api";
 import { createAccessControl } from "better-auth/plugins/access";
 import { organization } from "better-auth/plugins/organization";
 import { defaultStatements } from "better-auth/plugins/organization/access";
@@ -23,6 +24,12 @@ import { twoFactor } from "better-auth/plugins/two-factor";
 import { relations } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { getAuthCookieConfig, type AuthSurface } from "./cookies.ts";
+import {
+  completeGoogleOAuthCallback,
+  parseConsoleGoogleEmailAllowlist,
+  resolveGoogleProfileFromTokens,
+  resolveSessionLifetimePolicy,
+} from "./google.ts";
 
 /**
  * Better Auth 1.7.27 `two_factors` table binding matching `0001_initial_platform.sql`
@@ -191,6 +198,13 @@ export interface CreateAuthOptions {
   readonly schema?: Record<string, unknown>;
   /** Optional EmailPort (`createCloudflareEmailAdapter`, `createResendFallbackAdapter`, or `createLocalMailSink`). */
   readonly emailPort?: EmailPort | null;
+  /** Optional Google OAuth credentials (`GOOGLE_CLIENT_ID` & `GOOGLE_CLIENT_SECRET`). */
+  readonly google?: {
+    readonly clientId: string;
+    readonly clientSecret: string;
+  } | null;
+  /** Optional `CONSOLE_GOOGLE_ALLOWLIST` emails enforced when `surface === "console"`. */
+  readonly consoleGoogleAllowlist?: string | readonly string[] | ReadonlySet<string> | null;
   readonly resetPasswordTokenExpiresIn?: number;
   readonly sessionExpiresIn?: number;
   readonly sessionFreshAge?: number;
@@ -219,11 +233,20 @@ export function createAuth(platformDb: D1Database, options: CreateAuthOptions) {
   const db = createSqliteDrizzle(platformDb, resolvedSchema);
   const surface: AuthSurface = options.surface ?? "app";
   const cookieConfig = getAuthCookieConfig(surface);
+  const lifetimePolicy = resolveSessionLifetimePolicy(surface);
   const resetExpiresIn =
     options.resetPasswordTokenExpiresIn ?? RESET_PASSWORD_TOKEN_EXPIRES_IN_SECONDS;
-  const sessionExpiresIn = options.sessionExpiresIn ?? DEFAULT_SESSION_EXPIRES_IN_SECONDS;
+  const sessionExpiresIn = options.sessionExpiresIn ?? lifetimePolicy.absoluteTimeoutSeconds;
+  const sessionUpdateAge = Math.min(
+    surface === "console" ? lifetimePolicy.idleTimeoutSeconds : 60 * 60 * 24,
+    sessionExpiresIn,
+  );
   const sessionFreshAge = options.sessionFreshAge ?? DEFAULT_SESSION_FRESH_AGE_SECONDS;
   const normalizedBaseUrl = options.baseURL.replace(/\/+$/, "");
+  const googleClientId = options.google?.clientId?.trim() ?? "";
+  const googleClientSecret = options.google?.clientSecret?.trim() ?? "";
+  const hasGoogleProvider = googleClientId.length > 0 && googleClientSecret.length > 0;
+  const consoleAllowlist = parseConsoleGoogleEmailAllowlist(options.consoleGoogleAllowlist);
 
   return betterAuth({
     baseURL: normalizedBaseUrl,
@@ -233,6 +256,55 @@ export function createAuth(platformDb: D1Database, options: CreateAuthOptions) {
       provider: "sqlite",
       schema: resolvedSchema,
     }),
+    socialProviders: hasGoogleProvider
+      ? {
+          google: {
+            clientId: googleClientId,
+            clientSecret: googleClientSecret,
+            prompt: "select_account",
+            accessType: "online",
+            getUserInfo: async (token) => {
+              const resolved = await resolveGoogleProfileFromTokens(token, globalThis.fetch, {
+                expectedClientId: googleClientId,
+              });
+              if (!resolved) return null;
+              return {
+                user: { ...resolved.user },
+                data: { ...resolved.data },
+              };
+            },
+            getAccountFields: async (_tokens, userInfo) => {
+              const admission = await completeGoogleOAuthCallback(platformDb, {
+                surface,
+                profile: {
+                  sub: String(userInfo.id ?? ""),
+                  email: String(userInfo.email ?? ""),
+                  emailVerified: userInfo.emailVerified === true,
+                  name: userInfo.name ?? null,
+                  picture: userInfo.image ?? null,
+                },
+                consoleGoogleAllowlist: consoleAllowlist,
+              });
+              if (!admission.ok) {
+                throw new APIError("FORBIDDEN", {
+                  code: admission.code,
+                  message: admission.message,
+                });
+              }
+              return undefined;
+            },
+          },
+        }
+      : undefined,
+    account: {
+      accountLinking: {
+        enabled: true,
+        trustedProviders: ["google"],
+        requireLocalEmailVerified: true,
+        allowDifferentEmails: false,
+        updateUserInfoOnLink: false,
+      },
+    },
     emailAndPassword: {
       enabled: true,
       minPasswordLength: 8,
@@ -296,12 +368,37 @@ export function createAuth(platformDb: D1Database, options: CreateAuthOptions) {
         enabled: true,
         updateEmailWithoutVerification: false,
       },
+      validateUserInfo: async ({ user: candidate, source }) => {
+        if (source.method === "oauth" && source.oauth?.providerId === "google") {
+          const admission = await completeGoogleOAuthCallback(platformDb, {
+            surface,
+            profile: {
+              sub: String(candidate.id ?? ""),
+              email: String(candidate.email ?? ""),
+              emailVerified: candidate.emailVerified === true,
+              name: typeof candidate.name === "string" ? candidate.name : null,
+              picture: typeof candidate.image === "string" ? candidate.image : null,
+            },
+            consoleGoogleAllowlist: consoleAllowlist,
+            auditOnDeny: false,
+          });
+          if (!admission.ok) {
+            return {
+              error: admission.code,
+              errorDescription: admission.message,
+            };
+          }
+        }
+      },
     },
     session: {
       expiresIn: sessionExpiresIn,
-      updateAge: 60 * 60 * 24,
+      updateAge: sessionUpdateAge,
       freshAge: sessionFreshAge,
       storeSessionInDatabase: true,
+      // Disable Better Auth's sliding refresh so `enforceSessionLifetimeCeiling` (DEC-045)
+      // exclusively controls idle/absolute expiration and activity touch without race-reviving stale sessions.
+      disableSessionRefresh: true,
     },
     plugins: [
       organization({
@@ -383,6 +480,7 @@ export type PunyaSitusAuth = ReturnType<typeof createAuth>;
 
 export * from "./account.ts";
 export * from "./cookies.ts";
+export * from "./google.ts";
 export * from "./permissions.ts";
 export * from "./platform/index.ts";
 export * from "./session-guard.ts";

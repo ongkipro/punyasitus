@@ -3,6 +3,7 @@ import {
   assertMcpBearerOnly,
   AuthorizationError,
   createAuth,
+  enforceSessionLifetimeCeiling,
   hasHostSessionCookie,
   isMcpOrOAuthProtocolPath,
   PlatformGuardError,
@@ -93,6 +94,11 @@ export interface AuthRuntimeEnv {
   readonly PLATFORM_DB?: D1Database | null;
   readonly AUTH_SECRET?: string;
   readonly CONSOLE_AUTH_SECRET?: string;
+  readonly GOOGLE_CLIENT_ID?: string;
+  readonly GOOGLE_CLIENT_SECRET?: string;
+  readonly CONSOLE_GOOGLE_ALLOWLIST?: string;
+  readonly TURNSTILE_SITE_KEY?: string;
+  readonly TURNSTILE_SECRET_KEY?: string;
   readonly EMAIL?: CloudflareSendEmailBinding | null;
 }
 
@@ -279,17 +285,15 @@ function isConsoleTwoFactorExemptPath(pathname: string): boolean {
 }
 
 /**
- * Extracts `{handle}` from `/dashboard/{handle}` or `/dashboard/{handle}/...`.
+ * Extracts `{handle}` from a normalized `/dashboard/{handle}` or `/dashboard/{handle}/...` path.
+ * Note: `normalizeMiddlewarePathname` already percent-decoded each segment once, so we MUST NOT
+ * call `decodeURIComponent` a second time (which would throw on literal `%` such as `/dashboard/100%`
+ * decoded from `/dashboard/100%25` and fail open to `null`).
  */
 export function extractDashboardHandle(pathname: string): string | null {
   const match = DASHBOARD_HANDLE_RE.exec(pathname);
-  const raw = match?.[1];
-  if (!raw) return null;
-  try {
-    return decodeURIComponent(raw).trim().toLowerCase();
-  } catch {
-    return null;
-  }
+  const raw = match?.[1]?.trim().toLowerCase();
+  return raw && raw.length > 0 ? raw : null;
 }
 
 export async function executeAuthMiddleware(
@@ -386,28 +390,37 @@ export async function executeAuthMiddleware(
           headers: context.request.headers,
         });
         if (sessionResult?.user && sessionResult.session) {
-          context.locals.authUser = {
-            id: sessionResult.user.id,
-            name: sessionResult.user.name,
-            email: sessionResult.user.email,
-            emailVerified: Boolean(sessionResult.user.emailVerified),
-          };
-          const rawSession = sessionResult.session as typeof sessionResult.session & {
-            activeOrganizationId?: string | null;
-          };
-          context.locals.authSession = {
-            id: rawSession.id,
-            userId: rawSession.userId,
-            activeOrganizationId: rawSession.activeOrganizationId ?? null,
-            createdAt:
-              rawSession.createdAt instanceof Date
-                ? rawSession.createdAt
-                : new Date(rawSession.createdAt),
-            expiresAt:
-              rawSession.expiresAt instanceof Date
-                ? rawSession.expiresAt
-                : new Date(rawSession.expiresAt),
-          };
+          const lifetimeCheck = await enforceSessionLifetimeCeiling(env.PLATFORM_DB, {
+            sessionId: sessionResult.session.id,
+            userId: sessionResult.user.id,
+            surface: authSurface,
+            pathname: pathnameLower,
+            nowMs: options.nowMs,
+          });
+          if (lifetimeCheck.valid) {
+            context.locals.authUser = {
+              id: sessionResult.user.id,
+              name: sessionResult.user.name,
+              email: sessionResult.user.email,
+              emailVerified: Boolean(sessionResult.user.emailVerified),
+            };
+            const rawSession = sessionResult.session as typeof sessionResult.session & {
+              activeOrganizationId?: string | null;
+            };
+            context.locals.authSession = {
+              id: rawSession.id,
+              userId: rawSession.userId,
+              activeOrganizationId: rawSession.activeOrganizationId ?? null,
+              createdAt:
+                rawSession.createdAt instanceof Date
+                  ? rawSession.createdAt
+                  : new Date(rawSession.createdAt),
+              expiresAt:
+                rawSession.expiresAt instanceof Date
+                  ? rawSession.expiresAt
+                  : new Date(rawSession.expiresAt),
+            };
+          }
         }
       } catch {
         // Invalid or expired session cookie -> treat as unauthenticated without leaking details.

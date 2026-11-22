@@ -11,11 +11,11 @@ Independent-Review-Head: UNSET
 
 ## Now
 
-Foundation Spine (`F0`–`F4`), Wave 2 Closing Batch A (`TASK-045` Cloudflare SaaS Topology & `TASK-049` Platform Grant/Bootstrap/Audit), and `TASK-067` (Operator Mandatory 2FA, `REQ-068`, `DEC-021`) are implemented. `TASK-067` wires the pinned Better Auth `1.7.27` `twoFactor` plugin (TOTP + encrypted single-use backup codes), additive `0003_session_two_factor_state.sql` (`session_two_factor_verifications`), central console middleware 2FA gate (`403 TOTP_ENROLLMENT_REQUIRED` / `403 TOTP_REQUIRED`), reusable 10-minute `requireRecentSecondFactor()` guard, `createTwoFactorEnrolledOperatorFixture()`, `/api/auth/two-factor/{status,enroll,verify,disable}`, Bahasa Indonesia `base-nova` `/auth/two-factor` & `/account/security` screens, and `TASK-049` CLI redaction/atomicity fixes.
+Foundation Spine (`F0`–`F4`) and Wave 2 Closing (`TASK-045`, `TASK-049`, `TASK-067`, `TASK-090`) are implemented. `TASK-090` (`REQ-090`, `DEC-045`, `PLAN §4, §6, §17.2`, `DESIGN §4`) wires primary Google Sign-In (`Masuk dengan Google`) via Better Auth `1.7.27` `socialProviders.google` (with OIDC `iss`/`aud`/`exp` claim validation), strict verified-only account linking (anti-pre-hijacking `403 UNVERIFIED_EMAIL_ACCOUNT_LINK_DENIED`), `console.punyasitus.com` `CONSOLE_GOOGLE_ALLOWLIST` + active `platform_operators` enforcement (`403` + sanitized `platform_audit`, preserving `TASK-067` mandatory TOTP), live `DEC-045` idle and absolute session timeout ceilings with D1 revocation (tenant 8h/7d, agency & affiliate 60m/12h, superadmin/console 30m/8h), fail-closed action-bound Cloudflare Turnstile Siteverify + accessible honeypot guards (`@punyasitus/core/security/turnstile`, wired to auth password routes; downstream `/api/leads` and `/api/abuse-report` routes adopt it in `TASK-012`/`TASK-039`/`TASK-086`), `TASK-067` hygiene fixes, and Bahasa Indonesia `base-nova` `/auth/login`, `/auth/register`, and `/auth/reset-password` screens.
 
 ## Next
 
-Complete independent cross-family R3 review and `delivery-ledger finish` for `TASK-067`, then implement `TASK-090` (Primary Google Sign-In & Turnstile) to close Wave 2 and fan out M1 feature waves in parallel.
+Complete independent cross-family R3 review and `delivery-ledger finish` for `TASK-090` to close Wave 2, then fan out M1 feature waves in parallel.
 
 ## Blockers
 

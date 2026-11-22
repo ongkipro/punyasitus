@@ -166,7 +166,16 @@ export async function handleTwoFactorApiRequest(
   });
 
   const nowMs = Math.trunc(options.nowMs ?? Date.now());
-  const sessionResult = await auth.api.getSession({ headers: request.headers }).catch(() => null);
+  let sessionResult: Awaited<ReturnType<typeof auth.api.getSession>>;
+  try {
+    sessionResult = await auth.api.getSession({ headers: request.headers });
+  } catch {
+    return jsonResponse(503, {
+      success: false,
+      code: "SERVICE_UNAVAILABLE",
+      message: "Gagal memverifikasi status sesi autentikasi.",
+    });
+  }
 
   // -------------------------------------------------------------------------
   // GET /api/auth/two-factor/status

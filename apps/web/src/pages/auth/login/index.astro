@@ -1,4 +1,5 @@
 ---
+import { env } from "cloudflare:workers";
 import "../../../styles/admin/globals.css";
 import { LoginForm } from "./_LoginForm";
 
@@ -13,16 +14,26 @@ function sanitizeNextPath(raw: string | null): string {
     trimmed.startsWith("/account/") ||
     trimmed.startsWith("/dashboard/") ||
     trimmed.startsWith("/agency") ||
-    trimmed.startsWith("/affiliate")
+    trimmed.startsWith("/affiliate") ||
+    trimmed === "/console" ||
+    trimmed.startsWith("/console/")
   ) {
     return trimmed;
   }
   return "/account";
 }
 
+const runtimeEnv = env as typeof env & {
+  readonly TURNSTILE_SITE_KEY?: string;
+};
+
 const nextPath = sanitizeNextPath(Astro.url.searchParams.get("next"));
 const sessionExpired = Astro.url.searchParams.get("expired") === "1";
 const passwordResetSuccess = Astro.url.searchParams.get("reset") === "success";
+const turnstileSiteKey = runtimeEnv.TURNSTILE_SITE_KEY?.trim() ?? "";
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
 ---
 
 <!doctype html>
@@ -73,6 +84,7 @@ const passwordResetSuccess = Astro.url.searchParams.get("reset") === "success";
         nextPath={nextPath}
         sessionExpired={sessionExpired}
         passwordResetSuccess={passwordResetSuccess}
+        turnstileSiteKey={turnstileSiteKey}
       />
     </main>
   </body>

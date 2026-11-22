@@ -9,6 +9,11 @@ export const onRequest = defineMiddleware((context, next) => {
   const runtimeEnv = env as typeof env & {
     readonly AUTH_SECRET?: string;
     readonly CONSOLE_AUTH_SECRET?: string;
+    readonly GOOGLE_CLIENT_ID?: string;
+    readonly GOOGLE_CLIENT_SECRET?: string;
+    readonly CONSOLE_GOOGLE_ALLOWLIST?: string;
+    readonly TURNSTILE_SITE_KEY?: string;
+    readonly TURNSTILE_SECRET_KEY?: string;
   };
 
   const authEnv: AuthRuntimeEnv = {
@@ -17,6 +22,11 @@ export const onRequest = defineMiddleware((context, next) => {
     PLATFORM_DB: runtimeEnv.PLATFORM_DB,
     AUTH_SECRET: runtimeEnv.AUTH_SECRET,
     CONSOLE_AUTH_SECRET: runtimeEnv.CONSOLE_AUTH_SECRET,
+    GOOGLE_CLIENT_ID: runtimeEnv.GOOGLE_CLIENT_ID,
+    GOOGLE_CLIENT_SECRET: runtimeEnv.GOOGLE_CLIENT_SECRET,
+    CONSOLE_GOOGLE_ALLOWLIST: runtimeEnv.CONSOLE_GOOGLE_ALLOWLIST,
+    TURNSTILE_SITE_KEY: runtimeEnv.TURNSTILE_SITE_KEY,
+    TURNSTILE_SECRET_KEY: runtimeEnv.TURNSTILE_SECRET_KEY,
     EMAIL: runtimeEnv.EMAIL as unknown as CloudflareSendEmailBinding | undefined,
   };
 
