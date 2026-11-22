@@ -11,7 +11,14 @@ def check(root):
     markdown = sorted(p for p in root.rglob('*.md') if 'archive' not in p.relative_to(root).parts[:2])  # docs/archive is frozen, non-authoritative
     texts = {path: path.read_text(encoding='utf-8') for path in markdown}
     prd = texts.get(root / 'PRD.md', '')
-    queue = texts.get(root / 'TASKS.md', '')
+    index = texts.get(root / 'TASKS.md', '')
+    # DEC-048: TASKS.md is the queue index; full contracts live in docs/tasks/*.md.
+    contract_files = sorted((root / 'docs' / 'tasks').glob('*.md'))
+    queue = '\n'.join(texts.get(path, '') for path in contract_files)
+    for path in [root / 'TASKS.md', *contract_files]:
+        if len(texts.get(path, '').encode('utf-8')) > 50_000:
+            errors.append(f'{path.name}: over the 50 KB hot-file budget')
+    records = dict(re.findall(r'^### (TASK-\d{3}):[^\n]*\n(.*?)(?=^### |^\*\*|^## |\Z)', index, re.M | re.S))
     declarations = re.findall(r'^- \*\*(REQ-\d{3})\*\*', prd, re.M)
     requirements = set(declarations)
     if len(requirements) != len(declarations):
@@ -59,6 +66,21 @@ def check(root):
                 errors.append(f'{task}: unknown dependency {dep}')
         if 'Done when' not in values['Verification'] or '`pnpm ' not in values['Verification']:
             errors.append(f'{task}: missing executable completion contract')
+    if set(records) != set(tasks):
+        errors.append(f'TASKS.md index and docs/tasks differ: {sorted(set(records) ^ set(tasks))}')
+    for task, body in records.items():
+        if task not in tasks:
+            continue
+        requirement = re.search(r'^- \*\*Requirement:\*\* (REQ-\d{3})', body, re.M)
+        depends = re.search(r'^- \*\*Depends On:\*\* (.+)$', body, re.M)
+        link = re.search(r'\]\((docs/tasks/[^)]+\.md)\)', body)
+        contract_req = re.search(r'^- \*\*Requirement:\*\* (.+)$', tasks[task], re.M)
+        if not requirement or not contract_req or requirement.group(1) != contract_req.group(1).strip():
+            errors.append(f'{task}: index Requirement differs from contract')
+        if not depends or sorted(re.findall(r'TASK-\d{3}', depends.group(1))) != sorted(graph.get(task, [])):
+            errors.append(f'{task}: index Depends On differs from contract')
+        if not link or not re.search(r'^### ' + task + ':', texts.get(root / link.group(1), ''), re.M):
+            errors.append(f'{task}: index link does not point at its contract file')
     for requirement in requirements - covered:
         errors.append(f'{requirement}: no primary/constraint task coverage')
     visited, active = set(), set()

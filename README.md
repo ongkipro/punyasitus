@@ -1,6 +1,6 @@
 # PunyaSitus
 
-> **Status:** Merged Cloudflare-native specification complete (DEC-033..DEC-036); development awaits authorization | **Remote:** `git@github.com:ongkipro/punyasitus.git`
+> **Status:** Specification complete, all decisions final (DEC-001..DEC-048); development awaits authorization | **Repository:** public `ongkipro/punyasitus`; research in private `punyasitus-docs` (DEC-044)
 > **Planned stack:** 100% Cloudflare (aligned with `adsbook.id`): Astro SSR + React islands (`shadcn/ui` `base-nova` / `@base-ui/react`) on one Cloudflare Worker, Cloudflare for SaaS (`situsku.click`), `PLATFORM_DB` (D1) + `TenantStore` (SQLite Durable Object per website), Drizzle ORM, Better Auth (Google OAuth + TOTP + MCP), R2 + Images + Containers (`ffmpeg`), Queues (ADR-0009, accepted) | **Started:** 2026-09-26
 
 ## Overview
@@ -22,15 +22,18 @@ No feature listed here is implemented yet. Requirements become features only whe
 
 ## Documents
 
+**Start at [docs/README.md](./docs/README.md)**: the documentation map that connects this project, its development documents and the private research repository `punyasitus-docs`.
+
 Each document owns its subject; do not restate one inside another.
 
+- 🗺️ [docs/README.md](./docs/README.md) — documentation map (start here)
 - 🤖 [AGENTS.md](./AGENTS.md) — read order and rules for AI agents
 - 📋 [PRD.md](./PRD.md) — product scope and requirements (REQ-001..REQ-110)
 - 🧭 [PLAN.md](./PLAN.md) — technical contracts: runtime, tenancy, data, HTTP, media, SEO, billing, lifecycle
 - 🎨 [DESIGN.md](./DESIGN.md) — visual direction, components and TypeScript contract (proposed until TASK-032)
-- ✅ [TASKS.md](./TASKS.md) — the only execution queue (TASK-001..TASK-110; full development per DEC-030: phase M1 checkpoint TASK-063, production release gate TASK-038)
+- ✅ [TASKS.md](./TASKS.md) — the only execution queue, an index whose full contracts live in [docs/tasks/](./docs/tasks/) (DEC-048) (TASK-001..TASK-110; full development per DEC-030: phase M1 checkpoint TASK-063, production release gate TASK-038)
 - 📝 [DECISIONS.md](./DECISIONS.md) — decision register and [ADRs](./docs/adr/)
-- 🧩 [docs/themes/THEME-DEVELOPMENT.md](./docs/themes/THEME-DEVELOPMENT.md) — how to build a custom brand theme (humans and AI agents)
+- 🧩 [docs/themes/THEME-DEVELOPMENT.md](./docs/themes/THEME-DEVELOPMENT.md) — how to build a custom brand theme (humans and AI agents) · [docs/plugins/PLUGIN-DEVELOPMENT.md](./docs/plugins/PLUGIN-DEVELOPMENT.md) — plugins
 - 📊 [STATUS.md](./STATUS.md) — current workflow state
 - 🏗️ [ARCHITECTURE.md](./ARCHITECTURE.md) — the shape actually built (empty until code exists)
 - 🚀 [RELEASE.md](./RELEASE.md) · 📡 [OBSERVABILITY.md](./OBSERVABILITY.md) · 📜 [BUILD-LOG.md](./BUILD-LOG.md)
@@ -57,6 +60,7 @@ infra/cloudflare        Reviewable zone, SaaS, WAF/O2O and Wrangler resource con
 tests                   task-NNN/ acceptance suites, security/, performance/, e2e-gate/
 scripts                 check-spec.py (now); verify/, security/, backup-restore/ (later tasks)
 docs/adr                Architecture decision records (index: DECISIONS.md)
+docs/tasks              Full task contracts per wave; TASKS.md is the queue index (DEC-048)
 docs/themes, docs/plugins   Theme and plugin development guides
 docs/api                OpenAPI contract generated from packages/core (TASK-024)
 docs/operations, docs/security   Runbooks and security evidence (later tasks)
@@ -66,7 +70,7 @@ docs/operations, docs/security   Runbooks and security evidence (later tasks)
 ## Specification checks
 
 ```bash
-python3 scripts/check-spec.py        # requirements, tasks, dependencies, links
+python3 scripts/check-spec.py        # requirements, tasks, index/contract agreement, dependencies, links, 50 KB budget
 python3 scripts/test-check-spec.py   # checker self-tests
 ```
 
@@ -95,13 +99,7 @@ Do not commit, push or deploy without authorization.
 
 ## Open gates
 
-Product decisions are complete except the AI writing provider/model (needed before TASK-074 in M2; quota decided in DEC-028). Remaining gates are infrastructure and compliance and do not block local development:
-
-- Verify ownership, DNS, and Indonesian ISP Trust+ status of `punyasitus.com` (`@`, `app.`, `console.`) and SaaS zone `situsku.click` (`@`, `*`, `fallback`, `cname`)
-- Cloudflare account on Workers Paid (`punyasitus-*` resource isolation) + Google Cloud OAuth client (`REQ-090`)
-- Stateless static-IP relay host for outbound AutoLaris H2H calls (ADR-0009 E-1) + AutoLaris merchant approval
-- Cloudflare Email Service (`env.EMAIL.send()` binding, DEC-038; Resend optional fallback) onboarded on `notif.punyasitus.com` with SPF/DKIM/DMARC
-- Deferred reminders (DEC-035 C20, non-blocking): PSE Lingkup Privat registration, legal/tax review
+No product decision is open (DEC-045..DEC-048). What remains needs accounts, a live run or a qualified reviewer, and none of it blocks local development: staging infrastructure and the three live verifications in `STATUS.md`, and the legal and tax pre-launch gates of DEC-047. PLAN section 1 owns the list.
 
 ## Environment
 

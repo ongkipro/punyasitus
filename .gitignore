@@ -5,3 +5,10 @@ __pycache__/
 .astro/
 dist/
 node_modules/
+# Local secrets (public repository; values come from `secrets-env` or `wrangler secret`)
+.env
+.env.*
+.dev.vars
+.dev.vars.*
+!.env.example
+!.dev.vars.example

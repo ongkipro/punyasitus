@@ -1,6 +1,6 @@
 # Observability Contract — punyasitus
 
-Updated: 2026-11-18
+Updated: 2026-11-22
 Status: REQUIRED
 
 Probe format:
@@ -26,7 +26,7 @@ Probe: canary-tenant|https://canary.situsku.click/|200-299|canary|2000
 Probe: unknown-tenant-404|https://does-not-exist-canary.situsku.click/|404-404|Halaman tidak ditemukan|2000
 ```
 
-The endpoint paths are proposals; TASK-037 records the final paths. The tenant TLD (`situsku.click`) may change before launch (PLAN section 1).
+The endpoint paths are proposals; TASK-037 records the final paths. The tenant base domain `situsku.click` is final (DEC-045).
 
 ## Recommended production probes
 

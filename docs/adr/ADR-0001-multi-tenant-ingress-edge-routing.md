@@ -1,5 +1,7 @@
 # ADR-0001: Multi-Tenant Ingress & Edge Hostname Resolution
 
+> **Amended by ADR-0009 & DEC-036 (2026-11-18):** the authoritative routing store is `PLATFORM_DB` (Cloudflare D1), not PostgreSQL; the request order is PLAN section 3. The notes below are history.
+
 > Superseded in part (2026-09-26): the KV-first routing cache, edge hostname resolution and edge HTML caching described below are replaced by PLAN section 3 (authoritative PostgreSQL routing per request, fail-closed 503, HTML not cached at Cloudflare) and ADR-0006/ADR-0007. Do not implement KV routing from this record.
 >
 > Review note (2026-09-25): historical decision rationale; implementation contracts and unresolved gates are in ../../PLAN.md. ADR-0006 (accepted for routing, theme loading and public ingestion by DEC-029 on 2026-11-14; tracker item superseded by DEC-027) overrides conflicting historical details below. Accepted status below is inherited, not a new approval.

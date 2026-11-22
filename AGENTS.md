@@ -7,31 +7,31 @@ This file contains repository-specific rules only. Global safety, Git, secret-ha
 ## Project
 
 - Purpose: PunyaSitus, a WordPress-like multi-tenant business CMS and digital growth platform for Indonesian company profiles, services, products, travel/Umrah and car/motorcycle dealers (`service`, `product`, `tour`, `vehicle`). It is not a store: offerings convert through WhatsApp, link-out or lead/custom forms (DEC-008, DEC-035).
-- Planned stack (ADR-0007 surfaces, ADR-0009 runtime accepted 2026-11-18, DEC-036 — aligned with `adsbook.id`): pnpm monorepo; one Astro SSR app `apps/web` on `@astrojs/cloudflare` (`output: "server"`, `session: false`, `nodejs_compat`) deployed as one Cloudflare Worker (`punyasitus-web`) serving `punyasitus.com` (marketing), `app.punyasitus.com` (`/dashboard/{handle}`, `/agency`, `/affiliate`, `/auth`, `/account`, `/api`, `/mcp`), `console.punyasitus.com` (superadmin console), and SaaS zone `situsku.click` (`*.situsku.click` + customer custom hostnames via `cname.situsku.click`); React 19 islands with **`shadcn/ui` v4 preset `base-nova`** (`@base-ui/react` primitives exclusively, `rsc: false`, Lucide icons; never Radix UI); **`PLATFORM_DB` (Cloudflare D1, 10 GB)** control plane + **`TenantStore` (SQLite Durable Object per tenant, 10 GB/site, `locationHint: "apac-se"`)** data plane with Drizzle ORM (no Supabase/external Postgres); R2 + Cloudflare Images binding + on-demand scale-to-zero Cloudflare Container (`ffmpeg` for MOV/WebM); Cloudflare Queues + Cron; Better Auth (`provider: "sqlite"`, Google OAuth primary); Resend email; AutoLaris via stateless static-IP relay.
-- Current state: restarted from zero on 2026-11-17 (DEC-033). Specifications plus a non-authoritative static HTML prototype (`punyasitus-docs/docs/html/`, see its README; it is not TASK-032 evidence). The September 2026 code (`dev/m1`, `dev/m1-b`) is history and must not be reused or cherry-picked. CMSPRO is merged (DEC-034, DEC-035): its accepted content now lives in PRD.md; `punyasitus-docs/docs/archive/cmspro/` is never an implementation source. PRD.md, PLAN.md, DESIGN.md, DECISIONS.md and TASKS.md are synchronised to the merged Cloudflare-native baseline (DEC-035, DEC-036). No application code exists and development is not authorized yet. Do not scaffold, install dependencies or start any TASK until Paduka Ongki explicitly authorizes development; the first task is then TASK-023.
+- Planned stack (ADR-0007 surfaces, ADR-0009 runtime accepted 2026-11-18, DEC-036 — aligned with `adsbook.id`): pnpm monorepo; one Astro SSR app `apps/web` on `@astrojs/cloudflare` (`output: "server"`, `session: false`, `nodejs_compat`) deployed as one Cloudflare Worker (`punyasitus-web`) serving `punyasitus.com` (marketing), `app.punyasitus.com` (`/dashboard/{handle}`, `/agency`, `/affiliate`, `/auth`, `/account`, `/api`, `/mcp`), `console.punyasitus.com` (superadmin console), and SaaS zone `situsku.click` (`*.situsku.click` + customer custom hostnames via `cname.situsku.click`); React 19 islands with **`shadcn/ui` v4 preset `base-nova`** (`@base-ui/react` primitives exclusively, `rsc: false`, Lucide icons; never Radix UI); **`PLATFORM_DB` (Cloudflare D1, 10 GB)** control plane + **`TenantStore` (SQLite Durable Object per tenant, 10 GB/site, `locationHint: "apac-se"`)** data plane with Drizzle ORM (no Supabase/external Postgres); R2 + Cloudflare Images binding + on-demand scale-to-zero Cloudflare Container (`ffmpeg` for MOV/WebM); Cloudflare Queues + Cron; Better Auth (`provider: "sqlite"`, Google OAuth primary); Cloudflare Email Service (`env.EMAIL.send()`, Resend fallback); Workers AI for AI writing (DEC-046); AutoLaris via stateless static-IP relay.
+- Current state: restarted from zero on 2026-11-17 (DEC-033). Specifications plus a non-authoritative static HTML prototype (`punyasitus-docs/docs/html/`, see its README; it is not TASK-032 evidence). The September 2026 code (`dev/m1`, `dev/m1-b`) is history and must not be reused or cherry-picked. CMSPRO is merged (DEC-034, DEC-035): its accepted content now lives in PRD.md; `punyasitus-docs/docs/archive/cmspro/` is never an implementation source. PRD.md, PLAN.md, DESIGN.md, DECISIONS.md and TASKS.md are synchronised to the merged Cloudflare-native baseline (DEC-035, DEC-036) and every product decision is final (DEC-045..DEC-048). No application code exists and development is not authorized yet. Do not scaffold, install dependencies or start any TASK until Paduka Ongki explicitly authorizes development; the first task is then TASK-023.
 
 ## Repositories (DEC-044)
 
 | Folder | Repository | Visibility | Holds |
 |---|---|---|---|
-| `~/Projects/punyasitus` (this) | `ongkipro/punyasitus` | intended public | application code and the development contract: root `AGENTS.md`, `STATUS.md`, `TASKS.md`, `PRD.md`, `PLAN.md`, `DESIGN.md`, `DECISIONS.md`, `ARCHITECTURE.md`, `BUILD-LOG.md`, `RELEASE.md`, `OBSERVABILITY.md`, `docs/adr/`, `docs/themes/`, `docs/plugins/`, later `docs/api/`, `docs/operations/`, `docs/security/`, plus `.delivery/` and `scripts/` |
+| `~/Projects/punyasitus` (this) | `ongkipro/punyasitus` | public | application code and the development contract: root `AGENTS.md`, `STATUS.md`, `TASKS.md`, `PRD.md`, `PLAN.md`, `DESIGN.md`, `DECISIONS.md`, `ARCHITECTURE.md`, `BUILD-LOG.md`, `RELEASE.md`, `OBSERVABILITY.md`, `docs/adr/`, `docs/themes/`, `docs/plugins/`, later `docs/api/`, `docs/operations/`, `docs/security/`, plus `.delivery/` and `scripts/` |
 | `~/Projects/punyasitus-docs` | `ongkipro/punyasitus-docs` | private | research, the frozen CMSPRO archive, the static HTML prototype and the CMSPRO merge ledger; never an implementation source |
 
 A path written `punyasitus-docs/docs/...` lives in the private repository, cloned beside this one. The development contract stays here because `delivery-ledger`, `project-check`, `production-gate` and `release-check` read it from the code repository and bind review to the same commit. Never move it out, never add research or customer-identifying material here, and never link into `punyasitus-docs` with a Markdown link (it does not resolve for public readers); cite the path in backticks.
 
 ## Read order
 
-1. `AGENTS.md` (this file), then `STATUS.md` for the current state.
+1. `AGENTS.md` (this file), then `STATUS.md` for the current state. `docs/README.md` maps every document across both repositories.
 2. `PRD.md` for product behavior and requirements (REQ-NNN).
 3. `DECISIONS.md` and the linked `docs/adr/` records.
 4. `PLAN.md` for runtime, data, IAM, domain, HTTP, security, billing and lifecycle contracts.
 5. `DESIGN.md` before any UI task; `docs/themes/THEME-DEVELOPMENT.md` before any custom theme work.
-6. `TASKS.md` as the only execution queue; follow dependencies, not numeric order.
+6. `TASKS.md` as the only execution queue; follow dependencies, not numeric order. Each record links its full contract in `docs/tasks/wave-N.md`; read that contract before starting (DEC-048).
 
 ## Sources of truth
 
 - Accepted product behavior: root `PRD.md` (canonical; this repository has no `docs/spec/` suite)
-- Sole executable work queue: `TASKS.md`
+- Sole executable work queue: `TASKS.md` (index) with contracts in `docs/tasks/*.md`; a task's Allowed Paths, invariants and Verification come from its contract file
 - Current implementation handoff and semantic review state: `STATUS.md`
 - Accepted technical and product constraints: `DECISIONS.md`
 - Accepted implementation design when present: `PLAN.md`
@@ -68,4 +68,4 @@ Inspect the repository's actual configuration before adding stack-specific rules
 - Verify framework, Better Auth, Drizzle, AutoLaris and Cloudflare APIs against official documentation for the pinned version; never invent API names, fees or provider behavior.
 - No deploy, DNS change, provider mutation, paid provisioning, commit or push without explicit authorization for that action. Secrets never enter the repository or docs.
 - `ADR-0002` is superseded history; do not implement from it.
-- After any documentation change run `python3 scripts/check-spec.py` and `python3 scripts/test-check-spec.py`; both must pass. They check structure and traceability only, not application behavior.
+- After any documentation change run `python3 scripts/check-spec.py` and `python3 scripts/test-check-spec.py`; both must pass. They check structure and traceability only, not application behavior. A task's requirement or dependencies change in its contract and its `TASKS.md` record together; the checker fails when they differ. Keep `TASKS.md`, every `docs/tasks/*.md` and `STATUS.md` under the dotfiles hot-file budget (50 KB; `STATUS.md` 12 KB).
