@@ -245,28 +245,28 @@ None.
 - **Requirement:** REQ-049 · R3 · M1 · contract [`wave-5a`](docs/tasks/wave-5a.md)
 - **Depends On:** TASK-026, TASK-032, TASK-042, TASK-048, TASK-067
 ### TASK-047: Superadmin Domain and Job Recovery Queues
-- **Requirement:** REQ-050 · R2 · M1 · contract [`wave-5a`](docs/tasks/wave-5a.md)
+- **Requirement:** REQ-050 · R2 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
 - **Depends On:** TASK-003, TASK-028, TASK-032, TASK-039, TASK-046, TASK-067
 ### TASK-052: SEO Editor Controls and Verification Settings
-- **Requirement:** REQ-053 · R3 · M1 · contract [`wave-5a`](docs/tasks/wave-5a.md)
+- **Requirement:** REQ-053 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
 - **Depends On:** TASK-033, TASK-040, TASK-041, TASK-051
 ### TASK-053: Local Entity Schema and Crawlable Content Integration
-- **Requirement:** REQ-054 · R2 · M1 · contract [`wave-5a`](docs/tasks/wave-5a.md)
+- **Requirement:** REQ-054 · R2 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
 - **Depends On:** TASK-015, TASK-036, TASK-041, TASK-051, TASK-052
 ### TASK-054: SEO Crawl Regression and Webmaster Launch Runbook
-- **Requirement:** REQ-055 · R2 · M1 · contract [`wave-5a`](docs/tasks/wave-5a.md)
+- **Requirement:** REQ-055 · R2 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
 - **Depends On:** TASK-017, TASK-039, TASK-051, TASK-052, TASK-053
 ### TASK-060: Short Video Upload, Validation and Delivery
-- **Requirement:** REQ-062 · R3 · M1 · contract [`wave-5a`](docs/tasks/wave-5a.md)
+- **Requirement:** REQ-062 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
 - **Depends On:** TASK-007, TASK-013, TASK-059
 ### TASK-061: Custom Theme Service Page, Packages and Requests
-- **Requirement:** REQ-063 · R3 · M1 · contract [`wave-5a`](docs/tasks/wave-5a.md)
+- **Requirement:** REQ-063 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
 - **Depends On:** TASK-024, TASK-032, TASK-042, TASK-048, TASK-049
 ### TASK-065: Analytics Hardening: Event Dedup (M1)
-- **Requirement:** REQ-027 · R3 · M1 · contract [`wave-5a`](docs/tasks/wave-5a.md)
+- **Requirement:** REQ-027 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
 - **Depends On:** TASK-022, TASK-030, TASK-076
 ### TASK-068: Locked-Tenant Retention, Leads Export and Offboarding
-- **Requirement:** REQ-069 · R3 · M1 · contract [`wave-5a`](docs/tasks/wave-5a.md)
+- **Requirement:** REQ-069 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
 - **Depends On:** TASK-021, TASK-028, TASK-031, TASK-039, TASK-059
 ### TASK-069: Terima Beres Setup Service Packages and Requests
 - **Requirement:** REQ-070 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
@@ -287,40 +287,40 @@ None.
 - **Requirement:** REQ-088 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
 - **Depends On:** TASK-001, TASK-013, TASK-015, TASK-024, TASK-025, TASK-032, TASK-091
 ### TASK-091: Structured Business Profile, Schema.org Subtype Mapping & Auto-Derived Brand Assets
-- **Requirement:** REQ-091 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-091 · R3 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-007, TASK-015, TASK-041
 ### TASK-092: Blog Author Profiles, `content_modified_at` Discipline & Server-Rendered TOC
-- **Requirement:** REQ-092 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-092 · R3 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-006, TASK-015, TASK-033, TASK-036, TASK-040
 ### TASK-093: Six-Theme Platform Catalog (`compro`..`dealer`) & Guided Onboarding Checklist
-- **Requirement:** REQ-093 · R2 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-093 · R2 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-012, TASK-013, TASK-042, TASK-043, TASK-080, TASK-091
 ### TASK-094: Public Abuse Reporting, Console Moderation Queue & Tenant Single-Lead Deletion / Activity Log
-- **Requirement:** REQ-094 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-094 · R3 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-008, TASK-025, TASK-046, TASK-067, TASK-077, TASK-090
 ### TASK-096: Theme Style Variants & Commercial Theme Store (`included`, `paid_once`, `custom`)
-- **Requirement:** REQ-096 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-096 · R3 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-042, TASK-057, TASK-081, TASK-082, TASK-093
 ### TASK-097: Frozen-Core Modular Plugin Runtime, `plg_*` `TenantStore` Isolation & Slot Dispatcher
-- **Requirement:** REQ-097 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-097 · R3 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-001, TASK-013, TASK-025, TASK-028, TASK-059
 ### TASK-102: Official Free Zero-Config Plugin `seo-ai-autopilot` (One-Click Autopilot SEO, Sitemap/Robots & AI Indexing)
-- **Requirement:** REQ-102 · R2 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-102 · R2 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-015, TASK-016, TASK-017, TASK-052, TASK-053, TASK-093, TASK-095, TASK-097
 ### TASK-103: Shared-Domain Protection: Publish Screening, Trust+ Watch, Takedown and Fallback Zone
-- **Requirement:** REQ-103 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-103 · R3 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-005, TASK-006, TASK-009, TASK-028, TASK-046, TASK-094
 ### TASK-104: Indonesian Help Center at `punyasitus.com/bantuan` with In-Dashboard Help Links
-- **Requirement:** REQ-104 · R2 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-104 · R2 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-032, TASK-087
 ### TASK-106: Platform Status Page, Incident Banner and Staged Releases
-- **Requirement:** REQ-106 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-106 · R3 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-023, TASK-037, TASK-048
 ### TASK-107: Owner Full-Website Export Archive and Self-Service Deletion with Undo
-- **Requirement:** REQ-107 · R3 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-107 · R3 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-007, TASK-021, TASK-025, TASK-028, TASK-067, TASK-068
 ### TASK-108: Free QR Codes for Website, Pages and Offerings
-- **Requirement:** REQ-108 · R1 · M1 · contract [`wave-5b`](docs/tasks/wave-5b.md)
+- **Requirement:** REQ-108 · R1 · M1 · contract [`wave-5c`](docs/tasks/wave-5c.md)
 - **Depends On:** TASK-009, TASK-030, TASK-036
 
 **Wave 6 — Phase 1 Integration Checkpoint (53 direct M1 leaf dependencies)**

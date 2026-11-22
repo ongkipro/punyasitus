@@ -78,7 +78,7 @@ class SpecChecks(unittest.TestCase):
 
 
     def test_m1_depends_on_m2(self):
-        self.assert_detected('docs/tasks/wave-5b.md', lambda s: s.replace(
+        self.assert_detected('docs/tasks/wave-5c.md', lambda s: s.replace(
             '- **Depends On:** TASK-032, TASK-087', '- **Depends On:** TASK-032, TASK-087, TASK-083', 1),
             'TASK-104: M1 task depends on M2 task TASK-083')
 
