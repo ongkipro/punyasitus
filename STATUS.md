@@ -11,11 +11,11 @@ Independent-Review-Head: UNSET
 
 ## Now
 
-Development authorized by Paduka Ongki (`TASK-023`, Wave 0, R3). Bootstrapped the pnpm monorepo (`apps/web` + `packages/{core,db,auth,integrations,plugins}`), pinned Astro `7.4.13` (`output: "server"`, `session: false`), `@astrojs/cloudflare 14.4.9`, Wrangler `4.166.0`, Better Auth `1.7.27` (`provider: "sqlite"`, `joins: true`), Drizzle `0.45.4`, `@base-ui/react 1.9.0` (zero `@radix-ui/*`), Tailwind `4.3.5`, `pdf-lib 1.17.1`, TypeScript `6.0.3`, Vitest `4.1.12` + `@cloudflare/vitest-plugin 1.9.0`, `scripts/dev/heavy.sh`, and `.github/workflows/ci.yml`. Verified `PLATFORM_DB` D1, two-tenant `TenantStore` SQLite Durable Object isolation/RPC/alarm, Queue producer/consumer, Cron `scheduled()`, `astro dev`, `wrangler dev`, and `wrangler deploy --dry-run` (`2.02 MiB` < 64 MiB).
+Wave 0 (`TASK-023`, `19c2b0a`) and Wave 1 Batch F1-A (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`) implemented via parallel Supervisor + child worktrees (`RUN-20261122T153158Z-a3bd77d4`). Completed split v1 Drizzle SQLite schemas & migrations (`packages/db/migrations/{platform,tenant}/`, PITR bookmark migration orchestrator, cross-tenant repository guards), modular Zod v4 OpenAPI 3.1.1 contract (`docs/api/openapi.json` — 72 paths, 173 schemas + drift check + `packages/auth/src/permissions.ts`), WhatsApp E.164 CTA dispatcher (`packages/core/src/wa-dispatcher.ts`), and HTTPS external link sanitizer (`packages/core/src/link-sanitizer.ts`).
 
 ## Next
 
-Complete independent R3 review and `delivery-ledger finish` for `TASK-023`, merge to `main`, then execute Foundation Step F1 (`TASK-001`, `TASK-024`, `TASK-032`, `TASK-010`, `TASK-011`) in parallel child worktrees.
+Complete independent R3 review and `delivery-ledger finish` for Batch F1-A (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`), then execute `TASK-032` (`base-nova` UI shell + 360/768/1440px browser fixtures) for Product Owner visual ACC before launching Foundation Step F2 (`TASK-028`, `TASK-002`) in parallel.
 
 ## Blockers
 

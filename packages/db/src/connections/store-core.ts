@@ -1,3 +1,10 @@
+import {
+  computeMigrationChecksum,
+  splitMigrationStatements,
+  type ApplyMigrationsResult,
+  type MigrationDescriptor,
+} from "./sql-splitter.ts";
+
 /**
  * Runtime-free SQLite execution engine for per-tenant `TenantStore` Durable Objects
  * (ADR-0009, DEC-036 — aligned with adsbook.id). Runs identically inside `workerd`
@@ -47,15 +54,31 @@ export interface SqlLike {
 export interface StorageLike {
   readonly sql: SqlLike;
   transactionSync<T>(closure: () => T): T;
+  getCurrentBookmark?(): Promise<string>;
+}
+
+export interface SchemaStateCapabilities {
+  readonly applyMigrations?: boolean;
+  readonly getCurrentBookmark?: boolean;
+  readonly setRecovery?: boolean;
 }
 
 export interface SchemaState {
   readonly protocol: number;
   readonly appliedMigrations: readonly string[];
   readonly recovery: boolean;
+  readonly capabilities?: SchemaStateCapabilities;
 }
 
 export const TENANT_MIGRATIONS_TABLE = "_tenant_migrations";
+
+export const CREATE_TENANT_MIGRATIONS_LEDGER_SQL = `CREATE TABLE IF NOT EXISTS ${TENANT_MIGRATIONS_TABLE} (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  version INTEGER NOT NULL,
+  name TEXT NOT NULL UNIQUE,
+  checksum TEXT NOT NULL,
+  applied_at INTEGER NOT NULL
+)`;
 
 function scalar(sql: SqlLike, query: string): number {
   const row = sql.exec(query).toArray()[0];
@@ -123,6 +146,71 @@ export function readTenantMigrationLedger(storage: StorageLike): string[] {
     .map((row) => String(row.name));
 }
 
+/**
+ * Applies additive per-tenant SQLite migrations inside a single atomic `transactionSync`.
+ * Any DDL or ledger failure rolls back the entire migration batch cleanly.
+ */
+export function applyTenantMigrations(
+  storage: StorageLike,
+  migrations: readonly MigrationDescriptor[],
+  now: () => number = Date.now,
+): ApplyMigrationsResult {
+  const sorted = [...migrations].sort((a, b) => a.version - b.version);
+
+  return storage.transactionSync(() => {
+    storage.sql.exec(CREATE_TENANT_MIGRATIONS_LEDGER_SQL);
+
+    const existingRows = storage.sql
+      .exec(`SELECT version, name, checksum FROM ${TENANT_MIGRATIONS_TABLE} ORDER BY id ASC`)
+      .toArray();
+    const existingByName = new Map<string, { version: number; checksum: string }>();
+    let currentVersion = 0;
+    for (const row of existingRows) {
+      const version = Number(row.version ?? 0);
+      const name = String(row.name);
+      const checksum = String(row.checksum ?? "");
+      existingByName.set(name, { version, checksum });
+      if (version > currentVersion) currentVersion = version;
+    }
+
+    const applied: string[] = [];
+    const skipped: string[] = [];
+
+    for (const migration of sorted) {
+      const checksum = migration.checksum ?? computeMigrationChecksum(migration.sql);
+      const prev = existingByName.get(migration.name);
+      if (prev) {
+        if (prev.checksum && prev.checksum !== checksum) {
+          throw new Error(
+            `TENANT_MIGRATION_CHECKSUM_MISMATCH: migration "${migration.name}" was modified after apply`,
+          );
+        }
+        skipped.push(migration.name);
+        continue;
+      }
+
+      const statements = splitMigrationStatements(migration.sql);
+      for (const stmt of statements) {
+        storage.sql.exec(stmt);
+      }
+
+      storage.sql.exec(
+        `INSERT INTO ${TENANT_MIGRATIONS_TABLE} (version, name, checksum, applied_at) VALUES (?, ?, ?, ?)`,
+        migration.version,
+        migration.name,
+        checksum,
+        now(),
+      );
+      applied.push(migration.name);
+      if (migration.version > currentVersion) {
+        currentVersion = migration.version;
+      }
+    }
+
+    return { applied, skipped, currentVersion };
+  });
+}
+
 export class TenantStoreEngine {
   #storage: StorageLike;
   #recovery = false;
@@ -145,6 +233,20 @@ export class TenantStoreEngine {
 
   batch(statements: readonly StatementDescriptor[]): StatementResult[] {
     return executeBatch(this.#storage, statements);
+  }
+
+  applyMigrations(migrations: readonly MigrationDescriptor[]): ApplyMigrationsResult {
+    if (this.#recovery) {
+      throw new Error("TENANT_STORE_IN_RECOVERY: auto-migration paused until operator restore");
+    }
+    return applyTenantMigrations(this.#storage, migrations);
+  }
+
+  async getCurrentBookmark(): Promise<string> {
+    if (typeof this.#storage.getCurrentBookmark === "function") {
+      return this.#storage.getCurrentBookmark();
+    }
+    throw new Error("TENANT_STORE_BOOKMARK_UNAVAILABLE");
   }
 
   schemaState(): SchemaState {

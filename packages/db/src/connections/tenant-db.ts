@@ -1,4 +1,9 @@
 import {
+  splitMigrationStatements,
+  type ApplyMigrationsResult,
+  type MigrationDescriptor,
+} from "./sql-splitter.ts";
+import {
   TENANT_STORE_PROTOCOL,
   type Row,
   type SchemaState,
@@ -11,6 +16,12 @@ export interface TenantStoreRpcStub {
   query(protocol: number, statement: StatementDescriptor, raw: boolean): Promise<StatementResult>;
   batch(protocol: number, statements: StatementDescriptor[]): Promise<StatementResult[]>;
   schemaState(protocol: number): Promise<SchemaState>;
+  getCurrentBookmark?(protocol: number): Promise<string>;
+  applyMigrations?(
+    protocol: number,
+    migrations: readonly MigrationDescriptor[],
+  ): Promise<ApplyMigrationsResult>;
+  setRecovery?(protocol: number, recovery: boolean): Promise<void>;
   armAlarm?(protocol: number, delayMs?: number): Promise<{ scheduledAt: number }>;
   alarmState?(protocol: number): Promise<{ runs: number; lastRunAt: number | null }>;
 }
@@ -101,11 +112,10 @@ export function createTenantDb(stub: TenantStoreRpcStub): D1Database {
     },
     async exec(query: string): Promise<D1ExecResult> {
       const started = Date.now();
-      const statements = query
-        .split(";")
-        .map((s) => s.trim())
-        .filter(Boolean)
-        .map((sql) => ({ sql, args: [] as SqlValue[] }));
+      const statements = splitMigrationStatements(query).map((sql) => ({
+        sql,
+        args: [] as SqlValue[],
+      }));
       if (statements.length === 0) {
         return { count: 0, duration: 0 };
       }

@@ -1,7 +1,7 @@
 # Architecture — punyasitus
 
 Updated: 2026-11-22
-Current state: Wave 0 (`TASK-023`) monorepo & Cloudflare `workerd` compatibility baseline bootstrapped; application domain features begin in Wave 1 (`TASK-001`, `TASK-010`, `TASK-011`, `TASK-024`, `TASK-032`).
+Current state: Wave 0 (`TASK-023`) and Wave 1 Batch F1-A (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`) integrated cleanly; `TASK-032` (`base-nova` UI shell) completes Wave 1 before Wave 2 (`TASK-028`, `TASK-002`).
 
 ## Pinned Workspace & Runtime Versions (`TASK-023`)
 
