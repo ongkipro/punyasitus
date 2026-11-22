@@ -27,8 +27,17 @@ const MAX_REASON_LENGTH = 500;
 const EMAIL_RE = /^[^\s@<>,;"'\\]+@[^\s@<>,;"'\\]+\.[^\s@<>,;"'\\]{2,}$/;
 const CROCKFORD_BASE32 = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CONTROL_CHARS_RE = /[\r\n\t\p{Cc}]+/gu;
+const OTPAUTH_URI_RE = /otpauth:\/\/[^\s'"<>]+/gi;
 const SECRET_PATTERN_RE =
-  /(?:-----BEGIN [A-Z0-9 ]+-----|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\b(?:Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{6,}|\b(?:sk_live|sk_test|whsec|ghp|AIza|AKIA|cf_|re_)[A-Za-z0-9_-]{8,}|\b(?:password|passwd|secret|token|cookie|authorization|api[_-]?key|totp[_-]?secret|backup[_-]?codes?)\s*[:=]\s*[^\s,;'"}\]]+)/gi;
+  /(?:-----BEGIN [A-Z0-9 ]+-----|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}|\b(?:Bearer|Basic|Token)\s+[A-Za-z0-9._~+/=-]{6,}|\b(?:sk_live|sk_test|whsec|ghp|AIza|AKIA|cf_|re_)[A-Za-z0-9_-]{8,}|\b(?:password|passwd|secret|token|cookie|authorization|api[_-]?key|totp[_-]?(?:secret|seed|code)|backup[_-]?codes?)\s*[:=]\s*[^\s,;'"}\]]+)/gi;
+const EMAIL_IN_TEXT_RE = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g;
+const ID_PHONE_RE = /(?<!\w)(?:\+?62|0)8[1-9](?:[\s.-]?\d){6,11}(?!\w)/g;
+const INTL_PHONE_RE = /(?<!\w)\+[1-9]\d{0,2}(?:[\s.-]?\d){7,13}(?!\w)/g;
+const FORMATTED_PHONE_RE =
+  /(?<!\w)(?:\(\d{3}\)\s?\d{3}[\s.-]\d{4}|\d{3}[\s.-]\d{3}[\s.-]\d{4})(?!\w)/g;
+const BACKUP_CODE_RE = /\b[A-Za-z0-9]{5}-[A-Za-z0-9]{5}\b/g;
+const BASE32_TOTP_SECRET_RE =
+  /\b(?:(?=[A-Z2-7]*[A-Z])(?=[A-Z2-7]*[2-7])[A-Z2-7]{16,}|[A-Z2-7]{32,})={0,6}\b/g;
 
 export class CliValidationError extends Error {
   constructor(message) {
@@ -55,7 +64,14 @@ export function generateUlid(nowMs = Date.now()) {
 export function redactCliReason(rawReason) {
   return String(rawReason ?? "")
     .replace(CONTROL_CHARS_RE, " ")
+    .replace(OTPAUTH_URI_RE, "[REDACTED]")
     .replace(SECRET_PATTERN_RE, "[REDACTED]")
+    .replace(EMAIL_IN_TEXT_RE, "[REDACTED]")
+    .replace(ID_PHONE_RE, "[REDACTED]")
+    .replace(INTL_PHONE_RE, "[REDACTED]")
+    .replace(FORMATTED_PHONE_RE, "[REDACTED]")
+    .replace(BACKUP_CODE_RE, "[REDACTED]")
+    .replace(BASE32_TOTP_SECRET_RE, "[REDACTED]")
     .trim();
 }
 
@@ -365,17 +381,6 @@ export function executeLocalOperatorAction(options, nowMs = Date.now()) {
       );
     }
 
-    const activeCountRow = db
-      .prepare("SELECT COUNT(*) AS count FROM platform_operators WHERE revoked_at IS NULL")
-      .get();
-    const activeCount = Number(activeCountRow?.count ?? 0);
-
-    if (options.mode === "bootstrap" && !options.allowAdditional && activeCount > 0) {
-      throw new CliValidationError(
-        "An active platform operator already exists; use --mode recover for audited recovery.",
-      );
-    }
-
     const auditId = generateUlid(nowMs);
     const action =
       options.mode === "recover" ? "platform_operator.recover" : "platform_operator.bootstrap";
@@ -383,9 +388,25 @@ export function executeLocalOperatorAction(options, nowMs = Date.now()) {
       mode: options.mode,
       target: options.target,
       reset2fa: Boolean(options.reset2fa),
+      recoveryEvent:
+        options.mode === "recover" && options.reset2fa
+          ? "platform_operator.recover_2fa"
+          : options.mode === "recover"
+            ? "platform_operator.recover_grant"
+            : null,
     });
 
     if (options.dryRun) {
+      const dryActiveCountRow = db
+        .prepare("SELECT COUNT(*) AS count FROM platform_operators WHERE revoked_at IS NULL")
+        .get();
+      const dryActiveCount = Number(dryActiveCountRow?.count ?? 0);
+      if (options.mode === "bootstrap" && !options.allowAdditional && dryActiveCount > 0) {
+        throw new CliValidationError(
+          "An active platform operator already exists; use --mode recover for audited recovery.",
+        );
+      }
+
       return {
         ok: true,
         dryRun: true,
@@ -402,6 +423,17 @@ export function executeLocalOperatorAction(options, nowMs = Date.now()) {
 
     db.exec("BEGIN IMMEDIATE");
     try {
+      // Atomic active-operator check inside BEGIN IMMEDIATE prevents concurrent bootstrap races.
+      const activeCountRow = db
+        .prepare("SELECT COUNT(*) AS count FROM platform_operators WHERE revoked_at IS NULL")
+        .get();
+      const activeCount = Number(activeCountRow?.count ?? 0);
+      if (options.mode === "bootstrap" && !options.allowAdditional && activeCount > 0) {
+        throw new CliValidationError(
+          "An active platform operator already exists; use --mode recover for audited recovery.",
+        );
+      }
+
       db.prepare(
         `
         INSERT INTO platform_operators (
@@ -423,6 +455,14 @@ export function executeLocalOperatorAction(options, nowMs = Date.now()) {
           nowMs,
           user.id,
         );
+        const hasSession2faTable = db
+          .prepare(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_two_factor_verifications' LIMIT 1",
+          )
+          .get();
+        if (hasSession2faTable) {
+          db.prepare("DELETE FROM session_two_factor_verifications WHERE user_id = ?").run(user.id);
+        }
         db.prepare("DELETE FROM sessions WHERE user_id = ?").run(user.id);
       }
 

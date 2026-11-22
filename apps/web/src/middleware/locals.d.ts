@@ -1,6 +1,9 @@
 /// <reference types="astro/client" />
 
-import type { AuthorizedTenantMember } from "@punyasitus/auth";
+import type {
+  AuthorizedTenantMember,
+  VerifiedPlatformOperatorContext,
+} from "@punyasitus/auth";
 import type { SurfaceKind } from "@punyasitus/core";
 import type { TenantContext } from "../core/tenant.ts";
 
@@ -30,6 +33,8 @@ declare global {
       authUser: AuthLocalsUser | null;
       authSession: AuthLocalsSession | null;
       authorizedTenantMember: AuthorizedTenantMember | null;
+      platformOperator: VerifiedPlatformOperatorContext | null;
+      twoFactorVerifiedAtMs: number | null;
     }
   }
 }

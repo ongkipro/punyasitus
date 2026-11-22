@@ -12,7 +12,15 @@ This runbook defines the trusted-environment bootstrap, operator grant/revoke go
   1. The session exists in `PLATFORM_DB.sessions`, belongs to `user.id`, and is not expired (revoked sessions fail immediately with `401 SESSION_REVOKED`).
   2. The user currently has `revoked_at IS NULL` in `PLATFORM_DB.platform_operators` (revoked operators fail immediately with `403 OPERATOR_REVOKED` even if they still hold an active session; non-operators fail with `403 PLATFORM_OPERATOR_REQUIRED`).
 - **Surface Isolation:** Superadmin routes and APIs are served exclusively on `console.punyasitus.com` (`/api/console/**`), use a separate `__Host-` session cookie boundary, and return `Cache-Control: private, no-store` (never publicly cached).
-- **Mandatory Second Factor (`DEC-021`, `REQ-068`):** Every active platform operator must enroll TOTP 2FA (wired centrally by `TASK-067`). Sensitive operations (grant/revoke, tenant state transition, locked domain change, custom theme grant) require recent reauthentication within **10 minutes**.
+- **Mandatory Second Factor (`DEC-021`, `REQ-068`, `TASK-067`):**
+  - Powered by the pinned Better Auth `1.7.27` `twoFactor` plugin (`issuer: "PunyaSitus"`, 6-digit 30-second TOTP + 10 encrypted single-use backup codes) paired with additive session verification ledger `session_two_factor_verifications` (`0003_session_two_factor_state.sql`).
+  - **Central Platform Middleware Gate (`apps/web/src/middleware/auth.ts`):** Enforced independently of sign-in method (password or Google OAuth) on EVERY `console.punyasitus.com` page and EVERY `/api/console/**` endpoint:
+    - Unenrolled operator (`two_factor_enabled = 0`) -> `403 TOTP_ENROLLMENT_REQUIRED` everywhere on console; only `/auth/two-factor` enrollment and `/api/auth/two-factor/*` are reachable.
+    - Enrolled operator with a password-only or 2FA-incomplete session (no matching row in `session_two_factor_verifications`) -> `403 TOTP_REQUIRED`.
+    - Tenant users on `/dashboard/*`, `/account`, and `/api/tenants/*` are **never** forced into 2FA; tenant owners may optionally enable or disable 2FA under `/account/security`.
+  - **10-Minute Step-Up Window (`requireRecentSecondFactor`):** Reusable guard in `packages/auth/src/platform/guard.ts` consumed by `TASK-026`, `TASK-046`, `TASK-047`, and `TASK-048` (operator grant/revoke, tenant state transition, locked domain change, custom theme grant). Rejects stale (>10 minutes) verifications with `403 RECENT_SECOND_FACTOR_REQUIRED` and appends a sanitized `denied` audit row.
+  - **Self-Disable Blocked for Operators:** Active platform operators calling `POST /api/auth/two-factor/disable` are rejected with `403 OPERATOR_2FA_MANDATORY`. Lost-factor recovery must go through Section 5 below.
+  - **Zero Secret/Code Logging:** TOTP secrets, seeds, `otpauth://` URIs, and backup codes are NEVER written to logs or `platform_audit`. Backup codes are shown ONCE during enrollment and consumed on first use.
 
 ---
 
@@ -110,12 +118,12 @@ If an operator loses their TOTP authenticator device and all single-use backup c
      --local \
      --reset-2fa
    ```
-3. **What `--mode recover --reset-2fa` Atomically Performs:**
+3. **What `--mode recover --reset-2fa` Atomically Performs (inside `BEGIN IMMEDIATE`):**
    - Ensures the verified operator holds an active `platform_operators` grant.
    - Deletes the operator's row in `two_factors` and resets `users.two_factor_enabled = 0`.
-   - Deletes all active rows in `sessions` for that `user_id` so existing cookies are invalidated immediately.
-   - Inserts an immutable `platform_operator.recover` entry in `platform_audit` with `actor_role = 'system_recovery'` and the sanitized reason.
-4. **Post-Recovery Enrollment:** On next sign-in to `console.punyasitus.com`, the mandatory 2FA gate (`TASK-067`) restricts the operator strictly to the TOTP enrollment flow until a new authenticator and fresh backup codes are enrolled.
+   - Deletes all rows in `session_two_factor_verifications` and all active rows in `sessions` for that `user_id` so existing cookies and step-up states are invalidated immediately.
+   - Inserts an immutable `platform_operator.recover` entry in `platform_audit` with `actor_role = 'system_recovery'`, `metadata_json.recoveryEvent = 'platform_operator.recover_2fa'`, and the redacted reason (emails, phone numbers, secrets, `otpauth://` URIs, and backup codes are stripped before persistence).
+4. **Post-Recovery Enrollment:** On next sign-in to `console.punyasitus.com`, the mandatory 2FA gate (`TASK-067`) blocks all console pages and `/api/console/**` endpoints with `403 TOTP_ENROLLMENT_REQUIRED`, restricting the operator strictly to `/auth/two-factor` until a new authenticator and fresh single-use backup codes are enrolled and verified.
 
 ---
 

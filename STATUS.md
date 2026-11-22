@@ -11,11 +11,11 @@ Independent-Review-Head: UNSET
 
 ## Now
 
-Foundation Spine (`F0`–`F4`) and Wave 2 Closing Batch A (`TASK-045` Cloudflare SaaS Topology & `TASK-049` Platform Grant/Bootstrap/Audit, `RUN-20261122T180337Z-af4e28aa`) implemented via 2 parallel child worktrees (`w2-topology`, `w2-platform-ops`). `TASK-045` adds declarative Cloudflare two-zone SaaS topology (`infra/cloudflare/topology.json`, `wrangler.jsonc` `preview_urls: false`, `Markdown for Agents` on / Free Bot Fight Mode off, O2O + `workers.dev`/preview 404 verification, `scripts/verify/routes.mjs`, `docs/operations/hosting.md`). `TASK-049` adds verified-account operator bootstrap, live session + active grant guard, atomic `platform_audit` + state rollback on audit failure, concurrent final-operator revocation protection, `scripts/platform-operator.mjs`, and `docs/operations/platform-access.md`.
+Foundation Spine (`F0`–`F4`), Wave 2 Closing Batch A (`TASK-045` Cloudflare SaaS Topology & `TASK-049` Platform Grant/Bootstrap/Audit), and `TASK-067` (Operator Mandatory 2FA, `REQ-068`, `DEC-021`) are implemented. `TASK-067` wires the pinned Better Auth `1.7.27` `twoFactor` plugin (TOTP + encrypted single-use backup codes), additive `0003_session_two_factor_state.sql` (`session_two_factor_verifications`), central console middleware 2FA gate (`403 TOTP_ENROLLMENT_REQUIRED` / `403 TOTP_REQUIRED`), reusable 10-minute `requireRecentSecondFactor()` guard, `createTwoFactorEnrolledOperatorFixture()`, `/api/auth/two-factor/{status,enroll,verify,disable}`, Bahasa Indonesia `base-nova` `/auth/two-factor` & `/account/security` screens, and `TASK-049` CLI redaction/atomicity fixes.
 
 ## Next
 
-Complete independent cross-family R3 review and `delivery-ledger finish` for `TASK-045` + `TASK-049`, commit/push to `main`, then finish Wave 2 security gates (`TASK-067` Operator Mandatory 2FA -> `TASK-090` Primary Google Sign-In & Turnstile) and fan out M1 feature waves in parallel.
+Complete independent cross-family R3 review and `delivery-ledger finish` for `TASK-067`, then implement `TASK-090` (Primary Google Sign-In & Turnstile) to close Wave 2 and fan out M1 feature waves in parallel.
 
 ## Blockers
 

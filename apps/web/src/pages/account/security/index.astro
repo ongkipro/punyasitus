@@ -1,0 +1,65 @@
+---
+import { env } from "cloudflare:workers";
+import { getSessionSecondFactorState } from "@punyasitus/auth";
+import { getActivePlatformOperator } from "@punyasitus/db/platform";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { AccountSecurity, type AccountSecurityInitialState } from "./_AccountSecurity";
+
+const authUser = Astro.locals.authUser;
+const authSession = Astro.locals.authSession;
+
+let enrolled = false;
+let isPlatformOperator = false;
+let sessionVerified = false;
+let verifiedAtMs: number | null = null;
+
+if (authUser && authSession && env.PLATFORM_DB) {
+  try {
+    const [op, tfState] = await Promise.all([
+      getActivePlatformOperator(env.PLATFORM_DB, authUser.id),
+      getSessionSecondFactorState(env.PLATFORM_DB, {
+        sessionId: authSession.id,
+        userId: authUser.id,
+      }),
+    ]);
+    isPlatformOperator = op !== null;
+    enrolled = tfState.twoFactorEnabled;
+    sessionVerified = tfState.sessionVerified;
+    verifiedAtMs = tfState.verifiedAtMs;
+  } catch {
+    // Preserve conservative defaults
+  }
+}
+
+const initialState: AccountSecurityInitialState = {
+  authenticated: Boolean(authUser && authSession),
+  userName: authUser?.name ?? null,
+  userEmail: authUser?.email ?? null,
+  enrolled,
+  isPlatformOperator,
+  sessionVerified,
+  verifiedAtMs,
+};
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+---
+
+<DashboardLayout
+  title="Keamanan & 2FA"
+  surface="dashboard"
+  workspaceName="Akun PunyaSitus"
+  workspaceSubtitle="Autentikasi dua faktor & perlindungan akun"
+  activeNavId="settings"
+  basePath="/account"
+  userDisplayName={authUser?.name ?? "Tamu"}
+  userRoleLabel={
+    !authUser
+      ? "Sesi Berakhir"
+      : isPlatformOperator
+        ? "Operator Platform"
+        : "Pemilik Akun"
+  }
+>
+  <AccountSecurity client:load initialState={initialState} />
+</DashboardLayout>

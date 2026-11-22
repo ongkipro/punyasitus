@@ -19,19 +19,53 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { createAccessControl } from "better-auth/plugins/access";
 import { organization } from "better-auth/plugins/organization";
 import { defaultStatements } from "better-auth/plugins/organization/access";
+import { twoFactor } from "better-auth/plugins/two-factor";
 import { relations } from "drizzle-orm";
+import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { getAuthCookieConfig, type AuthSurface } from "./cookies.ts";
+
+/**
+ * Better Auth 1.7.27 `two_factors` table binding matching `0001_initial_platform.sql`
+ * plus additive columns from `0003_session_two_factor_state.sql`, with Drizzle automatic
+ * `createdAt`/`updatedAt` defaults so Better Auth's `twoFactor` plugin writes succeed cleanly.
+ */
+export const betterAuthTwoFactors = sqliteTable("two_factors", {
+  id: text("id").primaryKey(),
+  userId: text("user_id")
+    .notNull()
+    .unique()
+    .references(() => users.id, { onDelete: "cascade" }),
+  secret: text("secret").notNull(),
+  backupCodes: text("backup_codes").notNull(),
+  verified: integer("verified", { mode: "boolean" }).notNull().default(true),
+  failedVerificationCount: integer("failed_verification_count").notNull().default(0),
+  lockedUntil: integer("locked_until", { mode: "timestamp_ms" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date())
+    .$onUpdateFn(() => new Date()),
+});
+
+export const TWO_FACTOR_ISSUER = "PunyaSitus" as const;
+export const TWO_FACTOR_TOTP_DIGITS = 6 as const;
+export const TWO_FACTOR_TOTP_PERIOD_SECONDS = 30 as const;
+export const TWO_FACTOR_BACKUP_CODE_COUNT = 10 as const;
 
 /**
  * Canonical Better Auth -> Drizzle SQLite (`PLATFORM_DB`) schema mapping.
  * Maps Better Auth singular model keys to the plural SQLite tables declared in
- * `packages/db/src/platform/schema.ts` and `0001_initial_platform.sql`.
+ * `packages/db/src/platform/schema.ts`, `0001_initial_platform.sql`, and
+ * `0003_session_two_factor_state.sql`.
  */
 export const BETTER_AUTH_SCHEMA_MAPPING = {
   user: users,
   session: sessions,
   account: accounts,
   verification: verifications,
+  twoFactor: betterAuthTwoFactors,
   organization: organizations,
   member: members,
   invitation: invitations,
@@ -40,8 +74,16 @@ export const BETTER_AUTH_SCHEMA_MAPPING = {
 const userRelations = relations(users, ({ many }) => ({
   sessions: many(sessions),
   accounts: many(accounts),
+  twoFactors: many(betterAuthTwoFactors),
   members: many(members),
   invitations: many(invitations),
+}));
+
+const twoFactorRelations = relations(betterAuthTwoFactors, ({ one }) => ({
+  user: one(users, {
+    fields: [betterAuthTwoFactors.userId],
+    references: [users.id],
+  }),
 }));
 
 const sessionRelations = relations(sessions, ({ one }) => ({
@@ -94,6 +136,7 @@ export const BETTER_AUTH_DRIZZLE_SCHEMA = {
   userRelations,
   sessionRelations,
   accountRelations,
+  twoFactorRelations,
   organizationRelations,
   memberRelations,
   invitationRelations,
@@ -294,6 +337,25 @@ export function createAuth(platformDb: D1Database, options: CreateAuthOptions) {
           }),
         },
       }),
+      twoFactor({
+        issuer: TWO_FACTOR_ISSUER,
+        totpOptions: {
+          digits: TWO_FACTOR_TOTP_DIGITS,
+          period: TWO_FACTOR_TOTP_PERIOD_SECONDS,
+        },
+        backupCodeOptions: {
+          amount: TWO_FACTOR_BACKUP_CODE_COUNT,
+          length: 10,
+          storeBackupCodes: "encrypted",
+        },
+        skipVerificationOnEnable: false,
+        twoFactorCookieMaxAge: 600,
+        accountLockout: {
+          enabled: true,
+          maxFailedAttempts: 5,
+          durationSeconds: 900,
+        },
+      }),
     ],
     advanced: {
       database: {
@@ -322,4 +384,5 @@ export type PunyaSitusAuth = ReturnType<typeof createAuth>;
 export * from "./account.ts";
 export * from "./cookies.ts";
 export * from "./permissions.ts";
+export * from "./platform/index.ts";
 export * from "./session-guard.ts";

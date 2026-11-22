@@ -1,8 +1,14 @@
 import { env } from "cloudflare:workers";
-import { assertAdminCsrfAndOrigin, createAuth } from "@punyasitus/auth";
+import {
+  applySessionTwoFactorMigration,
+  assertAdminCsrfAndOrigin,
+  createAuth,
+} from "@punyasitus/auth";
 import type { CloudflareSendEmailBinding, EmailPort } from "@punyasitus/core/email/index";
+import { getActivePlatformOperator } from "@punyasitus/db/platform";
 import type { APIRoute } from "astro";
 import {
+  normalizeMiddlewarePathname,
   resolveAuthEmailPort,
   resolvePlatformAuthHostContext,
   resolveSurfaceAuthSecret,
@@ -101,6 +107,58 @@ export async function handleBetterAuthRequest(
     trustedOrigins: [hostCtx.expectedOrigin],
     emailPort: resolveAuthEmailPort(runtimeEnv, options.emailPort),
   });
+
+  const rawPathname = new URL(request.url).pathname;
+  const normalizedPathname = normalizeMiddlewarePathname(rawPathname);
+  if (!normalizedPathname) {
+    return buildJsonResponse(400, {
+      success: false,
+      code: "BAD_REQUEST",
+      message: "Path permintaan autentikasi tidak valid.",
+    });
+  }
+  const normalizedPathnameLower = normalizedPathname.toLowerCase();
+
+  if (normalizedPathnameLower.startsWith("/api/auth/two-factor")) {
+    if (runtimeEnv.APP_ENV === "local" || runtimeEnv.APP_ENV === "test") {
+      await applySessionTwoFactorMigration(runtimeEnv.PLATFORM_DB);
+    }
+    if (normalizedPathnameLower === "/api/auth/two-factor/disable") {
+      let activeSession: Awaited<ReturnType<typeof auth.api.getSession>>;
+      try {
+        activeSession = await auth.api.getSession({ headers: request.headers });
+      } catch {
+        return buildJsonResponse(503, {
+          success: false,
+          code: "SERVICE_UNAVAILABLE",
+          message: "Gagal memverifikasi status sesi operator platform.",
+        });
+      }
+      if (activeSession?.user) {
+        let operatorGrant: Awaited<ReturnType<typeof getActivePlatformOperator>>;
+        try {
+          operatorGrant = await getActivePlatformOperator(
+            runtimeEnv.PLATFORM_DB,
+            activeSession.user.id,
+          );
+        } catch {
+          return buildJsonResponse(503, {
+            success: false,
+            code: "SERVICE_UNAVAILABLE",
+            message: "Gagal memverifikasi status operator platform.",
+          });
+        }
+        if (operatorGrant) {
+          return buildJsonResponse(403, {
+            success: false,
+            code: "OPERATOR_2FA_MANDATORY",
+            message:
+              "Operator platform wajib mengaktifkan 2FA dan tidak dapat menonaktifkannya sendiri.",
+          });
+        }
+      }
+    }
+  }
 
   const response = await auth.handler(request);
   return withNoStoreHeaders(response);

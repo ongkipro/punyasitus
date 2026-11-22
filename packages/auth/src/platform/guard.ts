@@ -7,11 +7,16 @@ import {
   type PlatformOperatorRecord,
 } from "@punyasitus/db/platform";
 import { DEFAULT_REAUTH_WINDOW_MS, verifyUserPassword } from "../account.ts";
+import {
+  DEFAULT_SECOND_FACTOR_WINDOW_MS,
+  getSessionSecondFactorState,
+  type SessionSecondFactorMethod,
+} from "./two-factor.ts";
 
 /**
  * Authoritative platform operator authorization guard and audited grant/revoke services
- * consumed by `console.punyasitus.com` routes and TASK-026 / TASK-048 handlers
- * (PLAN §13; REQ-051, REQ-034, REQ-039).
+ * consumed by `console.punyasitus.com` routes and TASK-026 / TASK-046 / TASK-047 / TASK-048
+ * handlers (PLAN §13; REQ-051, REQ-068, REQ-034, REQ-039; DEC-021).
  *
  * Core security invariants:
  * - Every privileged call verifies BOTH a live, non-expired, non-revoked session in
@@ -19,8 +24,9 @@ import { DEFAULT_REAUTH_WINDOW_MS, verifyUserPassword } from "../account.ts";
  * - Organization / tenant roles (`owner`, `admin`, `editor`, `agency_staff`, `setup_staff`),
  *   client-supplied flags, and email suffixes NEVER confer platform operator access.
  * - Revoked operators fail subsequent privileged calls immediately even with an active session.
- * - Sensitive mutations (grant/revoke) require recent reauthentication within 10 minutes
- *   (`DEFAULT_PLATFORM_REAUTH_WINDOW_MS`).
+ * - Mandatory 2FA (`requireTwoFactor` / `requireRecentSecondFactor`) enforces live
+ *   `users.two_factor_enabled = 1` AND an active session row in `session_two_factor_verifications`
+ *   within the 10-minute step-up window (`DEFAULT_SECOND_FACTOR_WINDOW_MS`).
  */
 
 export const DEFAULT_PLATFORM_REAUTH_WINDOW_MS = DEFAULT_REAUTH_WINDOW_MS;
@@ -31,7 +37,10 @@ export type PlatformGuardErrorCode =
   | "SESSION_EXPIRED"
   | "PLATFORM_OPERATOR_REQUIRED"
   | "OPERATOR_REVOKED"
+  | "TOTP_ENROLLMENT_REQUIRED"
   | "TOTP_REQUIRED"
+  | "RECENT_SECOND_FACTOR_REQUIRED"
+  | "OPERATOR_2FA_MANDATORY"
   | "REAUTH_REQUIRED";
 
 export class PlatformGuardError extends Error {
@@ -90,6 +99,8 @@ export interface VerifiedPlatformOperatorContext {
   readonly grant: PlatformOperatorRecord;
   readonly reauthenticated: boolean;
   readonly reauthMethod: "fresh_reauth" | "password" | null;
+  readonly twoFactorVerifiedAtMs: number | null;
+  readonly twoFactorMethod: SessionSecondFactorMethod | null;
   readonly verifiedAtMs: number;
 }
 
@@ -284,25 +295,50 @@ export async function requireActivePlatformOperator(
     );
   }
 
-  // 3. Optional mandatory 2FA hook (wired by TASK-067)
-  if (params.requireTwoFactor && (!grant.twoFactorEnabled || !params.twoFactorVerified)) {
-    await recordDeniedPlatformAccess(platformDb, {
-      enabled: auditOnDeny,
-      actorUserId: userId,
-      actorRole: "platform_operator",
-      action,
-      targetType: "platform_operator",
-      targetId: userId,
-      reason: "Verified two-factor authentication required",
-      requestId: params.requestId,
-      code: "TOTP_REQUIRED",
-      nowMs,
-    });
-    throw new PlatformGuardError(
-      403,
-      "TOTP_REQUIRED",
-      "Verified two-factor authentication is required for platform operators.",
-    );
+  // 3. Mandatory 2FA enforcement (wired by TASK-067; backward-compatible when requireTwoFactor is unset)
+  const twoFactorState = await getSessionSecondFactorState(platformDb, { sessionId, userId });
+  if (params.requireTwoFactor) {
+    if (!grant.twoFactorEnabled || !twoFactorState.twoFactorEnabled) {
+      await recordDeniedPlatformAccess(platformDb, {
+        enabled: auditOnDeny,
+        actorUserId: userId,
+        actorRole: "platform_operator",
+        action,
+        targetType: "platform_operator",
+        targetId: userId,
+        reason: "Platform operator two-factor enrollment is required",
+        requestId: params.requestId,
+        code: "TOTP_ENROLLMENT_REQUIRED",
+        nowMs,
+      });
+      throw new PlatformGuardError(
+        403,
+        "TOTP_ENROLLMENT_REQUIRED",
+        "Platform operator must enroll two-factor authentication before accessing console resources.",
+      );
+    }
+
+    const sessionCompleted2fa =
+      params.twoFactorVerified === true || twoFactorState.sessionVerified;
+    if (!sessionCompleted2fa) {
+      await recordDeniedPlatformAccess(platformDb, {
+        enabled: auditOnDeny,
+        actorUserId: userId,
+        actorRole: "platform_operator",
+        action,
+        targetType: "platform_operator",
+        targetId: userId,
+        reason: "Verified two-factor session is required",
+        requestId: params.requestId,
+        code: "TOTP_REQUIRED",
+        nowMs,
+      });
+      throw new PlatformGuardError(
+        403,
+        "TOTP_REQUIRED",
+        "Verified two-factor authentication is required for platform operators.",
+      );
+    }
   }
 
   // 4. Recent reauthentication verification (PLAN §13: 10-minute window for grant/revoke)
@@ -353,7 +389,106 @@ export async function requireActivePlatformOperator(
     grant,
     reauthenticated: reauthMethod !== null,
     reauthMethod,
+    twoFactorVerifiedAtMs: twoFactorState.verifiedAtMs,
+    twoFactorMethod: twoFactorState.method,
     verifiedAtMs: nowMs,
+  };
+}
+
+export interface RequireRecentSecondFactorParams {
+  readonly session: PlatformSessionInput | null | undefined;
+  readonly user: PlatformUserInput | null | undefined;
+  readonly windowMs?: number;
+  readonly nowMs?: number;
+  readonly requestId?: string | null;
+  readonly action?: string;
+  readonly auditOnDeny?: boolean;
+}
+
+export interface VerifiedRecentSecondFactorContext extends VerifiedPlatformOperatorContext {
+  readonly twoFactorVerifiedAtMs: number;
+  readonly twoFactorMethod: SessionSecondFactorMethod;
+  readonly secondFactorAgeMs: number;
+}
+
+/**
+ * Reusable recent second-factor guard for privileged platform mutations (`TASK-026`, `TASK-046`,
+ * `TASK-047`, `TASK-048`: grant/revoke, tenant state transition, locked domain change, custom theme grant;
+ * `PLAN §13`, `DEC-021`, `REQ-068`).
+ *
+ * Enforces:
+ * 1. Live, non-revoked, non-expired session in `PLATFORM_DB.sessions`.
+ * 2. Active `platform_operators` grant (`revoked_at IS NULL`).
+ * 3. Enrolled 2FA (`users.two_factor_enabled = 1`), else `403 TOTP_ENROLLMENT_REQUIRED`.
+ * 4. Active session 2FA completion in `session_two_factor_verifications`, else `403 TOTP_REQUIRED`.
+ * 5. Verification completed within `windowMs` (default 10 minutes = 600_000 ms), else
+ *    `403 RECENT_SECOND_FACTOR_REQUIRED` with a sanitized `denied` audit entry.
+ */
+export async function requireRecentSecondFactor(
+  platformDb: D1Database,
+  params: RequireRecentSecondFactorParams,
+): Promise<VerifiedRecentSecondFactorContext> {
+  const nowMs = Math.trunc(params.nowMs ?? Date.now());
+  const windowMs = Math.max(1_000, Math.trunc(params.windowMs ?? DEFAULT_SECOND_FACTOR_WINDOW_MS));
+  const auditOnDeny = params.auditOnDeny ?? true;
+  const action = params.action?.trim() || "platform.privileged_action";
+
+  const actor = await requireActivePlatformOperator(platformDb, {
+    session: params.session,
+    user: params.user,
+    requestId: params.requestId,
+    action,
+    requireTwoFactor: true,
+    nowMs,
+    auditOnDeny,
+  });
+
+  if (actor.twoFactorVerifiedAtMs === null || actor.twoFactorMethod === null) {
+    await recordDeniedPlatformAccess(platformDb, {
+      enabled: auditOnDeny,
+      actorUserId: actor.userId,
+      actorRole: "platform_operator",
+      action,
+      targetType: "platform_operator",
+      targetId: actor.userId,
+      reason: "Session second-factor verification record is required",
+      requestId: params.requestId,
+      code: "TOTP_REQUIRED",
+      nowMs,
+    });
+    throw new PlatformGuardError(
+      403,
+      "TOTP_REQUIRED",
+      "A two-factor verified session is required for this privileged operation.",
+    );
+  }
+
+  const ageMs = nowMs - actor.twoFactorVerifiedAtMs;
+  if (ageMs < 0 || ageMs > windowMs) {
+    await recordDeniedPlatformAccess(platformDb, {
+      enabled: auditOnDeny,
+      actorUserId: actor.userId,
+      actorRole: "platform_operator",
+      action,
+      targetType: "platform_operator",
+      targetId: actor.userId,
+      reason: "Recent second-factor verification within 10 minutes is required",
+      requestId: params.requestId,
+      code: "RECENT_SECOND_FACTOR_REQUIRED",
+      nowMs,
+    });
+    throw new PlatformGuardError(
+      403,
+      "RECENT_SECOND_FACTOR_REQUIRED",
+      "Recent two-factor verification within 10 minutes is required for this privileged operation.",
+    );
+  }
+
+  return {
+    ...actor,
+    twoFactorVerifiedAtMs: actor.twoFactorVerifiedAtMs,
+    twoFactorMethod: actor.twoFactorMethod,
+    secondFactorAgeMs: ageMs,
   };
 }
 
@@ -367,6 +502,8 @@ export interface AuditedPlatformOperatorActionParams {
   readonly currentPassword?: string;
   readonly requireTwoFactor?: boolean;
   readonly twoFactorVerified?: boolean;
+  /** Enforces `requireRecentSecondFactor` (10-minute window) for TASK-067/048 callers. */
+  readonly requireRecentSecondFactor?: boolean;
   readonly reauthWindowMs?: number;
   readonly nowMs?: number;
 }
@@ -379,26 +516,36 @@ export interface AuditedPlatformOperatorActionResult {
 
 /**
  * High-level audited operator grant service for `TASK-048` / `TASK-026`.
- * Enforces active session + active operator grant + recent reauthentication,
- * then executes the atomic `platform_operators` + `platform_audit` batch.
+ * Enforces active session + active operator grant + recent reauthentication (and recent 2FA
+ * when `requireRecentSecondFactor` is enabled), then executes the atomic
+ * `platform_operators` + `platform_audit` batch.
  */
 export async function executeAuditedPlatformGrant(
   platformDb: D1Database,
   params: AuditedPlatformOperatorActionParams,
 ): Promise<AuditedPlatformOperatorActionResult> {
-  const actor = await requireActivePlatformOperator(platformDb, {
-    session: params.session,
-    user: params.user,
-    requestId: params.requestId,
-    action: "platform_operator.grant",
-    requireRecentReauth: true,
-    reauthenticatedAtMs: params.reauthenticatedAtMs,
-    currentPassword: params.currentPassword,
-    requireTwoFactor: params.requireTwoFactor,
-    twoFactorVerified: params.twoFactorVerified,
-    reauthWindowMs: params.reauthWindowMs,
-    nowMs: params.nowMs,
-  });
+  const actor = params.requireRecentSecondFactor
+    ? await requireRecentSecondFactor(platformDb, {
+        session: params.session,
+        user: params.user,
+        windowMs: params.reauthWindowMs,
+        nowMs: params.nowMs,
+        requestId: params.requestId,
+        action: "platform_operator.grant",
+      })
+    : await requireActivePlatformOperator(platformDb, {
+        session: params.session,
+        user: params.user,
+        requestId: params.requestId,
+        action: "platform_operator.grant",
+        requireRecentReauth: true,
+        reauthenticatedAtMs: params.reauthenticatedAtMs,
+        currentPassword: params.currentPassword,
+        requireTwoFactor: params.requireTwoFactor,
+        twoFactorVerified: params.twoFactorVerified,
+        reauthWindowMs: params.reauthWindowMs,
+        nowMs: params.nowMs,
+      });
 
   const { operator, audit } = await grantPlatformOperator(platformDb, {
     actorUserId: actor.userId,
@@ -413,26 +560,36 @@ export async function executeAuditedPlatformGrant(
 
 /**
  * High-level audited operator revoke service for `TASK-048` / `TASK-026`.
- * Enforces active session + active operator grant + recent reauthentication,
- * then executes the atomic final-operator-safe revoke + `platform_audit` batch.
+ * Enforces active session + active operator grant + recent reauthentication (and recent 2FA
+ * when `requireRecentSecondFactor` is enabled), then executes the atomic
+ * final-operator-safe revoke + `platform_audit` batch.
  */
 export async function executeAuditedPlatformRevoke(
   platformDb: D1Database,
   params: AuditedPlatformOperatorActionParams,
 ): Promise<AuditedPlatformOperatorActionResult> {
-  const actor = await requireActivePlatformOperator(platformDb, {
-    session: params.session,
-    user: params.user,
-    requestId: params.requestId,
-    action: "platform_operator.revoke",
-    requireRecentReauth: true,
-    reauthenticatedAtMs: params.reauthenticatedAtMs,
-    currentPassword: params.currentPassword,
-    requireTwoFactor: params.requireTwoFactor,
-    twoFactorVerified: params.twoFactorVerified,
-    reauthWindowMs: params.reauthWindowMs,
-    nowMs: params.nowMs,
-  });
+  const actor = params.requireRecentSecondFactor
+    ? await requireRecentSecondFactor(platformDb, {
+        session: params.session,
+        user: params.user,
+        windowMs: params.reauthWindowMs,
+        nowMs: params.nowMs,
+        requestId: params.requestId,
+        action: "platform_operator.revoke",
+      })
+    : await requireActivePlatformOperator(platformDb, {
+        session: params.session,
+        user: params.user,
+        requestId: params.requestId,
+        action: "platform_operator.revoke",
+        requireRecentReauth: true,
+        reauthenticatedAtMs: params.reauthenticatedAtMs,
+        currentPassword: params.currentPassword,
+        requireTwoFactor: params.requireTwoFactor,
+        twoFactorVerified: params.twoFactorVerified,
+        reauthWindowMs: params.reauthWindowMs,
+        nowMs: params.nowMs,
+      });
 
   const { operator, audit } = await revokePlatformOperator(platformDb, {
     actorUserId: actor.userId,
