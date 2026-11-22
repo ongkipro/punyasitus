@@ -1,6 +1,13 @@
 import { z } from "zod";
 import { sanitizeExternalLink } from "../link-sanitizer.ts";
 import {
+  renderRichTextDocToSanitizedHtml,
+  sanitizeRichTextDoc,
+  sanitizeRichTextHtml,
+} from "./rich-text.ts";
+
+export * from "./rich-text.ts";
+import {
   ContentLifecycleStatusSchema,
   MenuLocationSchema,
   ResourceSeoInputSchema,
@@ -527,12 +534,17 @@ export const PostSnapshotSchema = z
     title: z.string().trim().min(1).max(200),
     excerpt: z.string().max(500).nullable().optional(),
     body: RestrictedRichTextDocSchema,
+    sanitizedHtml: z.string().max(250_000).optional(),
     primaryCategoryId: SequentialIdSchema.nullable().optional(),
+    categoryIds: z.array(SequentialIdSchema).max(10).optional(),
+    tagIds: z.array(SequentialIdSchema).max(20).optional(),
     authorId: SequentialIdSchema.nullable().optional(),
+    authorUserId: z.string().trim().min(1).max(64).nullable().optional(),
+    authorName: z.string().trim().min(1).max(120).nullable().optional(),
     coverMediaId: SequentialIdSchema.nullable().optional(),
     readingTimeMinutes: z.number().int().min(1).max(180).default(1),
     showToc: z.boolean().default(false),
-    seo: ResourceSeoInputSchema.nullable().optional(),
+    seo: PageSeoOverridesSchema.nullable().optional(),
   })
   .strict();
 
@@ -817,6 +829,19 @@ function sanitizePageSnapshot(data: PageSnapshot): PageSnapshot {
   };
 }
 
+function sanitizePostSnapshot(data: PostSnapshot): PostSnapshot {
+  const cleanBody = sanitizeRichTextDoc(data.body);
+  const cleanHtml =
+    data.sanitizedHtml !== undefined
+      ? sanitizeRichTextHtml(data.sanitizedHtml)
+      : renderRichTextDocToSanitizedHtml(cleanBody);
+  return {
+    ...data,
+    body: cleanBody,
+    ...(data.sanitizedHtml !== undefined ? { sanitizedHtml: cleanHtml } : {}),
+  };
+}
+
 function sanitizeOfferingSnapshot(data: OfferingSnapshot): OfferingSnapshot {
   const externalUrl =
     data.externalUrl !== undefined && data.externalUrl !== null
@@ -844,7 +869,8 @@ function parseSnapshotByType<K extends PublishableResourceType>(
         return sanitizePageSnapshot(parsed) as ResourceSnapshotMap[K];
       }
       case "post": {
-        return PostSnapshotSchema.parse(sanitizedInput) as ResourceSnapshotMap[K];
+        const parsed = PostSnapshotSchema.parse(sanitizedInput);
+        return sanitizePostSnapshot(parsed) as ResourceSnapshotMap[K];
       }
       case "offering": {
         const parsed = OfferingSnapshotSchema.parse(sanitizedInput);
