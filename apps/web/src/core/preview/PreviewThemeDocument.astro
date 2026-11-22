@@ -1,0 +1,27 @@
+---
+import siteBaseCss from "../../styles/site/base.css?raw";
+import siteTokensCss from "../../styles/site/tokens.css?raw";
+import Layout from "../../themes/default/Layout.astro";
+import type { PreviewRenderModel } from "./service.ts";
+
+export interface Props {
+  readonly model: PreviewRenderModel;
+}
+
+const { model } = Astro.props;
+const combinedSiteCss = `${siteTokensCss}\n${siteBaseCss}`;
+---
+
+<Layout
+  shell={model.shell}
+  pageTitle={model.pageTitle}
+  pageDescription={model.pageDescription ?? undefined}
+  layoutMode={model.layoutMode}
+  currentPath={model.currentPath}
+  showConsent={false}
+  vendorScripts={[]}
+  logoUrl={model.logoUrl}
+>
+  <style is:inline slot="head" data-preview-site-css="1" set:html={combinedSiteCss} />
+  <Fragment set:html={model.bodyHtml} />
+</Layout>

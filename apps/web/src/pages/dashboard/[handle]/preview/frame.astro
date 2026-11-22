@@ -1,0 +1,143 @@
+---
+import { env } from "cloudflare:workers";
+import { assertAuthorized } from "@punyasitus/auth";
+import {
+  buildPreviewResponseHeaders,
+  PREVIEW_HTML_CSP_HEADER,
+  PREVIEW_RESOURCE_KINDS,
+  validateDraftPreviewInput,
+  type PreviewResourceKind,
+} from "@punyasitus/core/preview/index";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import { renderPreviewDocumentInProcess } from "@/core/preview/astro-renderer";
+import { renderTenantDraftPreview } from "@/core/preview/service";
+import { bindTenantDatabase } from "@/core/tenant";
+import { resolveRequiredPreviewPermission } from "../../../api/tenants/[tenantId]/preview/_shared";
+
+/**
+ * Authorized Same-Origin Preview Frame Route (`/dashboard/:handle/preview/frame`)
+ * (PLAN §14; TASK-050).
+ *
+ * Renders the EXACT same registered Astro theme shell (`themes/default/Layout.astro`)
+ * in-process, neutralizes scripts/forms/external navigation, and serves with:
+ * - `Cache-Control: private, no-store, no-cache, must-revalidate`
+ * - `Pragma: no-cache`
+ * - `X-Robots-Tag: noindex, nofollow`
+ * - `X-PunyaSitus-Preview: 1`
+ * - `Content-Security-Policy: ... script-src 'none'; form-action 'none'; frame-ancestors 'self'`
+ */
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const RESOURCE_KIND_SET = new Set<string>(PREVIEW_RESOURCE_KINDS);
+
+function errorFrameResponse(status: number, title: string, message: string): Response {
+  const headers = buildPreviewResponseHeaders({
+    contentType: "text/html; charset=utf-8",
+    csp: PREVIEW_HTML_CSP_HEADER,
+  });
+  const safeTitle = title.replace(/[<>&"]/g, "");
+  const safeMessage = message.replace(/[<>&"]/g, "");
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>${safeTitle}</title></head><body style="font-family:system-ui,sans-serif;padding:2rem;color:#182522;background:#f8faf9;"><main role="alert"><h1>${safeTitle}</h1><p>${safeMessage}</p></main></body></html>`,
+    { status, headers },
+  );
+}
+
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return errorFrameResponse(404, "Halaman tidak ditemukan", "Pratinjau tidak tersedia.");
+}
+
+const authorizedMember = Astro.locals.authorizedTenantMember;
+if (!authorizedMember && !isLocalLoopback) {
+  return errorFrameResponse(401, "Autentikasi diperlukan", "Silakan masuk kembali untuk membuka pratinjau.");
+}
+
+const tenantId = authorizedMember?.tenantId ?? Astro.locals.tenant?.id ?? "";
+const tenantName = authorizedMember?.tenantName ?? Astro.locals.tenant?.name ?? rawHandle;
+const tenantDb =
+  Astro.locals.tenantDb ??
+  (tenantId
+    ? bindTenantDatabase(env.TENANT_STORE as unknown as TenantStoreNamespaceLike, tenantId)
+    : null);
+
+if (!tenantDb || !tenantId) {
+  return errorFrameResponse(
+    503,
+    "Pratinjau sementara tidak tersedia",
+    "Penyimpanan data tenant tidak dapat diakses saat ini.",
+  );
+}
+
+const rawKind = (Astro.url.searchParams.get("kind") ?? "home").trim().toLowerCase();
+const resourceKind: PreviewResourceKind = RESOURCE_KIND_SET.has(rawKind)
+  ? (rawKind as PreviewResourceKind)
+  : "home";
+const rawIdParam = Astro.url.searchParams.get("id");
+const parsedResourceId =
+  rawIdParam && /^\d+$/.test(rawIdParam) ? Number.parseInt(rawIdParam, 10) : undefined;
+const rawVersionParam = Astro.url.searchParams.get("version");
+const parsedExpectedVersion =
+  rawVersionParam && /^\d+$/.test(rawVersionParam)
+    ? Number.parseInt(rawVersionParam, 10)
+    : undefined;
+const rawThemeParam = Astro.url.searchParams.get("theme")?.trim() || undefined;
+const rawLayoutParam = Astro.url.searchParams.get("layout")?.trim();
+const layoutModeParam =
+  rawLayoutParam === "focused" || rawLayoutParam === "standard" ? rawLayoutParam : undefined;
+
+try {
+  const validatedInput = validateDraftPreviewInput({
+    resourceKind,
+    ...(parsedResourceId !== undefined ? { resourceId: parsedResourceId } : {}),
+    ...(parsedExpectedVersion !== undefined ? { expectedVersion: parsedExpectedVersion } : {}),
+    ...(rawThemeParam ? { themeId: rawThemeParam } : {}),
+    ...(layoutModeParam ? { layoutMode: layoutModeParam } : {}),
+  });
+
+  if (authorizedMember) {
+    assertAuthorized(
+      {
+        actorId: authorizedMember.userId,
+        surface: "app",
+        role: authorizedMember.role,
+        tenantId: authorizedMember.tenantId,
+        tenantStatus: authorizedMember.tenantStatus,
+      },
+      resolveRequiredPreviewPermission(validatedInput),
+      authorizedMember.tenantId,
+    );
+  }
+
+  const rendered = await renderTenantDraftPreview(
+    {
+      platformDb: env.PLATFORM_DB,
+      tenantDb,
+      tenantId,
+      tenantHandle: rawHandle,
+      tenantName,
+      input: validatedInput,
+    },
+    renderPreviewDocumentInProcess,
+  );
+
+  return new Response(rendered.html, {
+    status: 200,
+    headers: buildPreviewResponseHeaders({
+      contentType: "text/html; charset=utf-8",
+      csp: PREVIEW_HTML_CSP_HEADER,
+    }),
+  });
+} catch (err) {
+  const status =
+    err && typeof err === "object" && "httpStatus" in err && typeof err.httpStatus === "number"
+      ? err.httpStatus
+      : 422;
+  const message =
+    err instanceof Error ? err.message : "Pratinjau draf gagal dirender. Silakan coba muat ulang.";
+  return errorFrameResponse(status, "Pratinjau draf gagal dimuat", message);
+}
+---

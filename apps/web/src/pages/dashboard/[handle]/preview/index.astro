@@ -1,0 +1,224 @@
+---
+import { env } from "cloudflare:workers";
+import { assertAuthorized } from "@punyasitus/auth";
+import {
+  buildPreviewResponseHeaders,
+  PREVIEW_RESOURCE_KINDS,
+  PREVIEW_VIEWPORT_IDS,
+  validateDraftPreviewInput,
+  type PreviewResourceKind,
+  type PreviewViewportId,
+} from "@punyasitus/core/preview/index";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import type { TenantStatus, TenantVertical } from "@punyasitus/db/platform";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import { renderPreviewDocumentInProcess } from "@/core/preview/astro-renderer";
+import { renderTenantDraftPreview } from "@/core/preview/service";
+import { bindTenantDatabase } from "@/core/tenant";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { resolveRequiredPreviewPermission } from "../../../api/tenants/[tenantId]/preview/_shared";
+import { AdminPreviewShell, type PreviewErrorState } from "./_AdminPreviewShell";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const RESOURCE_KIND_SET = new Set<string>(PREVIEW_RESOURCE_KINDS);
+const VIEWPORT_SET = new Set<string>(PREVIEW_VIEWPORT_IDS);
+
+function neutralNotFoundResponse(): Response {
+  const headers = buildPreviewResponseHeaders({
+    contentType: "text/html; charset=utf-8",
+    csp: "default-src 'none'",
+  });
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>Halaman tidak ditemukan</title></head><body><main><h1>Halaman tidak ditemukan</h1></main></body></html>`,
+    { status: 404, headers },
+  );
+}
+
+function mapTenantStatusToLifecycle(status: TenantStatus): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+function mapVerticalToOfferingLabel(vertical: TenantVertical): string {
+  switch (vertical) {
+    case "catalog":
+    case "resto":
+      return "Produk";
+    case "travel":
+      return "Paket Tur";
+    case "dealer":
+      return "Kendaraan";
+    default:
+      return "Layanan";
+  }
+}
+
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+// Strict app-host isolation: NEVER served on tenant or console hosts!
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return neutralNotFoundResponse();
+}
+
+const authorizedMember = Astro.locals.authorizedTenantMember;
+if (!authorizedMember && !isLocalLoopback) {
+  return neutralNotFoundResponse();
+}
+
+// Parse bounded query parameters for initial preview target
+const rawKind = (Astro.url.searchParams.get("kind") ?? "home").trim().toLowerCase();
+const resourceKind: PreviewResourceKind = RESOURCE_KIND_SET.has(rawKind)
+  ? (rawKind as PreviewResourceKind)
+  : "home";
+
+const rawIdParam = Astro.url.searchParams.get("id");
+const parsedResourceId =
+  rawIdParam && /^\d+$/.test(rawIdParam) ? Number.parseInt(rawIdParam, 10) : undefined;
+
+const rawVersionParam = Astro.url.searchParams.get("version");
+const parsedExpectedVersion =
+  rawVersionParam && /^\d+$/.test(rawVersionParam)
+    ? Number.parseInt(rawVersionParam, 10)
+    : undefined;
+
+const rawThemeParam = Astro.url.searchParams.get("theme")?.trim() || undefined;
+const rawLayoutParam = Astro.url.searchParams.get("layout")?.trim();
+const layoutModeParam =
+  rawLayoutParam === "focused" || rawLayoutParam === "standard" ? rawLayoutParam : undefined;
+
+const rawViewport = (Astro.url.searchParams.get("viewport") ?? "desktop").trim().toLowerCase();
+const initialViewport: PreviewViewportId = VIEWPORT_SET.has(rawViewport)
+  ? (rawViewport as PreviewViewportId)
+  : "desktop";
+
+const tenantId = authorizedMember?.tenantId ?? Astro.locals.tenant?.id ?? "";
+const workspaceName = authorizedMember?.tenantName ?? Astro.locals.tenant?.name ?? rawHandle;
+const saasZone = env.SAAS_ZONE || "situsku.click";
+const workspaceSubtitle = Astro.locals.tenant?.primaryHost ?? `${rawHandle}.${saasZone}`;
+const basePath = `/dashboard/${rawHandle}`;
+const offeringLabel = mapVerticalToOfferingLabel(Astro.locals.tenant?.vertical ?? "compro");
+const lifecycleStatus = mapTenantStatusToLifecycle(
+  authorizedMember?.tenantStatus ?? Astro.locals.tenant?.status ?? "active",
+);
+
+let initialHtml: string | null = null;
+let resolvedVersion = parsedExpectedVersion ?? 0;
+let resolvedThemeId = rawThemeParam ?? "compro";
+let resolvedLayoutMode: "standard" | "focused" = layoutModeParam ?? "standard";
+let resolvedResourceId: number | string | null = parsedResourceId ?? null;
+let hasUnpublishedChanges = false;
+let initialError: PreviewErrorState | null = null;
+
+const tenantDb =
+  Astro.locals.tenantDb ??
+  (tenantId
+    ? bindTenantDatabase(env.TENANT_STORE as unknown as TenantStoreNamespaceLike, tenantId)
+    : null);
+
+if (!tenantDb || !tenantId) {
+  initialError = {
+    code: "SERVICE_UNAVAILABLE",
+    message: "Penyimpanan data tenant sementara tidak tersedia untuk pratinjau.",
+  };
+} else {
+  try {
+    const validatedInput = validateDraftPreviewInput({
+      resourceKind,
+      ...(parsedResourceId !== undefined ? { resourceId: parsedResourceId } : {}),
+      ...(parsedExpectedVersion !== undefined ? { expectedVersion: parsedExpectedVersion } : {}),
+      ...(rawThemeParam ? { themeId: rawThemeParam } : {}),
+      ...(layoutModeParam ? { layoutMode: layoutModeParam } : {}),
+    });
+
+    if (authorizedMember) {
+      assertAuthorized(
+        {
+          actorId: authorizedMember.userId,
+          surface: "app",
+          role: authorizedMember.role,
+          tenantId: authorizedMember.tenantId,
+          tenantStatus: authorizedMember.tenantStatus,
+        },
+        resolveRequiredPreviewPermission(validatedInput),
+        authorizedMember.tenantId,
+      );
+    }
+
+    const rendered = await renderTenantDraftPreview(
+      {
+        platformDb: env.PLATFORM_DB,
+        tenantDb,
+        tenantId,
+        tenantHandle: rawHandle,
+        tenantName: workspaceName,
+        input: validatedInput,
+      },
+      renderPreviewDocumentInProcess,
+    );
+
+    initialHtml = rendered.html;
+    resolvedVersion = rendered.model.version;
+    resolvedThemeId = rendered.model.themeId;
+    resolvedLayoutMode = rendered.model.layoutMode;
+    resolvedResourceId = rendered.model.resourceId;
+    hasUnpublishedChanges = rendered.model.hasUnpublishedChanges;
+  } catch (err) {
+    const code =
+      err && typeof err === "object" && "code" in err && typeof err.code === "string"
+        ? err.code
+        : "PREVIEW_FAILED";
+    const message =
+      err instanceof Error
+        ? err.message
+        : "Pratinjau draf tidak dapat dirender saat ini. Silakan coba muat ulang.";
+    initialError = { code, message };
+  }
+}
+
+// Mandatory uncacheable, non-indexable preview shell headers (PLAN §14; TASK-050)
+Astro.response.headers.set("Cache-Control", "private, no-store, no-cache, must-revalidate");
+Astro.response.headers.set("Pragma", "no-cache");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+Astro.response.headers.set("X-PunyaSitus-Preview", "1");
+Astro.response.headers.set("X-PunyaSitus-Cache", "BYPASS");
+Astro.response.headers.set("Vary", "Cookie, Authorization, Accept-Encoding");
+---
+
+<DashboardLayout
+  title={`Pratinjau Draf — ${workspaceName}`}
+  surface="dashboard"
+  workspaceName={workspaceName}
+  workspaceSubtitle={workspaceSubtitle}
+  activeNavId="pages"
+  basePath={basePath}
+  offeringLabel={offeringLabel}
+  lifecycleStatus={lifecycleStatus}
+  publicSiteHref={`https://${workspaceSubtitle}`}
+>
+  <AdminPreviewShell
+    client:load
+    tenantHandle={rawHandle}
+    workspaceName={workspaceName}
+    backHref={basePath}
+    previewEndpointUrl={`/api/tenants/${encodeURIComponent(rawHandle)}/preview`}
+    initialHtml={initialHtml}
+    initialResourceKind={resourceKind}
+    initialResourceId={resolvedResourceId}
+    initialVersion={resolvedVersion}
+    initialThemeId={resolvedThemeId}
+    initialLayoutMode={resolvedLayoutMode}
+    initialHasUnpublishedChanges={hasUnpublishedChanges}
+    initialViewport={initialViewport}
+    initialError={initialError}
+  />
+</DashboardLayout>
