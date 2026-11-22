@@ -10,7 +10,7 @@ export default defineConfig({
     }),
   ],
   test: {
-    include: ["tests/task-023/workerd.integration.test.ts"],
+    include: ["tests/**/workerd.integration.test.ts", "tests/**/*.integration.test.ts"],
     maxWorkers,
   },
 });

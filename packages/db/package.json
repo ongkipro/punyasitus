@@ -5,7 +5,10 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./connections": "./src/connections/index.ts"
+    "./connections": "./src/connections/index.ts",
+    "./platform": "./src/platform/index.ts",
+    "./tenant": "./src/tenant/index.ts",
+    "./*": "./src/*.ts"
   },
   "dependencies": {
     "@punyasitus/core": "workspace:*",
