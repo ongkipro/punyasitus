@@ -325,6 +325,191 @@ export function stripDraftOnlyFields<T>(value: T): T {
 export const PageLayoutModeSchema = z.enum(["standard", "focused"]);
 export type PageLayoutMode = z.infer<typeof PageLayoutModeSchema>;
 
+export const MAX_SEO_TITLE_LENGTH = 70 as const;
+export const MAX_SEO_DESCRIPTION_LENGTH = 160 as const;
+
+const SAFE_CANONICAL_PATH_REGEX = /^\/(?:[A-Za-z0-9._~:@!$&'()*+,;=-]+(?:\/[A-Za-z0-9._~:@!$&'()*+,;=-]+)*)?$/;
+
+/**
+ * Validates a safe canonical override URL:
+ * - Allows validated public `https://` URLs (no embedded credentials, no localhost/private IPs, no control chars)
+ * - Or clean root-relative paths (`/tentang-kami`) without `//`, `..`, `<`, `>`, or control chars
+ * - Rejects `http://`, `javascript:`, `data:`, `vbscript:`, protocol-relative `//`, and HTML injection.
+ */
+export function validateCanonicalOverride(raw: string, field = "seo.canonicalOverride"): string {
+  if (typeof raw !== "string" || hasAsciiControlChars(raw)) {
+    throw new PublicationValidationError("Invalid canonicalOverride URL", [
+      {
+        field,
+        code: "INVALID_CANONICAL_URL",
+        message: "canonicalOverride must not contain control characters",
+      },
+    ]);
+  }
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.length > 2048) {
+    throw new PublicationValidationError("Invalid canonicalOverride URL length", [
+      {
+        field,
+        code: "INVALID_CANONICAL_URL",
+        message: "canonicalOverride must be 1..2048 characters",
+      },
+    ]);
+  }
+  if (trimmed.startsWith("//")) {
+    throw new PublicationValidationError("Protocol-relative canonicalOverride is forbidden", [
+      {
+        field,
+        code: "INVALID_CANONICAL_URL",
+        message: "Protocol-relative URLs are not allowed in canonicalOverride",
+      },
+    ]);
+  }
+  if (trimmed.startsWith("/")) {
+    if (trimmed.includes("..") || !SAFE_CANONICAL_PATH_REGEX.test(trimmed)) {
+      throw new PublicationValidationError("Unsafe root-relative path in canonicalOverride", [
+        {
+          field,
+          code: "INVALID_CANONICAL_URL",
+          message: "canonicalOverride path contains invalid or unsafe segments",
+        },
+      ]);
+    }
+    return trimmed;
+  }
+  const parsedHttps = HttpsUrlSchema.safeParse(trimmed);
+  if (!parsedHttps.success) {
+    throw new PublicationValidationError("Unsafe canonicalOverride URL", [
+      {
+        field,
+        code: "INVALID_CANONICAL_URL",
+        message: "canonicalOverride must be a valid public https:// URL or root-relative path",
+      },
+    ]);
+  }
+  return parsedHttps.data;
+}
+
+const PageSeoTextField = (maxLen: number, label: string) =>
+  z
+    .string()
+    .trim()
+    .max(maxLen, `${label} must be at most ${maxLen} characters`)
+    .refine((v) => !hasAsciiControlChars(v), `${label} must not contain control characters`)
+    .refine((v) => !/<\s*\/?\s*(?:script|iframe|style|object|embed)\b/i.test(v), `${label} must not contain executable HTML tags`);
+
+/**
+ * Full per-page SEO override schema supporting both canonical OpenAPI fields
+ * (`titleOverride`, `descriptionOverride`, `ogImageMediaId`, `noindex`, `nofollow`, `schemaType`, ...)
+ * and `TASK-005` aliases (`seoTitle` <= 70, `seoDescription` <= 160, `canonicalOverride`).
+ */
+export const PageSeoOverridesSchema = z
+  .object({
+    seoTitle: PageSeoTextField(MAX_SEO_TITLE_LENGTH, "seoTitle").nullable().optional(),
+    seoDescription: PageSeoTextField(MAX_SEO_DESCRIPTION_LENGTH, "seoDescription").nullable().optional(),
+    titleOverride: PageSeoTextField(MAX_SEO_TITLE_LENGTH, "titleOverride").nullable().optional(),
+    descriptionOverride: PageSeoTextField(MAX_SEO_DESCRIPTION_LENGTH, "descriptionOverride")
+      .nullable()
+      .optional(),
+    focusKeyphrase: PageSeoTextField(100, "focusKeyphrase").nullable().optional(),
+    ogTitleOverride: PageSeoTextField(200, "ogTitleOverride").nullable().optional(),
+    ogDescriptionOverride: PageSeoTextField(500, "ogDescriptionOverride").nullable().optional(),
+    ogImageMediaId: SequentialIdSchema.nullable().optional(),
+    schemaType: ResourceSeoInputSchema.shape.schemaType,
+    noindex: z.boolean().optional(),
+    nofollow: z.boolean().optional(),
+    canonicalOverride: z.string().trim().max(2048).nullable().optional(),
+  })
+  .strict()
+  .superRefine((val, ctx) => {
+    if (
+      val.seoTitle !== undefined &&
+      val.seoTitle !== null &&
+      val.titleOverride !== undefined &&
+      val.titleOverride !== null &&
+      val.seoTitle !== val.titleOverride
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["seoTitle"],
+        message: "seoTitle and titleOverride must match when both are supplied",
+      });
+    }
+    if (
+      val.seoDescription !== undefined &&
+      val.seoDescription !== null &&
+      val.descriptionOverride !== undefined &&
+      val.descriptionOverride !== null &&
+      val.seoDescription !== val.descriptionOverride
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["seoDescription"],
+        message: "seoDescription and descriptionOverride must match when both are supplied",
+      });
+    }
+    if (val.canonicalOverride !== undefined && val.canonicalOverride !== null) {
+      try {
+        validateCanonicalOverride(val.canonicalOverride, "canonicalOverride");
+      } catch (err) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["canonicalOverride"],
+          message: err instanceof Error ? err.message : "Invalid canonicalOverride URL",
+        });
+      }
+    }
+  });
+
+export type PageSeoOverrides = z.infer<typeof PageSeoOverridesSchema>;
+
+/**
+ * Validates per-page SEO overrides and normalizes `canonicalOverride` when present.
+ * Throws `PublicationValidationError` (422) on invalid lengths, unsafe URLs, or unknown fields.
+ */
+export function validatePageSeoOverrides(input: unknown): PageSeoOverrides | null {
+  if (input === null || input === undefined) {
+    return null;
+  }
+  assertNoForbiddenTenantSelectors(input, "seo");
+  const parsed = PageSeoOverridesSchema.safeParse(input);
+  if (!parsed.success) {
+    const fields: PublicationValidationField[] = parsed.error.issues.map((issue) => ({
+      field: issue.path.length > 0 ? `seo.${issue.path.join(".")}` : "seo",
+      code: issue.code.toUpperCase(),
+      message: issue.message,
+    }));
+    throw new PublicationValidationError("Invalid page SEO overrides", fields);
+  }
+  const data = parsed.data;
+  return {
+    ...data,
+    ...(data.canonicalOverride !== undefined && data.canonicalOverride !== null
+      ? { canonicalOverride: validateCanonicalOverride(data.canonicalOverride) }
+      : {}),
+  };
+}
+
+/**
+ * Validates Landing Page Focus Mode (`standard` vs `focused`; REQ-008, DEC-038).
+ */
+export function validatePageLayoutMode(input: unknown, field = "layoutMode"): PageLayoutMode {
+  const parsed = PageLayoutModeSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new PublicationValidationError(
+      `Invalid ${field}: expected "standard" or "focused"`,
+      [
+        {
+          field,
+          code: "INVALID_LAYOUT_MODE",
+          message: 'layoutMode must be either "standard" or "focused"',
+        },
+      ],
+    );
+  }
+  return parsed.data;
+}
+
 export const PageSnapshotSchema = z
   .object({
     slug: SlugSchema,
@@ -332,7 +517,7 @@ export const PageSnapshotSchema = z
     isHomepage: z.boolean().default(false),
     layoutMode: PageLayoutModeSchema.default("standard"),
     sections: z.array(PublicPageSectionDtoSchema).max(30).default([]),
-    seo: ResourceSeoInputSchema.nullable().optional(),
+    seo: PageSeoOverridesSchema.nullable().optional(),
   })
   .strict();
 
