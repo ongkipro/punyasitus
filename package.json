@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit && pnpm --filter @punyasitus/web typecheck",
     "test:unit": "vitest run --config tests/setup/vitest.unit.config.ts",
     "test:integration": "bash scripts/dev/heavy.sh --label integration -- vitest run --config tests/setup/vitest.integration.config.ts",
-    "test:e2e": "bash scripts/dev/heavy.sh --label e2e -- node scripts/dev/probe-dev-servers.mjs",
+    "test:e2e": "bash scripts/dev/heavy.sh --label e2e -- bash -c 'set -euo pipefail; node scripts/dev/probe-dev-servers.mjs; for f in tests/*/e2e.mjs; do [ -f \"$f\" ] && node \"$f\"; done'",
     "test:performance": "node scripts/dev/wrangler-dry-run.mjs --budget-only",
     "test:security": "node -e \"console.log('test:security suite arrives in TASK-078')\"",
     "build": "bash scripts/dev/heavy.sh --label build -- node scripts/dev/wrangler-dry-run.mjs",

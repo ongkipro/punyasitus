@@ -1,0 +1,105 @@
+---
+import "../../styles/admin/globals.css";
+import { VALID_LIFECYCLES, VALID_STATES } from "./data";
+---
+
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Design Fixtures — TASK-032 (Dev Only)</title>
+  </head>
+  <body class="bg-background text-foreground">
+    <main class="mx-auto max-w-4xl space-y-6 px-4 py-8">
+      <header class="space-y-1 border-b border-border pb-4">
+        <h1 class="text-2xl font-bold tracking-[-0.02em]">
+          PunyaSitus Design Fixtures (Dev Only)
+        </h1>
+        <p class="text-sm text-muted-foreground">
+          Rute sintetis terisolasi untuk verifikasi visual, aksesibilitas, dan persetujuan arah desain TASK-032. Tidak disertakan dalam build produksi.
+        </p>
+      </header>
+
+      <section class="space-y-3">
+        <h2 class="text-base font-semibold">4 Shell Utama</h2>
+        <ul class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <li>
+            <a
+              href="/_dev/design-fixtures/dashboard"
+              class="block rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted"
+            >
+              <div class="font-semibold">Tenant Dashboard</div>
+              <div class="text-xs text-muted-foreground">/dashboard/&#123;handle&#125;</div>
+            </a>
+          </li>
+          <li>
+            <a
+              href="/_dev/design-fixtures/dashboard?agencyContext=1"
+              class="block rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted"
+            >
+              <div class="font-semibold">Tenant Dashboard (Mode Klien Agensi)</div>
+              <div class="text-xs text-muted-foreground">Dengan bilah konteks klien persisten</div>
+            </a>
+          </li>
+          <li>
+            <a
+              href="/_dev/design-fixtures/agency"
+              class="block rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted"
+            >
+              <div class="font-semibold">Agency Portal</div>
+              <div class="text-xs text-muted-foreground">/agency</div>
+            </a>
+          </li>
+          <li>
+            <a
+              href="/_dev/design-fixtures/affiliate"
+              class="block rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted"
+            >
+              <div class="font-semibold">Affiliate Portal</div>
+              <div class="text-xs text-muted-foreground">/affiliate</div>
+            </a>
+          </li>
+          <li>
+            <a
+              href="/_dev/design-fixtures/console"
+              class="block rounded-lg border border-border bg-card p-4 transition-colors hover:bg-muted"
+            >
+              <div class="font-semibold">Superadmin Operational Console</div>
+              <div class="text-xs text-muted-foreground">console.punyasitus.com</div>
+            </a>
+          </li>
+        </ul>
+      </section>
+
+      <section class="space-y-3">
+        <h2 class="text-base font-semibold">Status UI (State Matrix)</h2>
+        <div class="flex flex-wrap gap-2">
+          {VALID_STATES.map((st) => (
+            <a
+              href={`/_dev/design-fixtures/dashboard?state=${st}`}
+              class="inline-flex h-9 items-center rounded-md border border-border bg-card px-3 text-sm font-medium hover:bg-muted"
+            >
+              state={st}
+            </a>
+          ))}
+        </div>
+      </section>
+
+      <section class="space-y-3">
+        <h2 class="text-base font-semibold">Status Siklus Hidup Langganan</h2>
+        <div class="flex flex-wrap gap-2">
+          {VALID_LIFECYCLES.map((lc) => (
+            <a
+              href={`/_dev/design-fixtures/dashboard?lifecycle=${lc}`}
+              class="inline-flex h-9 items-center rounded-md border border-border bg-card px-3 text-sm font-medium hover:bg-muted"
+            >
+              lifecycle={lc}
+            </a>
+          ))}
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

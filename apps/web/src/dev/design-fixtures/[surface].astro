@@ -1,0 +1,80 @@
+---
+import ConsoleLayout from "@/layouts/ConsoleLayout.astro";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import type { AdminSurface, LifecycleStatus } from "@/components/admin/navigation";
+import { FixtureContent } from "./FixtureContent";
+import {
+  SURFACE_FIXTURES,
+  VALID_LIFECYCLES,
+  VALID_STATES,
+  type FixtureState,
+} from "./data";
+
+const rawSurface = Astro.params.surface ?? "";
+const allowedSurfaces: AdminSurface[] = [
+  "dashboard",
+  "agency",
+  "affiliate",
+  "console",
+];
+
+if (!allowedSurfaces.includes(rawSurface as AdminSurface)) {
+  return new Response("Not Found", { status: 404 });
+}
+
+const surface = rawSurface as AdminSurface;
+const fixture = SURFACE_FIXTURES[surface];
+
+const stateParam = Astro.url.searchParams.get("state") ?? "ready";
+const state: FixtureState = VALID_STATES.includes(stateParam as FixtureState)
+  ? (stateParam as FixtureState)
+  : "ready";
+
+const lifecycleParam = Astro.url.searchParams.get("lifecycle") ?? "active";
+const lifecycle: LifecycleStatus = VALID_LIFECYCLES.includes(
+  lifecycleParam as LifecycleStatus,
+)
+  ? (lifecycleParam as LifecycleStatus)
+  : "active";
+
+const showAgencyContext =
+  surface === "dashboard" && Astro.url.searchParams.get("agencyContext") === "1";
+
+const agencyClientContext = showAgencyContext
+  ? {
+      agencyName: "Nusantara Digital Studio",
+      clientName: fixture.workspaceName,
+      clientHandle: "kliniksehat",
+      returnHref: "/_dev/design-fixtures/agency",
+    }
+  : undefined;
+
+const basePath = `/_dev/design-fixtures/${surface}`;
+---
+
+{surface === "console" ? (
+  <ConsoleLayout
+    title={fixture.pageTitle}
+    workspaceSubtitle={fixture.workspaceSubtitle}
+    basePath={basePath}
+    userDisplayName={fixture.userDisplayName}
+  >
+    <FixtureContent client:load data={fixture} state={state} />
+  </ConsoleLayout>
+) : (
+  <DashboardLayout
+    title={fixture.pageTitle}
+    surface={surface}
+    workspaceName={fixture.workspaceName}
+    workspaceSubtitle={fixture.workspaceSubtitle}
+    offeringLabel={fixture.offeringLabel}
+    unreadLeadsCount={fixture.unreadLeadsCount}
+    publicSiteHref={fixture.publicSiteHref}
+    basePath={basePath}
+    lifecycleStatus={lifecycle}
+    userDisplayName={fixture.userDisplayName}
+    agencyClientContext={agencyClientContext}
+  >
+    <FixtureContent client:load data={fixture} state={state} />
+  </DashboardLayout>
+)}

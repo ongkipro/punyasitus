@@ -1,7 +1,7 @@
 # Architecture — punyasitus
 
 Updated: 2026-11-22
-Current state: Wave 0 (`TASK-023`) and Wave 1 Batch F1-A (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`) integrated cleanly; `TASK-032` (`base-nova` UI shell) completes Wave 1 before Wave 2 (`TASK-028`, `TASK-002`).
+Current state: Wave 0 (`TASK-023`) and full Wave 1 (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`, `TASK-032`) implemented; awaiting Product Owner visual ACC on `TASK-032` before launching Wave 2 (`TASK-028`, `TASK-002`).
 
 ## Pinned Workspace & Runtime Versions (`TASK-023`)
 
@@ -46,7 +46,7 @@ tests/
 | Control-plane database (`PLATFORM_DB`) | Cloudflare D1 (`punyasitus-platform`, `apac`, 10 GB) + Drizzle SQLite (`PLAN.md` §5.1, `DEC-036`) | Local `workerd` verified (`TASK-023`); remote staging pending |
 | Per-tenant database (`TenantStore`) | SQLite-backed Durable Object per website (10 GB/site, `locationHint: "apac-se"`, `D1Database`-compatible RPC adapter, PITR bookmarks; `PLAN.md` §5.2, `DEC-036`) | Local `workerd` two-tenant isolation, `changes`/`last_row_id`, atomic `transactionSync` rollback, and `alarm()` verified (`TASK-023`); remote staging pending |
 | Authentication | Better Auth (`provider: "sqlite"`, `joins: true`), Google OAuth primary + email/password fallback, Organization + TOTP + MCP OAuth 2.1, host-isolated `__Host-` cookies (`PLAN.md` §4, `REQ-090`) | Per-request `workerd` instantiation verified (`TASK-023`); full flows in `TASK-025`/`TASK-090` |
-| Admin UI system | React 19 islands + `shadcn/ui` v4 preset `base-nova` (`@base-ui/react` only, `rsc: false`, zero Radix/`asChild`, Lucide, Tailwind v4; `DESIGN.md` §1, `DEC-036`) | Pinned & Radix-ban lint gate active (`TASK-023`); shell & fixtures in `TASK-032` |
+| Admin UI system | React 19 islands + `shadcn/ui` v4 preset `base-nova` (`@base-ui/react` only, `rsc: false`, zero Radix/`asChild`, Lucide, Tailwind v4; `DESIGN.md` §1, `DEC-036`) | Locked & real-browser verified at 360/768/1440px (`TASK-032`); Radix & `asChild` lint guard active |
 | Extensibility (`Frozen Core`) | 6 platform themes + Style Variants + `paid_once`/`custom` themes and First-Party Modular Plugins (`plg_*` tables; `ADR-0010`, `DEC-037`) | Prefix/manifest contract bootstrapped (`TASK-023`); runtime in `TASK-012`/`018`/`097` |
 | Deployment & media target | Cloudflare Workers, Cloudflare for SaaS (`situsku.click`), Custom Domains (`punyasitus.com`), Queues, Cron, R2, Images, `VideoTranscoder` Container, Email Service, AutoLaris relay (`ADR-0009`, `DEC-036`, `DEC-038`) | Local `workerd` Queue/Cron, `astro dev`, `wrangler dev`, and `wrangler deploy --dry-run` verified (`TASK-023`); remote staging pending |
 

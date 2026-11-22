@@ -1,0 +1,148 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource/plus-jakarta-sans/400.css";
+@import "@fontsource/plus-jakarta-sans/500.css";
+@import "@fontsource/plus-jakarta-sans/600.css";
+@import "@fontsource/plus-jakarta-sans/700.css";
+
+/*
+ * PunyaSitus Admin & Portal Semantic Tokens (DESIGN.md §2.1 & §4.1)
+ * Strictly scoped to authenticated admin/agency/affiliate/console surfaces.
+ * Public marketing and tenant sites MUST NOT import this stylesheet.
+ */
+:root {
+  --radius: 0.5rem;
+  --background: #f8faf9;
+  --foreground: #182522;
+  --card: #ffffff;
+  --card-foreground: #182522;
+  --popover: #ffffff;
+  --popover-foreground: #182522;
+  --primary: #176b51;
+  --primary-foreground: #ffffff;
+  --primary-hover: #125641;
+  --secondary: #eef3f0;
+  --secondary-foreground: #182522;
+  --muted: #eef3f0;
+  --muted-foreground: #52635c;
+  --accent: #eef3f0;
+  --accent-foreground: #182522;
+  --destructive: #b42318;
+  --destructive-foreground: #ffffff;
+  --destructive-soft: #fef3f2;
+  --destructive-border: #fecdca;
+  --warning: #854d0e;
+  --warning-soft: #fef3c7;
+  --warning-border: #fde68a;
+  --info: #0f4c5c;
+  --info-soft: #ecfeff;
+  --info-border: #a5f3fc;
+  --success: #176b51;
+  --success-soft: #ecfdf5;
+  --success-border: #a7f3d0;
+  --border: #d9e2dd;
+  --input: #d9e2dd;
+  --ring: #176b51;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #182522;
+  --sidebar-primary: #176b51;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef3f0;
+  --sidebar-accent-foreground: #182522;
+  --sidebar-border: #d9e2dd;
+  --sidebar-ring: #176b51;
+}
+
+@theme inline {
+  --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 10px;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-soft: var(--destructive-soft);
+  --color-destructive-border: var(--destructive-border);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-warning-border: var(--warning-border);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-info-border: var(--info-border);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-success-border: var(--success-border);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+@layer base {
+  html {
+    font-size: 16px;
+    font-family: var(--font-sans);
+    color: var(--foreground);
+    background-color: var(--background);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    margin: 0;
+  }
+
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

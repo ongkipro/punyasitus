@@ -3,7 +3,7 @@
 Updated: 2026-11-22
 Status: Active
 State: IMPLEMENTING
-Review-Risk: R3
+Review-Risk: R2
 Independent-Review: PENDING
 Primary-Worker: agy-supervisor
 Independent-Reviewer: UNSET
@@ -11,11 +11,11 @@ Independent-Review-Head: UNSET
 
 ## Now
 
-Wave 0 (`TASK-023`, `19c2b0a`) and Wave 1 Batch F1-A (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`) implemented via parallel Supervisor + child worktrees (`RUN-20261122T153158Z-a3bd77d4`). Completed split v1 Drizzle SQLite schemas & migrations (`packages/db/migrations/{platform,tenant}/`, PITR bookmark migration orchestrator, cross-tenant repository guards), modular Zod v4 OpenAPI 3.1.1 contract (`docs/api/openapi.json` — 72 paths, 173 schemas + drift check + `packages/auth/src/permissions.ts`), WhatsApp E.164 CTA dispatcher (`packages/core/src/wa-dispatcher.ts`), and HTTPS external link sanitizer (`packages/core/src/link-sanitizer.ts`).
+Wave 0 (`TASK-023`, `19c2b0a`), Wave 1 Batch F1-A (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`, `d6da1f5`), and Wave 1 Batch F1-B (`TASK-032`, `RUN-20261122T155522Z-30652a5c`) implemented. `TASK-032` locks `apps/web/components.json` to `shadcn/ui` v4 preset `base-nova` (`@base-ui/react` only, `rsc: false`, `lucide`, zero `@radix-ui/*` / `asChild` enforced in `scripts/dev/lint.mjs`), semantic Tailwind v4 tokens (`apps/web/src/styles/admin/globals.css`), `DashboardLayout.astro`, `ConsoleLayout.astro`, responsive `AdminShell` (256px desktop sidebar <= 9 items, 48px tablet icon rail, 5-slot mobile bottom bar + accessible Base UI `Sheet` drawer, agency client-context bar, mandatory Console Operasional Platform identity), lifecycle banners (`trial`/`grace`/`locked`/`suspended`), state panels (`loading`, `empty-first-run`, `empty-filtered`, retryable `error` preserving input, `permission-denied`, `409` conflict), and dev-only isolated synthetic fixtures (`/_dev/design-fixtures/*`, excluded from production `dist/`).
 
 ## Next
 
-Complete independent R3 review and `delivery-ledger finish` for Batch F1-A (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`), then execute `TASK-032` (`base-nova` UI shell + 360/768/1440px browser fixtures) for Product Owner visual ACC before launching Foundation Step F2 (`TASK-028`, `TASK-002`) in parallel.
+Obtain Product Owner visual ACC on `TASK-032` (`DESIGN.md` + 360/768/1440px rendered fixtures) and merge `feat/task-032` to `main`, then execute Foundation Step F2 (`TASK-028` Queues/Cron & `TASK-002` Host Routing Middleware) in parallel.
 
 ## Blockers
 
