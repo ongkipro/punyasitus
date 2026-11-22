@@ -3,7 +3,7 @@
 Updated: 2026-11-22
 Status: Active
 State: IMPLEMENTING
-Review-Risk: R2
+Review-Risk: R3
 Independent-Review: PENDING
 Primary-Worker: agy-supervisor
 Independent-Reviewer: UNSET
@@ -11,11 +11,11 @@ Independent-Review-Head: UNSET
 
 ## Now
 
-Wave 0 (`TASK-023`, `19c2b0a`), Wave 1 Batch F1-A (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`, `d6da1f5`), and Wave 1 Batch F1-B (`TASK-032`, `RUN-20261122T155522Z-30652a5c`) implemented. `TASK-032` locks `apps/web/components.json` to `shadcn/ui` v4 preset `base-nova` (`@base-ui/react` only, `rsc: false`, `lucide`, zero `@radix-ui/*` / `asChild` enforced in `scripts/dev/lint.mjs`), semantic Tailwind v4 tokens (`apps/web/src/styles/admin/globals.css`), `DashboardLayout.astro`, `ConsoleLayout.astro`, responsive `AdminShell` (256px desktop sidebar <= 9 items, 48px tablet icon rail, 5-slot mobile bottom bar + accessible Base UI `Sheet` drawer, agency client-context bar, mandatory Console Operasional Platform identity), lifecycle banners (`trial`/`grace`/`locked`/`suspended`), state panels (`loading`, `empty-first-run`, `empty-filtered`, retryable `error` preserving input, `permission-denied`, `409` conflict), and dev-only isolated synthetic fixtures (`/_dev/design-fixtures/*`, excluded from production `dist/`).
+Wave 0 (`TASK-023`, `19c2b0a`), Wave 1 (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`, `TASK-032`, `ff9505d`), and Foundation Step F2 (`TASK-002` Host Routing Middleware & `TASK-028` Durable Queues/Cron, `RUN-20261122T163016Z-333b3a9f`) implemented via parallel child worktrees (`f2-routing`, `f2-queues`). `TASK-002` adds authoritative `PLATFORM_DB` host resolution (`<=5s` active-only isolate cache, `60s` moved-host quarantine), 8-step `PLAN §3.3` middleware + neutral 404/503 state pages, post-gate `caches.default` key isolation, and `TenantStore` DO binding. `TASK-028` adds strict Zod job envelopes, log/error redaction, `PLATFORM_DB.job_ledger` atomic lease acquisition & recovery, capped retries + DLQ + failed-job view, provider reconciliation hook, and deterministic single-enqueue-per-period Cron dispatch wired into `apps/web/src/worker/index.ts`.
 
 ## Next
 
-Obtain Product Owner visual ACC on `TASK-032` (`DESIGN.md` + 360/768/1440px rendered fixtures) and merge `feat/task-032` to `main`, then execute Foundation Step F2 (`TASK-028` Queues/Cron & `TASK-002` Host Routing Middleware) in parallel.
+Complete independent cross-family R3 review and `delivery-ledger finish` for Foundation Step F2 (`TASK-002`, `TASK-028`), commit/push to `main`, then execute Foundation Step F3 (`TASK-077` Email Adapter, `TASK-029` Rate Limits, `TASK-031` Consent/Privacy) in parallel.
 
 ## Blockers
 

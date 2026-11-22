@@ -1,7 +1,8 @@
 import { handle } from "@astrojs/cloudflare/handler";
 import { isDcvPassThroughPath } from "@punyasitus/core";
+import { dispatchScheduledCron } from "./cron/index.ts";
 import type { JobQueuePayload, PunyasitusEnv } from "./env.d.ts";
-import { handleQueueBatch, handleScheduledTick } from "./handlers.ts";
+import { processDurableQueueBatch } from "./queues/index.ts";
 
 // Durable Object class export (only handlers + DO classes may be exported by a Worker entrypoint)
 export { TenantStore } from "./tenant-store.ts";
@@ -29,10 +30,10 @@ export default {
   },
 
   async queue(batch: MessageBatch<JobQueuePayload>, env: PunyasitusEnv): Promise<void> {
-    await handleQueueBatch(batch, env);
+    await processDurableQueueBatch(batch, env, {});
   },
 
   async scheduled(controller: ScheduledController, env: PunyasitusEnv): Promise<void> {
-    await handleScheduledTick(controller, env);
+    await dispatchScheduledCron(controller, env);
   },
 };

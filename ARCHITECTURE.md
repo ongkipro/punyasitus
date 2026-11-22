@@ -1,7 +1,7 @@
 # Architecture — punyasitus
 
 Updated: 2026-11-22
-Current state: Wave 0 (`TASK-023`) and full Wave 1 (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`, `TASK-032`) implemented; awaiting Product Owner visual ACC on `TASK-032` before launching Wave 2 (`TASK-028`, `TASK-002`).
+Current state: Wave 0 (`TASK-023`), Wave 1 (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`, `TASK-032`), and Wave 2 Foundation Step F2 (`TASK-002`, `TASK-028`) implemented; next is Foundation Step F3 (`TASK-077`, `TASK-029`, `TASK-031`).
 
 ## Pinned Workspace & Runtime Versions (`TASK-023`)
 

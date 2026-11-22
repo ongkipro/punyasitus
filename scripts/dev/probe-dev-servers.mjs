@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -7,6 +7,54 @@ import path from "node:path";
 
 const root = path.resolve(import.meta.dirname, "../..");
 const webDir = path.join(root, "apps/web");
+
+function seedLocalPlatformDb(persistToDir) {
+  const migrate = spawnSync(
+    "pnpm",
+    [
+      "exec",
+      "wrangler",
+      "d1",
+      "migrations",
+      "apply",
+      "punyasitus-platform",
+      "--local",
+      "--persist-to",
+      persistToDir,
+    ],
+    { cwd: webDir, env: cleanChildEnv(), encoding: "utf8" },
+  );
+  if (migrate.status !== 0) {
+    throw new Error(`D1 migrate failed for ${persistToDir}:\n${migrate.stdout}\n${migrate.stderr}`);
+  }
+
+  const now = Date.now();
+  const seedSql = [
+    `INSERT OR IGNORE INTO organizations (id, name, slug, created_at, updated_at) VALUES ('org_probe_alpha', 'Alpha Studio', 'alpha-studio', ${now}, ${now});`,
+    `INSERT OR REPLACE INTO tenants (id, organization_id, handle, name, vertical, status, operator_hold, cache_version, schema_version, version, created_at, updated_at) VALUES ('01JFX00000000000000000000A', 'org_probe_alpha', 'alpha-studio', 'Alpha Studio', 'compro', 'active', 0, 1, 1, 1, ${now}, ${now});`,
+    `INSERT OR REPLACE INTO tenant_hosts (host, tenant_id, kind, status, ssl_status, is_primary, verified_at, version, created_at, updated_at) VALUES ('alpha-studio.situsku.click', '01JFX00000000000000000000A', 'subdomain', 'active', 'active', 1, ${now}, 1, ${now}, ${now});`,
+  ].join(" ");
+
+  const seed = spawnSync(
+    "pnpm",
+    [
+      "exec",
+      "wrangler",
+      "d1",
+      "execute",
+      "punyasitus-platform",
+      "--local",
+      "--persist-to",
+      persistToDir,
+      "--command",
+      seedSql,
+    ],
+    { cwd: webDir, env: cleanChildEnv(), encoding: "utf8" },
+  );
+  if (seed.status !== 0) {
+    throw new Error(`D1 seed failed for ${persistToDir}:\n${seed.stdout}\n${seed.stderr}`);
+  }
+}
 
 function getFreePort() {
   return new Promise((resolve, reject) => {
@@ -144,6 +192,10 @@ async function runWithServer(label, command, args, envExtra = {}) {
 
 const persistDir = fs.mkdtempSync(path.join(os.tmpdir(), "punyasitus-wrangler-probe-"));
 try {
+  // Migrate & seed local D1 so authoritative TASK-002 host routing resolves the synthetic tenant
+  seedLocalPlatformDb(path.join(webDir, ".wrangler/state"));
+  seedLocalPlatformDb(persistDir);
+
   // 1. Probe `astro dev` running in workerd (ephemeral port, lock-free)
   await runWithServer(
     "astro dev",
