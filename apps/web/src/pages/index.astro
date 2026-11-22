@@ -1,0 +1,40 @@
+---
+import { env } from "cloudflare:workers";
+import { classifySurfaceHost } from "@punyasitus/core";
+
+// Never trust X-Forwarded-Host or X-Tenant-ID; normalize Host from the request URL (PLAN §3.3).
+const rawHost = (Astro.url.host || Astro.request.headers.get("host") || "").trim().toLowerCase();
+const classified = classifySurfaceHost(rawHost);
+const isLocalLoopback =
+  env.APP_ENV === "local" &&
+  (rawHost === "127.0.0.1" ||
+    rawHost.startsWith("127.0.0.1:") ||
+    rawHost === "localhost" ||
+    rawHost.startsWith("localhost:"));
+
+if (classified.surface === "unknown" && !isLocalLoopback) {
+  Astro.response.status = 404;
+  Astro.response.headers.set("Cache-Control", "no-store");
+  Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+} else if (classified.surface === "app" || classified.surface === "console") {
+  Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+}
+
+Astro.response.headers.set("X-PunyaSitus-Surface", classified.surface);
+---
+
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PunyaSitus — Bootstrap Spike ({classified.surface})</title>
+  </head>
+  <body>
+    <main data-surface={classified.surface} data-host={classified.host} data-tenant={classified.tenantHandle ?? ""}>
+      <h1>PunyaSitus Worker Bootstrap</h1>
+      <p>Surface: <strong>{classified.surface}</strong></p>
+      {classified.tenantHandle && <p>Tenant handle: <strong>{classified.tenantHandle}</strong></p>}
+    </main>
+  </body>
+</html>

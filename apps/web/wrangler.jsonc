@@ -1,0 +1,96 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "punyasitus-web",
+  "main": "./src/worker/index.ts",
+  "compatibility_date": "2026-11-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "assets": {
+    "binding": "ASSETS"
+  },
+  "limits": {
+    "cpu_ms": 50
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.1
+    }
+  },
+  "vars": {
+    "APP_ENV": "local",
+    "PLATFORM_DOMAIN": "punyasitus.com",
+    "SAAS_ZONE": "situsku.click"
+  },
+  // Pre-declared v1 local Cloudflare bindings (AGENTS.md parallel foundation rule).
+  // Remote IDs are provisioned only during authorized staging/production setup.
+  "d1_databases": [
+    {
+      "binding": "PLATFORM_DB",
+      "database_name": "punyasitus-platform",
+      "database_id": "00000000-0000-0000-0000-000000000001",
+      "migrations_dir": "../../packages/db/migrations/platform"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TENANT_STORE",
+        "class_name": "TenantStore"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TenantStore"]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "punyasitus-media"
+    },
+    {
+      "binding": "BACKUP_BUCKET",
+      "bucket_name": "punyasitus-backup"
+    }
+  ],
+  "images": {
+    "binding": "IMAGES"
+  },
+  "queues": {
+    "producers": [
+      {
+        "binding": "JOBS_QUEUE",
+        "queue": "punyasitus-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "punyasitus-jobs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 3,
+        "dead_letter_queue": "punyasitus-jobs-dlq"
+      }
+    ]
+  },
+  "ai": {
+    "binding": "AI"
+  },
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["noreply@notif.punyasitus.com"]
+    }
+  ],
+  "triggers": {
+    "crons": ["7 * * * *"]
+  }
+}

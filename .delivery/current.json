@@ -1,19 +1,14 @@
 {
   "activeRun": null,
-  "lastCheckpoint": {
-    "eventId": "eebaaecf7fe04a77ac341034724b4272",
-    "head": "7edb63ab9d653b8655268c436fe7a5b397726e69",
-    "note": "Public baseline 7edb63a (DEC-044): repository restarted as one clean public commit; prior history in private ongkipro/punyasitus-history (main=9a0f9bb). State PLANNED; 110 REQ, 110 TASK, 0 structural errors.",
-    "runId": null,
-    "state": "PLANNED",
-    "time": "2026-11-22T12:46:02Z",
-    "type": "checkpoint"
+  "lastRun": {
+    "finishedAt": "2026-11-22T15:29:41Z",
+    "result": "PASS",
+    "runId": "RUN-20261122T150919Z-15902c6e"
   },
-  "lastRun": null,
-  "observedHead": "7edb63ab9d653b8655268c436fe7a5b397726e69",
-  "observedState": "PLANNED",
+  "observedHead": "c6420a33b23163b38b7d5476995a9468b0ab220e",
+  "observedState": "IMPLEMENTING",
   "project": "punyasitus",
   "schemaVersion": 1,
   "statusAuthority": "STATUS.md",
-  "updatedAt": "2026-11-22T12:46:02Z"
+  "updatedAt": "2026-11-22T15:29:41Z"
 }

@@ -1,0 +1,44 @@
+{
+  "name": "punyasitus",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=22.23.4",
+    "pnpm": ">=12.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @punyasitus/web dev",
+    "dev:wrangler": "pnpm --filter @punyasitus/web dev:wrangler",
+    "lint": "node scripts/dev/lint.mjs",
+    "typecheck": "tsc --noEmit && pnpm --filter @punyasitus/web typecheck",
+    "test:unit": "vitest run --config tests/setup/vitest.unit.config.ts",
+    "test:integration": "bash scripts/dev/heavy.sh --label integration -- vitest run --config tests/setup/vitest.integration.config.ts",
+    "test:e2e": "bash scripts/dev/heavy.sh --label e2e -- node scripts/dev/probe-dev-servers.mjs",
+    "test:performance": "node scripts/dev/wrangler-dry-run.mjs --budget-only",
+    "test:security": "node -e \"console.log('test:security suite arrives in TASK-078')\"",
+    "build": "bash scripts/dev/heavy.sh --label build -- node scripts/dev/wrangler-dry-run.mjs",
+    "db:migrate": "node -e \"console.log('db:migrate migrations arrive in TASK-001')\"",
+    "db:seed": "node -e \"console.log('db:seed fixtures arrive in TASK-001')\"",
+    "spec:check": "python3 scripts/check-spec.py && python3 scripts/test-check-spec.py"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.9.0",
+    "@cloudflare/workers-types": "5.20261121.1",
+    "@eslint/js": "10.0.1",
+    "@punyasitus/auth": "workspace:*",
+    "@punyasitus/core": "workspace:*",
+    "@punyasitus/db": "workspace:*",
+    "@punyasitus/integrations": "workspace:*",
+    "@punyasitus/plugins": "workspace:*",
+    "@types/node": "24.19.2",
+    "drizzle-orm": "0.45.4",
+    "eslint": "10.15.0",
+    "eslint-plugin-astro": "3.2.1",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.73.0",
+    "vitest": "4.1.12",
+    "wrangler": "4.166.0"
+  }
+}

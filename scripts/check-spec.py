@@ -8,7 +8,12 @@ from pathlib import Path
 
 def check(root):
     errors = []
-    markdown = sorted(p for p in root.rglob('*.md') if 'archive' not in p.relative_to(root).parts[:2])  # docs/archive is frozen, non-authoritative
+    ignored_dirs = {'node_modules', '.git', '.astro', '.wrangler', 'dist', '.delivery'}
+    markdown = sorted(
+        p for p in root.rglob('*.md')
+        if not (set(p.relative_to(root).parts) & ignored_dirs)
+        and 'archive' not in p.relative_to(root).parts[:2]
+    )  # docs/archive is frozen, non-authoritative
     texts = {path: path.read_text(encoding='utf-8') for path in markdown}
     prd = texts.get(root / 'PRD.md', '')
     index = texts.get(root / 'TASKS.md', '')

@@ -2,28 +2,24 @@
 
 Updated: 2026-11-22
 Status: Active
-State: PLANNED
-Review-Risk: R0
+State: IMPLEMENTING
+Review-Risk: R3
 Independent-Review: PENDING
-Primary-Worker: UNSET
+Primary-Worker: agy-supervisor
 Independent-Reviewer: UNSET
 Independent-Review-Head: UNSET
 
 ## Now
 
-Specification complete and every product decision final (DEC-001..DEC-048, ADR-0001..ADR-0010; DECISIONS.md "Open decisions" is empty). No application code exists. Two repositories (DEC-044): this public one holds code and the development contract; private `punyasitus-docs` holds research and archive; the earlier history is private `ongkipro/punyasitus-history`. `TASKS.md` is the queue index with full contracts in `docs/tasks/` (DEC-048). All 110 tasks are pending; module folders hold README boundary notes only.
-
-Checks: `python3 scripts/check-spec.py` 110 requirements, 110 tasks, 0 structural errors; `python3 scripts/test-check-spec.py` 15 tests OK; `delivery-ledger verify` VERIFIED.
+Development authorized by Paduka Ongki (`TASK-023`, Wave 0, R3). Bootstrapped the pnpm monorepo (`apps/web` + `packages/{core,db,auth,integrations,plugins}`), pinned Astro `7.4.13` (`output: "server"`, `session: false`), `@astrojs/cloudflare 14.4.9`, Wrangler `4.166.0`, Better Auth `1.7.27` (`provider: "sqlite"`, `joins: true`), Drizzle `0.45.4`, `@base-ui/react 1.9.0` (zero `@radix-ui/*`), Tailwind `4.3.5`, `pdf-lib 1.17.1`, TypeScript `6.0.3`, Vitest `4.1.12` + `@cloudflare/vitest-plugin 1.9.0`, `scripts/dev/heavy.sh`, and `.github/workflows/ci.yml`. Verified `PLATFORM_DB` D1, two-tenant `TenantStore` SQLite Durable Object isolation/RPC/alarm, Queue producer/consumer, Cron `scheduled()`, `astro dev`, `wrangler dev`, and `wrangler deploy --dry-run` (`2.02 MiB` < 64 MiB).
 
 ## Next
 
-On explicit development authorization: start `TASK-023` (Wave 0, R3) with `delivery-ledger start`, its contract in `docs/tasks/wave-0.md`, then follow the waves in `TASKS.md`.
+Complete independent R3 review and `delivery-ledger finish` for `TASK-023`, merge to `main`, then execute Foundation Step F1 (`TASK-001`, `TASK-024`, `TASK-032`, `TASK-010`, `TASK-011`) in parallel child worktrees.
 
 ## Blockers
 
-- Development authorization from Paduka Ongki (`TASK-023`).
-
-Not blockers for local development (mocks and local `workerd` cover them), but each has an owning gate:
+None for local Wave 1 development (mocks and local `workerd` cover it). Pre-staging/pre-launch gates remain tracked below:
 
 - Staging accounts and infrastructure (PLAN section 1): Cloudflare Workers Paid with `punyasitus-*` resources, both zones and a separate staging SaaS zone with the Trust+ IP check, Google OAuth client, Email Service DNS on `notif.punyasitus.com`, Telegram bot token, AutoLaris merchant approval and the static-IP relay host. Needed from `TASK-003`/`TASK-055` live checks onward.
 - Legal and tax (DEC-047): PSE Lingkup Privat, Terms and Privacy with the UU 27/2022 review, UU KUP Art. 28(11), Kepmen Komdigi 127/128 text. Evidence required before `TASK-038`.

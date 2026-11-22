@@ -1,0 +1,54 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "punyasitus-web-test",
+  "main": "./workerd-entry.ts",
+  "compatibility_date": "2026-11-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "APP_ENV": "test",
+    "PLATFORM_DOMAIN": "punyasitus.com",
+    "SAAS_ZONE": "situsku.click"
+  },
+  "d1_databases": [
+    {
+      "binding": "PLATFORM_DB",
+      "database_name": "punyasitus-platform-test",
+      "database_id": "00000000-0000-0000-0000-000000000001"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "TENANT_STORE",
+        "class_name": "TenantStore"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["TenantStore"]
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_BUCKET",
+      "bucket_name": "punyasitus-media-test"
+    },
+    {
+      "binding": "BACKUP_BUCKET",
+      "bucket_name": "punyasitus-backup-test"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "JOBS_QUEUE",
+        "queue": "punyasitus-jobs-test"
+      }
+    ]
+  },
+  "triggers": {
+    "crons": ["7 * * * *"]
+  }
+}
