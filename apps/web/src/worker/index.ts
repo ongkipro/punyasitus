@@ -1,6 +1,10 @@
 import { handle } from "@astrojs/cloudflare/handler";
 import { isDcvPassThroughPath } from "@punyasitus/core";
 import { redactJobLogRecord } from "@punyasitus/core/jobs/index";
+import {
+  DAILY_PLATFORM_BACKUP_TOPIC,
+  createDailyBackupQueueHandler,
+} from "../../../../scripts/backup-restore/index.ts";
 import { dispatchScheduledCron } from "./cron/index.ts";
 import type { JobQueuePayload, PunyasitusEnv } from "./env.d.ts";
 import { EMAIL_DELIVERY_TOPIC, createEmailQueueHandler } from "./queues/email/handler.ts";
@@ -33,12 +37,7 @@ const WORKER_JOB_REGISTRY: DurableJobRegistry = {
       );
     },
   }),
-  // Deferred to TASK-037 (F4): explicit no-op ack prevents daily cron dead-letter noise until backup export ships.
-  "cron.daily_platform_backup": {
-    async execute() {
-      // Wired in TASK-037
-    },
-  },
+  [DAILY_PLATFORM_BACKUP_TOPIC]: createDailyBackupQueueHandler(),
 };
 
 export default {

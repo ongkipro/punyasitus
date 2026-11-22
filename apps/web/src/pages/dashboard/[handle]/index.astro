@@ -1,0 +1,666 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  createEmptyDashboardMetrics,
+  getTenantDashboardMetrics,
+  type TenantDashboardMetrics,
+} from "@punyasitus/db/analytics/index";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import { computeEffectiveTenantStatus } from "@punyasitus/db/routing/index";
+import type { TenantStatus, TenantVertical } from "@punyasitus/db/platform";
+import {
+  AlertCircleIcon,
+  CalendarIcon,
+  ExternalLinkIcon,
+  EyeIcon,
+  InboxIcon,
+  InfoIcon,
+  MessageCircleIcon,
+} from "lucide-react";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { bindTenantDatabase } from "@/core/tenant";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+
+const LOCAL_PREVIEW_TENANTS: Readonly<
+  Record<
+    string,
+    {
+      readonly id: string;
+      readonly name: string;
+      readonly vertical: TenantVertical;
+      readonly status: LifecycleStatus;
+    }
+  >
+> = {
+  "alpha-studio": {
+    id: "01JTESTTENANTALPHA00000001",
+    name: "Alpha Studio",
+    vertical: "compro",
+    status: "active",
+  },
+  "beta-klinik": {
+    id: "01JTESTTENANTBETA000000002",
+    name: "Beta Klinik",
+    vertical: "sales",
+    status: "trial",
+  },
+};
+
+function mapVerticalToOfferingLabel(vertical: TenantVertical): string {
+  switch (vertical) {
+    case "catalog":
+    case "resto":
+      return "Produk";
+    case "travel":
+      return "Paket Tur";
+    case "dealer":
+      return "Kendaraan";
+    case "compro":
+    case "sales":
+    default:
+      return "Layanan";
+  }
+}
+
+function mapTenantStatusToLifecycle(status: TenantStatus): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+function formatNumberId(value: number): string {
+  return new Intl.NumberFormat("id-ID").format(value);
+}
+
+function formatDayLabelId(isoDay: string): string {
+  const parts = isoDay.split("-");
+  if (parts.length !== 3) return isoDay;
+  const dt = new Date(Date.UTC(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]), 12, 0, 0));
+  if (Number.isNaN(dt.getTime())) return isoDay;
+  return new Intl.DateTimeFormat("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(dt);
+}
+
+function neutralNotFoundResponse(): Response {
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Halaman tidak ditemukan</title></head><body><main><h1>Halaman tidak ditemukan</h1></main></body></html>`,
+    {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+        "Content-Security-Policy": "default-src 'none'",
+      },
+    },
+  );
+}
+
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+// Dashboard routes are isolated to `app.punyasitus.com` (and explicit local loopback dev).
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return neutralNotFoundResponse();
+}
+
+const rangeParam = Astro.url.searchParams.get("range");
+const selectedDays: 7 | 30 = rangeParam === "30" ? 30 : 7;
+
+interface ResolvedDashboardTenant {
+  readonly id: string;
+  readonly handle: string;
+  readonly name: string;
+  readonly vertical: TenantVertical;
+  readonly lifecycleStatus: LifecycleStatus;
+  readonly lifecycleDaysRemaining?: number;
+  readonly primaryHost: string;
+}
+
+interface PlatformTenantLookupRow {
+  readonly id: string;
+  readonly handle: string;
+  readonly name: string;
+  readonly vertical: TenantVertical;
+  readonly status: TenantStatus;
+  readonly operator_hold: number;
+  readonly trial_ends_at: number | null;
+  readonly paid_through: number | null;
+  readonly primary_host: string | null;
+}
+
+let resolvedTenant: ResolvedDashboardTenant | null = null;
+let tenantDb: typeof Astro.locals.tenantDb = null;
+let loadError: string | null = null;
+const saasZone = env.SAAS_ZONE || "situsku.click";
+
+// 1. Prefer middleware-populated tenant context when already bound for this handle.
+if (Astro.locals.tenant && Astro.locals.tenant.handle === rawHandle) {
+  resolvedTenant = {
+    id: Astro.locals.tenant.id,
+    handle: Astro.locals.tenant.handle,
+    name: Astro.locals.tenant.name,
+    vertical: Astro.locals.tenant.vertical,
+    lifecycleStatus: mapTenantStatusToLifecycle(Astro.locals.tenant.status),
+    primaryHost: Astro.locals.tenant.primaryHost ?? `${rawHandle}.${saasZone}`,
+  };
+  tenantDb = Astro.locals.tenantDb;
+} else {
+  // 2. Look up tenant metadata by handle from PLATFORM_DB.
+  let platformLookupFailed = false;
+  try {
+    const row = await env.PLATFORM_DB.prepare(
+      `SELECT
+         t.id AS id,
+         t.handle AS handle,
+         t.name AS name,
+         t.vertical AS vertical,
+         t.status AS status,
+         t.operator_hold AS operator_hold,
+         t.trial_ends_at AS trial_ends_at,
+         t.paid_through AS paid_through,
+         ph.host AS primary_host
+       FROM tenants t
+       LEFT JOIN tenant_hosts ph
+         ON ph.tenant_id = t.id
+         AND ph.is_primary = 1
+         AND ph.status = 'active'
+         AND ph.ssl_status = 'active'
+       WHERE t.handle = ?
+       LIMIT 1`,
+    )
+      .bind(rawHandle)
+      .first<PlatformTenantLookupRow>();
+
+    if (row) {
+      const nowMs = Date.now();
+      const effectiveStatus = computeEffectiveTenantStatus(
+        {
+          storedStatus: row.status,
+          operatorHold: row.operator_hold === 1,
+          trialEndsAt: row.trial_ends_at,
+          paidThrough: row.paid_through,
+        },
+        nowMs,
+      );
+      if (effectiveStatus === "purging" || effectiveStatus === "purged") {
+        return neutralNotFoundResponse();
+      }
+      const daysRemaining =
+        effectiveStatus === "trial" && typeof row.trial_ends_at === "number"
+          ? Math.max(0, Math.ceil((row.trial_ends_at - nowMs) / 86_400_000))
+          : undefined;
+      resolvedTenant = {
+        id: row.id,
+        handle: row.handle,
+        name: row.name,
+        vertical: row.vertical,
+        lifecycleStatus: mapTenantStatusToLifecycle(effectiveStatus),
+        lifecycleDaysRemaining: daysRemaining,
+        primaryHost: row.primary_host ?? `${row.handle}.${saasZone}`,
+      };
+    }
+  } catch {
+    platformLookupFailed = true;
+  }
+
+  // 3. Local loopback dev fallback ONLY for seeded/synthetic fixture handles when local D1 is unseeded.
+  if (!resolvedTenant && isLocalLoopback) {
+    const localPreview = LOCAL_PREVIEW_TENANTS[rawHandle];
+    if (localPreview) {
+      resolvedTenant = {
+        id: localPreview.id,
+        handle: rawHandle,
+        name: localPreview.name,
+        vertical: localPreview.vertical,
+        lifecycleStatus: localPreview.status,
+        primaryHost: `${rawHandle}.${saasZone}`,
+      };
+    }
+  }
+
+  if (!resolvedTenant) {
+    if (platformLookupFailed && !isLocalLoopback) {
+      Astro.response.status = 503;
+      loadError = "Layanan data situs sedang tidak tersedia. Silakan muat ulang beberapa saat lagi.";
+    } else {
+      return neutralNotFoundResponse();
+    }
+  }
+}
+
+let metrics: TenantDashboardMetrics = createEmptyDashboardMetrics({ days: selectedDays });
+
+if (resolvedTenant) {
+  const activeTenantDb =
+    tenantDb ??
+    bindTenantDatabase(
+      env.TENANT_STORE as unknown as TenantStoreNamespaceLike,
+      resolvedTenant.id,
+    );
+
+  if (activeTenantDb) {
+    try {
+      metrics = await getTenantDashboardMetrics(activeTenantDb, { days: selectedDays });
+    } catch {
+      if (isLocalLoopback) {
+        // Local loopback dev DO may not yet have tenant migrations applied; render clean empty state.
+        metrics = createEmptyDashboardMetrics({ days: selectedDays });
+      } else {
+        Astro.response.status = 503;
+        loadError =
+          "Statistik situs sementara tidak dapat dimuat dari penyimpanan tenant. Silakan coba muat ulang.";
+      }
+    }
+  } else if (!isLocalLoopback) {
+    Astro.response.status = 503;
+    loadError = "Penyimpanan data tenant tidak tersedia sementara.";
+  }
+}
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const workspaceName = resolvedTenant?.name ?? rawHandle;
+const workspaceSubtitle = resolvedTenant?.primaryHost ?? `${rawHandle}.${saasZone}`;
+const basePath = `/dashboard/${rawHandle}`;
+const offeringLabel = resolvedTenant ? mapVerticalToOfferingLabel(resolvedTenant.vertical) : "Layanan";
+const lifecycleStatus: LifecycleStatus = resolvedTenant?.lifecycleStatus ?? "active";
+const publicSiteHref = `https://${workspaceSubtitle}`;
+const dailyRecentFirst = [...metrics.daily].reverse();
+
+const kpiCards = [
+  {
+    id: "wa_clicks",
+    label: "Klik WhatsApp",
+    value: formatNumberId(metrics.totals.waClicks),
+    note: "Sinyal minat pada tombol WhatsApp",
+    icon: "wa" as const,
+  },
+  {
+    id: "external_clicks",
+    label: "Klik tautan eksternal",
+    value: formatNumberId(metrics.totals.externalClicks),
+    note: "Sinyal minat ke tautan luar situs",
+    icon: "external" as const,
+  },
+  {
+    id: "lead_submits",
+    label: "Pesan masuk (lead)",
+    value: formatNumberId(metrics.totals.leadSubmits),
+    note: "Formulir pengunjung yang tersimpan",
+    icon: "lead" as const,
+  },
+  {
+    id: "pageviews",
+    label: "Kunjungan halaman",
+    value: formatNumberId(metrics.totals.pageviews),
+    note: "Hitungan halaman pihak pertama tanpa cookie",
+    icon: "views" as const,
+  },
+] as const;
+---
+
+<DashboardLayout
+  title={`Beranda — ${workspaceName}`}
+  surface="dashboard"
+  workspaceName={workspaceName}
+  workspaceSubtitle={workspaceSubtitle}
+  activeNavId="home"
+  basePath={basePath}
+  offeringLabel={offeringLabel}
+  unreadLeadsCount={metrics.totals.leadSubmits}
+  lifecycleStatus={lifecycleStatus}
+  lifecycleDaysRemaining={resolvedTenant?.lifecycleDaysRemaining}
+  publicSiteHref={publicSiteHref}
+>
+  <div class="space-y-6" data-testid="dashboard-metrics-page" data-handle={rawHandle}>
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div class="min-w-0 space-y-1">
+        <h1 class="text-2xl font-bold tracking-[-0.02em] text-foreground">
+          Ringkasan Situs
+        </h1>
+        <p class="text-sm text-muted-foreground">
+          Sinyal minat pengunjung pihak pertama untuk periode{" "}
+          <span class="font-medium text-foreground tabular-nums">
+            {formatDayLabelId(metrics.startDay)} – {formatDayLabelId(metrics.endDay)}
+          </span>
+          .
+        </p>
+      </div>
+
+      <nav
+        aria-label="Pilih rentang waktu statistik"
+        class="inline-flex w-fit items-center gap-1 rounded-md border border-border bg-card p-1"
+      >
+        <a
+          href={`${basePath}?range=7`}
+          aria-current={selectedDays === 7 ? "page" : undefined}
+          data-testid="range-7d"
+          class:list={[
+            "inline-flex min-h-11 items-center rounded-sm px-3 text-sm font-medium transition-colors md:min-h-8",
+            selectedDays === 7
+              ? "bg-primary text-primary-foreground"
+              : "text-foreground hover:bg-muted",
+          ]}
+        >
+          7 hari terakhir
+        </a>
+        <a
+          href={`${basePath}?range=30`}
+          aria-current={selectedDays === 30 ? "page" : undefined}
+          data-testid="range-30d"
+          class:list={[
+            "inline-flex min-h-11 items-center rounded-sm px-3 text-sm font-medium transition-colors md:min-h-8",
+            selectedDays === 30
+              ? "bg-primary text-primary-foreground"
+              : "text-foreground hover:bg-muted",
+          ]}
+        >
+          30 hari terakhir
+        </a>
+      </nav>
+    </div>
+
+    <Alert variant="info" data-testid="metrics-interest-disclaimer">
+      <InfoIcon className="size-4" aria-hidden="true" />
+      <AlertTitle>Tentang pengukuran klik pihak pertama</AlertTitle>
+      <AlertDescription>
+        Angka klik WhatsApp dan tautan eksternal adalah{" "}
+        <strong>sinyal minat pengunjung, bukan konfirmasi penjualan atau transaksi</strong>.
+        Penghitungan dilakukan secara agregat tanpa cookie pihak ketiga dan tanpa menyimpan data
+        pribadi pengunjung.
+      </AlertDescription>
+    </Alert>
+
+    {loadError && (
+      <Alert variant="destructive" data-state-panel="error">
+        <AlertCircleIcon className="size-4" aria-hidden="true" />
+        <AlertTitle>Gagal memuat statistik situs</AlertTitle>
+        <AlertDescription>
+          <span>{loadError}</span>{" "}
+          <a
+            href={`${basePath}?range=${selectedDays}`}
+            class="inline-flex min-h-11 items-center font-medium underline underline-offset-4 md:min-h-0"
+          >
+            Muat ulang halaman
+          </a>
+        </AlertDescription>
+      </Alert>
+    )}
+
+    <section
+      aria-label="Ringkasan metrik pihak pertama"
+      data-testid="kpi-grid"
+      class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+    >
+      {kpiCards.map((kpi) => (
+        <Card size="sm" data-metric={kpi.id}>
+          <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+            <CardDescription className="text-xs font-medium text-muted-foreground">
+              {kpi.label}
+            </CardDescription>
+            {kpi.icon === "wa" && (
+              <MessageCircleIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            )}
+            {kpi.icon === "external" && (
+              <ExternalLinkIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            )}
+            {kpi.icon === "lead" && (
+              <InboxIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            )}
+            {kpi.icon === "views" && (
+              <EyeIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            )}
+          </CardHeader>
+          <CardContent className="space-y-1">
+            <p
+              data-metric-value={kpi.id}
+              class="text-2xl font-bold tracking-[-0.02em] text-foreground tabular-nums"
+            >
+              {kpi.value}
+            </p>
+            <p class="text-xs text-muted-foreground">{kpi.note}</p>
+          </CardContent>
+        </Card>
+      ))}
+    </section>
+
+    {!metrics.hasAnyData ? (
+      <Card data-state-panel="empty-metrics">
+        <CardContent className="flex flex-col items-start gap-3 py-8 sm:py-10">
+          <div class="flex items-center gap-2 text-muted-foreground">
+            <CalendarIcon className="size-5 shrink-0" aria-hidden="true" />
+            <h2 class="text-base font-semibold text-foreground">
+              Belum ada aktivitas dalam {selectedDays} hari terakhir
+            </h2>
+          </div>
+          <p class="max-w-xl text-sm text-muted-foreground">
+            Ringkasan klik WhatsApp, klik tautan eksternal, pesan masuk, dan kunjungan halaman akan
+            tampil di sini begitu pengunjung mulai berinteraksi dengan situs publik Anda.
+          </p>
+          <div class="flex flex-wrap items-center gap-2 pt-1">
+            <a
+              href={publicSiteHref}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-card px-3.5 text-sm font-medium text-foreground transition-colors hover:bg-muted md:min-h-9"
+            >
+              <span>Buka situs publik</span>
+              <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
+            </a>
+          </div>
+        </CardContent>
+      </Card>
+    ) : (
+      <div class="grid grid-cols-1 gap-6">
+        <Card data-testid="top-paths-card">
+          <CardHeader className="border-b border-border">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="space-y-0.5">
+                <CardTitle>Halaman paling diminati</CardTitle>
+                <CardDescription>
+                  Diurutkan berdasarkan total sinyal minat (klik WhatsApp, tautan eksternal, dan
+                  pesan masuk).
+                </CardDescription>
+              </div>
+              <Badge variant="outline" className="tabular-nums">
+                {formatNumberId(metrics.totals.totalInterestSignals)} total sinyal minat
+              </Badge>
+            </div>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div class="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Halaman</TableHead>
+                    <TableHead className="text-right">Klik WhatsApp</TableHead>
+                    <TableHead className="text-right">Klik Eksternal</TableHead>
+                    <TableHead className="text-right">Pesan Masuk</TableHead>
+                    <TableHead className="text-right">Kunjungan</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {metrics.topPaths.map((row) => (
+                    <TableRow>
+                      <TableCell className="font-mono text-xs font-medium text-foreground">
+                        {row.path}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumberId(row.waClicks)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumberId(row.externalClicks)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumberId(row.leadSubmits)}
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground tabular-nums">
+                        {formatNumberId(row.pageviews)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <ul class="divide-y divide-border md:hidden">
+              {metrics.topPaths.map((row) => (
+                <li class="space-y-2 px-4 py-3">
+                  <div class="flex items-center justify-between gap-2">
+                    <p class="min-w-0 truncate font-mono text-xs font-medium text-foreground">
+                      {row.path}
+                    </p>
+                    <Badge variant="secondary" className="shrink-0 tabular-nums">
+                      {formatNumberId(row.totalInterestSignals)} sinyal
+                    </Badge>
+                  </div>
+                  <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <div class="flex justify-between gap-2">
+                      <span>Klik WA</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatNumberId(row.waClicks)}
+                      </span>
+                    </div>
+                    <div class="flex justify-between gap-2">
+                      <span>Eksternal</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatNumberId(row.externalClicks)}
+                      </span>
+                    </div>
+                    <div class="flex justify-between gap-2">
+                      <span>Pesan</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatNumberId(row.leadSubmits)}
+                      </span>
+                    </div>
+                    <div class="flex justify-between gap-2">
+                      <span>Kunjungan</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatNumberId(row.pageviews)}
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+
+        <Card data-testid="daily-breakdown-card">
+          <CardHeader className="border-b border-border">
+            <CardTitle>Rincian harian ({selectedDays} hari terakhir)</CardTitle>
+            <CardDescription>
+              Zona waktu tampilan: {metrics.timeZone}. Klik dihitung sebagai sinyal minat, bukan
+              konfirmasi pembelian.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div class="hidden md:block">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Tanggal</TableHead>
+                    <TableHead className="text-right">Klik WhatsApp</TableHead>
+                    <TableHead className="text-right">Klik Eksternal</TableHead>
+                    <TableHead className="text-right">Pesan Masuk</TableHead>
+                    <TableHead className="text-right">Kunjungan</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {dailyRecentFirst.map((point) => (
+                    <TableRow>
+                      <TableCell className="font-medium text-foreground tabular-nums">
+                        {formatDayLabelId(point.day)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumberId(point.waClicks)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumberId(point.externalClicks)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumberId(point.leadSubmits)}
+                      </TableCell>
+                      <TableCell className="text-right text-muted-foreground tabular-nums">
+                        {formatNumberId(point.pageviews)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+
+            <ul class="divide-y divide-border md:hidden">
+              {dailyRecentFirst.map((point) => (
+                <li class="space-y-1.5 px-4 py-3">
+                  <p class="text-sm font-medium text-foreground tabular-nums">
+                    {formatDayLabelId(point.day)}
+                  </p>
+                  <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <div class="flex justify-between gap-2">
+                      <span>Klik WA</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatNumberId(point.waClicks)}
+                      </span>
+                    </div>
+                    <div class="flex justify-between gap-2">
+                      <span>Eksternal</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatNumberId(point.externalClicks)}
+                      </span>
+                    </div>
+                    <div class="flex justify-between gap-2">
+                      <span>Pesan</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatNumberId(point.leadSubmits)}
+                      </span>
+                    </div>
+                    <div class="flex justify-between gap-2">
+                      <span>Kunjungan</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatNumberId(point.pageviews)}
+                      </span>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </CardContent>
+        </Card>
+      </div>
+    )}
+  </div>
+</DashboardLayout>

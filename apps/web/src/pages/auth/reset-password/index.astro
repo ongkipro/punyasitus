@@ -1,0 +1,64 @@
+---
+import "../../../styles/admin/globals.css";
+import { ResetPasswordForm } from "./_ResetPasswordForm";
+
+const tokenParam = Astro.url.searchParams.get("token");
+const errorParam = Astro.url.searchParams.get("error");
+const expiredParam = Astro.url.searchParams.get("expired");
+
+const tokenExpiredOrInvalid =
+  expiredParam === "1" ||
+  (typeof errorParam === "string" && errorParam.trim().length > 0);
+---
+
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23176b51'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='700' fill='%23ffffff'%3EPS%3C/text%3E%3C/svg%3E"
+    />
+    <title>Reset Kata Sandi — PunyaSitus</title>
+  </head>
+  <body class="min-h-screen bg-background text-foreground">
+    <a
+      href="#main-content"
+      class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground"
+    >
+      Lewati ke konten utama
+    </a>
+
+    <header class="border-b border-border bg-card">
+      <div class="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
+        <a
+          href="/auth/login"
+          class="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-foreground md:min-h-0"
+        >
+          <span
+            class="inline-flex size-7 items-center justify-center rounded-md bg-primary text-xs font-bold text-primary-foreground"
+            aria-hidden="true"
+          >
+            PS
+          </span>
+          <span>PunyaSitus</span>
+        </a>
+        <span class="text-xs text-muted-foreground">Pemulihan Akun</span>
+      </div>
+    </header>
+
+    <main
+      id="main-content"
+      class="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-5xl items-center justify-center px-4 py-8"
+    >
+      <ResetPasswordForm
+        client:load
+        token={tokenParam}
+        tokenExpiredOrInvalid={tokenExpiredOrInvalid}
+      />
+    </main>
+  </body>
+</html>

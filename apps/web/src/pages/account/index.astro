@@ -1,0 +1,38 @@
+---
+import { env } from "cloudflare:workers";
+import { listAccountSessions, type ActiveSessionDto } from "@punyasitus/auth";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { AccountSettings } from "./_AccountSettings";
+
+const authUser = Astro.locals.authUser;
+const authSession = Astro.locals.authSession;
+
+let initialSessions: readonly ActiveSessionDto[] = [];
+if (authUser && authSession && env.PLATFORM_DB) {
+  try {
+    initialSessions = await listAccountSessions(env.PLATFORM_DB, {
+      userId: authUser.id,
+      currentSessionId: authSession.id,
+    });
+  } catch {
+    initialSessions = [];
+  }
+}
+---
+
+<DashboardLayout
+  title="Akun Saya"
+  surface="dashboard"
+  workspaceName="Akun PunyaSitus"
+  workspaceSubtitle="Profil & keamanan akun pribadi"
+  activeNavId="settings"
+  basePath="/account"
+  userDisplayName={authUser?.name ?? "Tamu"}
+  userRoleLabel={authUser ? "Pengguna Terverifikasi" : "Sesi Berakhir"}
+>
+  <AccountSettings
+    client:load
+    initialUser={authUser}
+    initialSessions={initialSessions}
+  />
+</DashboardLayout>

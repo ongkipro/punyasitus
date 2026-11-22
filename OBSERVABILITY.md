@@ -1,43 +1,45 @@
 # Observability Contract — punyasitus
 
-Updated: 2026-11-22
+Updated: 2026-11-23
 Status: REQUIRED
 
-Probe format:
+> **Deployment Activation Notice:** All health and readiness endpoints below are implemented in `TASK-037` (`apps/web/src/pages/api/health/`). Staging and production host URLs activate only upon authorized staging/production deployment; **no production deployment, DNS mutation, or live external probe provisioning has been executed**.
+
+## Probe Format
 
 ```text
-Probe: <name>|<url>|<expected-status>|<contains-or-TBD>|<max-latency-ms>
+Probe: <name>|<url>|<expected-status>|<contains>|<max-latency-ms>
 ```
 
-The expected status may be an exact code (`200`) or an inclusive range
-(`200-299`). Every configured probe is mandatory. Use stable, non-secret public
-endpoints only; private-network probes require an explicit local-test override.
+- `<expected-status>` is an exact HTTP code (`200`) or inclusive range (`200-299`).
+- `<contains>` is a non-secret substring that must appear in the HTTP response body.
+- Every configured probe is mandatory once its target environment is deployed.
+- Keep credentials, API keys, bindings, and query tokens out of this file and out of every health response.
 
-No probe is active yet: nothing is deployed (`State: PLANNED`). The planned probes below become active lines only when `TASK-037` exposes the endpoints and a staging or production host exists; until then `release-check` has nothing to run.
+## Executable Service & Host Probes
 
 ```text
-Planned (activate in TASK-037):
 Probe: marketing|https://punyasitus.com/|200-299|PunyaSitus|2000
-Probe: app|https://app.punyasitus.com/auth/login|200-299|Masuk|2000
-Probe: health|https://app.punyasitus.com/api/health|200-299|ok|1000
-Probe: platform-db|https://app.punyasitus.com/api/health/db|200-299|ok|750
-Probe: jobs|https://app.punyasitus.com/api/health/jobs|200-299|ok|1000
-Probe: canary-tenant|https://canary.situsku.click/|200-299|canary|2000
+Probe: admin-host|https://app.punyasitus.com/auth/login|200-299|Masuk|2000
+Probe: tenant-host|https://canary.situsku.click/|200-299|canary|2000
 Probe: unknown-tenant-404|https://does-not-exist-canary.situsku.click/|404-404|Halaman tidak ditemukan|2000
+Probe: worker-heartbeat|https://app.punyasitus.com/api/health|200-299|"status":"ok"|1000
+Probe: platform-db|https://app.punyasitus.com/api/health/db|200-299|"status":"ok"|750
+Probe: jobs|https://app.punyasitus.com/api/health/jobs|200-299|"status":"ok"|1000
+Probe: backup-freshness|https://app.punyasitus.com/api/health/backup|200-299|"freshness":"ok"|1000
+Probe: autolaris-advice-freshness|https://app.punyasitus.com/api/health/jobs|200-299|"advice":{"status":"ok"|1000
 ```
 
-The endpoint paths are proposals; TASK-037 records the final paths. The tenant base domain `situsku.click` is final (DEC-045).
+## External Uptime Alerting & Synthetic Monitoring (`PLAN.md` §9)
 
-## Recommended production probes
+Low-volume tenant sites cannot rely solely on organic traffic to surface outages. Upon authorized staging/production deployment, configure an external uptime monitor (independent of Cloudflare Workers) targeting:
 
-Add probes for database connectivity, background jobs, queue/worker health, or a
-critical-error sentinel when the application exposes stable HTTP endpoints for
-them. Keep vendor-specific credentials and query tokens out of this file.
+1. **Admin host:** `https://app.punyasitus.com/api/health` + `https://app.punyasitus.com/auth/login` (60-second interval, alert operator after 2 consecutive failures or HTTP `5xx` / timeout `> 2000ms`).
+2. **Canary tenant host:** `https://canary.situsku.click/` (60-second interval, alert operator after 2 consecutive failures or missing tenant marker) plus negative check `https://does-not-exist-canary.situsku.click/` expecting neutral `404`.
+3. **Readiness & freshness probes:** `https://app.punyasitus.com/api/health/db`, `/api/health/jobs`, and `/api/health/backup` (5-minute interval, alert operator immediately on `503` or `"status":"degraded"`).
 
-Examples:
+## Operational Runbooks
 
-```text
-Probe: database|https://example.com/health/db|200-299|ok|750
-Probe: background-jobs|https://example.com/health/workers|200-299|ok|1000
-Probe: critical-errors|https://example.com/health/errors|200-299|critical_errors=0|1000
-```
+- Structured telemetry redaction, alert thresholds, and compatible release/rollback rules: [docs/operations/telemetry-release.md](docs/operations/telemetry-release.md)
+- Backup topology, RPO/RTO measurements, isolated restore drill, and `DEC-022` tombstone replay: [docs/operations/backup-restore.md](docs/operations/backup-restore.md)
+- Privacy retention, DSR 72h workflow, and breach notification: [docs/operations/privacy.md](docs/operations/privacy.md)

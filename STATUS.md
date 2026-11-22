@@ -11,11 +11,11 @@ Independent-Review-Head: UNSET
 
 ## Now
 
-Wave 0 (`TASK-023`, `19c2b0a`), Wave 1 (`TASK-001`, `024`, `010`, `011`, `032`, `ff9505d`), Foundation Step F2 (`TASK-002`, `028`, `dc052fd`), and Foundation Step F3 (`TASK-077` Email Adapter, `TASK-029` Rate Limits & Idempotency, `TASK-031` Consent, Retention & Privacy, `RUN-20261122T165305Z-d67413c7`) implemented via 3 parallel child worktrees (`f3-email`, `f3-ratelimits`, `f3-privacy`). Production Worker `queue()` now wires `createEmailQueueHandler()` and `createRetentionJobRegistry()`.
+Foundation Spine (`F0`–`F4`) complete: Wave 0 (`TASK-023`, `19c2b0a`), Wave 1 (`TASK-001`, `024`, `010`, `011`, `032`, `ff9505d`), F2 (`TASK-002`, `028`, `dc052fd`), F3 (`TASK-077`, `029`, `031`, `54e17db`), and F4 (`TASK-025` Better Auth Organization Sessions & RBAC, `TASK-030` First-Party Click Counters & Admin Metrics, `TASK-037` Telemetry, Backups & Observability, `RUN-20261122T173325Z-0490c7cc`) implemented via 3 parallel child worktrees (`f4-auth`, `f4-metrics`, `f4-telemetry`). Production Worker `queue()` now wires retention, email, and daily `PLATFORM_DB` R2 backup handlers.
 
 ## Next
 
-Complete independent cross-family R3 review and `delivery-ledger finish` for Foundation Step F3 (`TASK-077`, `TASK-029`, `TASK-031`), commit/push to `main`, then execute Foundation Step F4 (`TASK-025` Better Auth Organization Sessions & RBAC, `TASK-030` First-Party Click Counters, `TASK-037` Telemetry & Backups) in parallel — unlocking 95 downstream feature tasks.
+Complete independent cross-family R3 review and `delivery-ledger finish` for Foundation Step F4 (`TASK-025`, `TASK-030`, `TASK-037`), commit/push to `main`, and unlock parallel feature waves (starting with Wave 2 security/topology `TASK-045`, `TASK-049`, `TASK-067`, `TASK-090` and parallel M1 feature tracks).
 
 ## Blockers
 

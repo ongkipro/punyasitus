@@ -1,0 +1,33 @@
+export {
+  DAILY_PLATFORM_BACKUP_TOPIC,
+  PLATFORM_BACKUP_LATEST_KEY,
+  PLATFORM_BACKUP_PREFIX,
+  buildPlatformBackupKeys,
+  computeSha256Hex,
+  createDailyBackupQueueHandler,
+  exportPlatformDbLogicalSql,
+  formatSqlLiteral,
+  formatUtcBackupDate,
+  runDailyPlatformBackup,
+  type BackupR2BucketLike,
+  type BackupR2ObjectLike,
+  type CreateDailyBackupQueueHandlerOptions,
+  type DailyBackupJobContext,
+  type DailyBackupQueueEnv,
+  type DailyBackupQueueHandler,
+  type DailyBackupReconcileResult,
+  type LogicalSqlExportResult,
+  type PlatformBackupLatestMarker,
+  type PlatformBackupManifest,
+  type RunDailyPlatformBackupInput,
+  type RunDailyPlatformBackupResult,
+} from "./platform-backup.ts";
+
+export {
+  runIsolatedRestoreDrill,
+  type IsolatedRestoreDrillInput,
+  type IsolatedRestoreDrillResult,
+  type RestoreMediaR2BucketLike,
+  type TenantRestoreSnapshotExpectation,
+  type TenantRestoreVerificationRecord,
+} from "./restore-drill.ts";
