@@ -1,0 +1,958 @@
+---
+import {
+  CONSENT_COOKIE_NAME,
+  CONSENT_MAX_AGE_SECONDS,
+  CONSENT_POLICY_VERSION,
+  parseConsentCookie,
+} from "../core/privacy.ts";
+
+export interface VendorScriptSlot {
+  readonly id: string;
+  readonly category: "analytics" | "marketing";
+  readonly src: string;
+  readonly label?: string;
+}
+
+export interface MapEmbedConfig {
+  readonly title: string;
+  readonly address?: string;
+  readonly externalMapsUrl: string;
+  readonly embedUrl: string;
+}
+
+export interface Props {
+  readonly siteName?: string;
+  readonly privacyPolicyUrl?: string;
+  readonly policyVersion?: number;
+  readonly initialCookieHeader?: string | null;
+  readonly vendorScripts?: readonly VendorScriptSlot[];
+  readonly mapEmbed?: MapEmbedConfig;
+  readonly cookieMaxAgeSeconds?: number;
+}
+
+const {
+  siteName = "Situs ini",
+  privacyPolicyUrl = "/kebijakan-privasi",
+  policyVersion = CONSENT_POLICY_VERSION,
+  initialCookieHeader,
+  vendorScripts = [],
+  mapEmbed,
+  cookieMaxAgeSeconds = CONSENT_MAX_AGE_SECONDS,
+} = Astro.props;
+
+const rawCookieHeader =
+  initialCookieHeader !== undefined
+    ? initialCookieHeader
+    : (Astro.request?.headers?.get("cookie") ?? null);
+
+const initialState = parseConsentCookie(rawCookieHeader, {
+  expectedVersion: policyVersion,
+  cookieName: CONSENT_COOKIE_NAME,
+});
+
+const { hasDecision, preferences } = initialState;
+
+const activeLabels: string[] = [];
+if (preferences.analytics) activeLabels.push("Analitik");
+if (preferences.marketing) activeLabels.push("Pemasaran");
+if (preferences.maps) activeLabels.push("Peta");
+
+const initialSummaryText = hasDecision
+  ? activeLabels.length > 0
+    ? `Izin aktif: ${activeLabels.join(", ")}`
+    : "Hanya fitur esensial (pelacak opsional ditolak)"
+  : "Belum ada pilihan izin (pelacak opsional tidak dimuat)";
+---
+
+<div
+  class="ps-privacy-root"
+  data-ps-consent-root
+  data-cookie-name={CONSENT_COOKIE_NAME}
+  data-policy-version={String(policyVersion)}
+  data-max-age={String(cookieMaxAgeSeconds)}
+  data-initial-state={JSON.stringify(initialState)}
+>
+  {mapEmbed && (
+    <section
+      class="ps-map-card"
+      aria-labelledby="ps-map-heading"
+      data-testid="consent-map-region"
+    >
+      <div class="ps-map-header">
+        <div>
+          <h2 id="ps-map-heading" class="ps-map-title">{mapEmbed.title}</h2>
+          {mapEmbed.address && <p class="ps-map-address">{mapEmbed.address}</p>}
+        </div>
+        <a
+          href={mapEmbed.externalMapsUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          class="ps-btn ps-btn-secondary"
+          data-testid="consent-map-fallback-link"
+        >
+          Buka di Peta Eksternal
+        </a>
+      </div>
+
+      <div
+        class="ps-map-placeholder"
+        data-testid="consent-map-placeholder"
+        hidden={preferences.maps}
+      >
+        <p class="ps-map-notice">
+          Peta interaktif belum dimuat untuk menjaga privasi Anda. Anda tetap dapat membuka lokasi
+          melalui tautan di atas tanpa memuat skrip pihak ketiga, atau aktifkan izin Peta di bawah.
+        </p>
+        <button
+          type="button"
+          class="ps-btn ps-btn-primary"
+          data-action="enable-maps"
+          data-testid="consent-enable-maps"
+        >
+          Izinkan &amp; muat peta interaktif
+        </button>
+      </div>
+
+      <div
+        class="ps-map-embed-slot"
+        data-testid="consent-map-embed-slot"
+        data-map-embed-url={mapEmbed.embedUrl}
+        data-map-title={mapEmbed.title}
+        hidden={!preferences.maps}
+      />
+    </section>
+  )}
+
+  {/* Inert vendor script definitions: NEVER fetched until affirmative consent is granted */}
+  {vendorScripts.map((slot) => (
+    <template
+      data-consent-slot="vendor"
+      data-consent-category={slot.category}
+      data-vendor-id={slot.id}
+      data-vendor-src={slot.src}
+      data-vendor-label={slot.label ?? slot.id}
+    />
+  ))}
+
+  {/* Persistent privacy settings / withdrawal bar — always reachable after a choice is made */}
+  <aside
+    class="ps-consent-dock-bar"
+    aria-label="Kontrol privasi"
+    data-testid="consent-manage-bar"
+    hidden={!hasDecision}
+  >
+    <span class="ps-consent-summary" data-testid="consent-status-summary" aria-live="polite">
+      {initialSummaryText}
+    </span>
+    <div class="ps-consent-bar-actions">
+      <button
+        type="button"
+        class="ps-btn ps-btn-secondary"
+        data-action="open-preferences"
+        data-testid="consent-manage-trigger"
+      >
+        Ubah / cabut izin privasi
+      </button>
+      <button
+        type="button"
+        class="ps-btn ps-btn-danger"
+        data-action="withdraw-consent"
+        data-testid="consent-withdraw-quick"
+        hidden={!(preferences.analytics || preferences.marketing || preferences.maps)}
+      >
+        Cabut izin
+      </button>
+    </div>
+  </aside>
+
+  {/* Initial consent banner (strictly opt-in; zero optional vendors load before choice) */}
+  <section
+    class="ps-consent-banner"
+    role="region"
+    aria-labelledby="ps-consent-banner-title"
+    data-testid="consent-banner"
+    hidden={hasDecision}
+  >
+    <div class="ps-consent-banner-body">
+      <h2 id="ps-consent-banner-title" class="ps-consent-heading">
+        Privasi &amp; Preferensi Cookie
+      </h2>
+      <p class="ps-consent-copy">
+        {siteName} menggunakan fitur esensial agar formulir, navigasi, dan tautan WhatsApp berjalan
+        baik. Pelacak analitik, pemasaran, dan peta interaktif hanya dimuat jika Anda memberi izin.
+        <a href={privacyPolicyUrl} class="ps-consent-link">
+          Baca Kebijakan Privasi
+        </a>
+      </p>
+      <noscript>
+        <p class="ps-consent-noscript">
+          JavaScript tidak aktif: hanya fitur esensial yang berjalan. Pelacak opsional dan peta
+          interaktif tidak dimuat; formulir kontak, tautan peta eksternal, dan WhatsApp tetap dapat
+          digunakan.
+        </p>
+      </noscript>
+    </div>
+    <div class="ps-consent-actions">
+      <button
+        type="button"
+        class="ps-btn ps-btn-primary"
+        data-action="accept-all"
+        data-testid="consent-accept-all"
+      >
+        Terima semua
+      </button>
+      <button
+        type="button"
+        class="ps-btn ps-btn-secondary"
+        data-action="reject-optional"
+        data-testid="consent-reject-optional"
+      >
+        Tolak opsional
+      </button>
+      <button
+        type="button"
+        class="ps-btn ps-btn-ghost"
+        data-action="open-preferences"
+        data-testid="consent-customize"
+      >
+        Atur preferensi
+      </button>
+    </div>
+  </section>
+
+  {/* Accessible Preferences & Withdrawal Dialog */}
+  <div
+    class="ps-consent-backdrop"
+    data-testid="consent-preferences-backdrop"
+    hidden
+  >
+    <div
+      class="ps-consent-dialog"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="ps-consent-dialog-title"
+      data-testid="consent-preferences-dialog"
+      tabindex="-1"
+    >
+      <div class="ps-dialog-header">
+        <h2 id="ps-consent-dialog-title" class="ps-consent-heading">
+          Pengaturan Izin Privasi
+        </h2>
+        <button
+          type="button"
+          class="ps-btn ps-btn-ghost ps-dialog-close"
+          data-action="close-preferences"
+          data-testid="consent-dialog-close"
+          aria-label="Tutup pengaturan privasi"
+        >
+          Tutup
+        </button>
+      </div>
+
+      <p class="ps-consent-copy">
+        Pilih kategori opsional yang Anda izinkan. Anda dapat mengubah atau mencabut izin kapan saja.
+      </p>
+
+      <form class="ps-consent-form" data-consent-form>
+        <fieldset class="ps-consent-fieldset">
+          <legend class="ps-sr-only">Kategori cookie dan layanan pihak ketiga</legend>
+
+          <label class="ps-consent-option ps-consent-option-locked">
+            <input type="checkbox" checked disabled />
+            <span>
+              <strong>Esensial (selalu aktif)</strong>
+              <small>Diperlukan untuk formulir, navigasi, dan keamanan dasar situs.</small>
+            </span>
+          </label>
+
+          <label class="ps-consent-option">
+            <input
+              type="checkbox"
+              name="analytics"
+              checked={preferences.analytics}
+              data-testid="consent-toggle-analytics"
+            />
+            <span>
+              <strong>Analitik pengunjung</strong>
+              <small>Memuat skrip analitik pihak ketiga (jika dikonfigurasi oleh pemilik situs).</small>
+            </span>
+          </label>
+
+          <label class="ps-consent-option">
+            <input
+              type="checkbox"
+              name="marketing"
+              checked={preferences.marketing}
+              data-testid="consent-toggle-marketing"
+            />
+            <span>
+              <strong>Pemasaran &amp; piksel iklan</strong>
+              <small>Memuat piksel kampanye tanpa meneruskan isi pesan atau data formulir Anda.</small>
+            </span>
+          </label>
+
+          <label class="ps-consent-option">
+            <input
+              type="checkbox"
+              name="maps"
+              checked={preferences.maps}
+              data-testid="consent-toggle-maps"
+            />
+            <span>
+              <strong>Peta interaktif</strong>
+              <small>Memuat peta tertanam pihak ketiga; sebelum disetujui hanya tautan peta biasa yang tampil.</small>
+            </span>
+          </label>
+        </fieldset>
+
+        <div class="ps-dialog-footer">
+          <button
+            type="submit"
+            class="ps-btn ps-btn-primary"
+            data-testid="consent-save-preferences"
+          >
+            Simpan preferensi
+          </button>
+          <button
+            type="button"
+            class="ps-btn ps-btn-danger"
+            data-action="withdraw-consent"
+            data-testid="consent-withdraw"
+          >
+            Cabut semua izin opsional
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<style>
+  .ps-privacy-root {
+    --ps-bg: #ffffff;
+    --ps-surface: #f8faf9;
+    --ps-fg: #182522;
+    --ps-muted: #52635c;
+    --ps-border: #d9e2dd;
+    --ps-primary: #176b51;
+    --ps-primary-fg: #ffffff;
+    --ps-danger: #b42318;
+    --ps-danger-fg: #ffffff;
+    --ps-ring: #176b51;
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    color: var(--ps-fg);
+    line-height: 1.5;
+  }
+
+  .ps-privacy-root *,
+  .ps-privacy-root *::before,
+  .ps-privacy-root *::after {
+    box-sizing: border-box;
+  }
+
+  .ps-privacy-root :focus-visible {
+    outline: 2px solid var(--ps-ring);
+    outline-offset: 2px;
+  }
+
+  .ps-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .ps-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 44px;
+    min-width: 44px;
+    padding: 0.625rem 1rem;
+    border-radius: 6px;
+    border: 1px solid transparent;
+    font-size: 0.9375rem;
+    font-weight: 600;
+    line-height: 1.25;
+    text-decoration: none;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .ps-btn-primary {
+    background: var(--ps-primary);
+    color: var(--ps-primary-fg);
+  }
+
+  .ps-btn-secondary {
+    background: var(--ps-bg);
+    color: var(--ps-fg);
+    border-color: var(--ps-border);
+  }
+
+  .ps-btn-ghost {
+    background: transparent;
+    color: var(--ps-fg);
+    border-color: var(--ps-border);
+  }
+
+  .ps-btn-danger {
+    background: var(--ps-danger);
+    color: var(--ps-danger-fg);
+  }
+
+  .ps-map-card {
+    background: var(--ps-bg);
+    border: 1px solid var(--ps-border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+  }
+
+  .ps-map-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .ps-map-title {
+    margin: 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+  }
+
+  .ps-map-address {
+    margin: 0.25rem 0 0;
+    font-size: 0.875rem;
+    color: var(--ps-muted);
+  }
+
+  .ps-map-placeholder {
+    background: var(--ps-surface);
+    border: 1px dashed var(--ps-border);
+    border-radius: 6px;
+    padding: 1rem;
+  }
+
+  .ps-map-notice {
+    margin: 0 0 0.75rem;
+    font-size: 0.875rem;
+    color: var(--ps-muted);
+  }
+
+  .ps-map-embed-slot :global(iframe) {
+    display: block;
+    width: 100%;
+    min-height: 280px;
+    border: 1px solid var(--ps-border);
+    border-radius: 6px;
+  }
+
+  .ps-consent-banner {
+    position: fixed;
+    left: 1rem;
+    right: 1rem;
+    bottom: 1rem;
+    z-index: 40;
+    max-width: 64rem;
+    margin: 0 auto;
+    background: var(--ps-bg);
+    border: 1px solid var(--ps-border);
+    border-radius: 8px;
+    padding: 1rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    box-shadow: 0 8px 24px rgba(24, 37, 34, 0.12);
+  }
+
+  .ps-consent-banner[hidden],
+  .ps-consent-dock-bar[hidden],
+  .ps-consent-backdrop[hidden],
+  .ps-map-placeholder[hidden],
+  .ps-map-embed-slot[hidden],
+  .ps-btn[hidden] {
+    display: none !important;
+  }
+
+  .ps-consent-banner-body {
+    flex: 1 1 20rem;
+    min-width: 0;
+  }
+
+  .ps-consent-heading {
+    margin: 0 0 0.375rem;
+    font-size: 1rem;
+    font-weight: 600;
+  }
+
+  .ps-consent-copy {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--ps-muted);
+  }
+
+  .ps-consent-noscript {
+    margin: 0.5rem 0 0;
+    font-size: 0.8125rem;
+    color: var(--ps-fg);
+    background: var(--ps-surface);
+    padding: 0.5rem 0.75rem;
+    border-radius: 4px;
+    border: 1px solid var(--ps-border);
+  }
+
+  .ps-consent-link {
+    color: var(--ps-primary);
+    font-weight: 600;
+    text-decoration: underline;
+    margin-left: 0.25rem;
+  }
+
+  .ps-consent-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+
+  .ps-consent-dock-bar {
+    margin-top: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--ps-surface);
+    border: 1px solid var(--ps-border);
+    border-radius: 8px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .ps-consent-summary {
+    font-size: 0.875rem;
+    color: var(--ps-muted);
+  }
+
+  .ps-consent-bar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .ps-consent-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgba(24, 37, 34, 0.52);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+  }
+
+  .ps-consent-dialog {
+    background: var(--ps-bg);
+    border: 1px solid var(--ps-border);
+    border-radius: 8px;
+    width: 100%;
+    max-width: 34rem;
+    max-height: 90vh;
+    overflow-y: auto;
+    padding: 1.25rem;
+  }
+
+  .ps-dialog-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .ps-consent-fieldset {
+    border: 0;
+    margin: 1rem 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+
+  .ps-consent-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid var(--ps-border);
+    border-radius: 6px;
+    cursor: pointer;
+    min-height: 44px;
+  }
+
+  .ps-consent-option-locked {
+    background: var(--ps-surface);
+    cursor: default;
+  }
+
+  .ps-consent-option input[type="checkbox"] {
+    width: 20px;
+    height: 20px;
+    margin-top: 2px;
+    flex-shrink: 0;
+    accent-color: var(--ps-primary);
+  }
+
+  .ps-consent-option span {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .ps-consent-option strong {
+    font-size: 0.9375rem;
+  }
+
+  .ps-consent-option small {
+    font-size: 0.8125rem;
+    color: var(--ps-muted);
+  }
+
+  .ps-dialog-footer {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: flex-end;
+  }
+
+  @media (max-width: 640px) {
+    .ps-consent-banner {
+      left: 0.5rem;
+      right: 0.5rem;
+      bottom: 0.5rem;
+      padding: 0.875rem;
+    }
+
+    .ps-consent-actions,
+    .ps-dialog-footer,
+    .ps-consent-bar-actions {
+      width: 100%;
+    }
+
+    .ps-consent-actions .ps-btn,
+    .ps-dialog-footer .ps-btn,
+    .ps-consent-bar-actions .ps-btn {
+      flex: 1 1 auto;
+    }
+  }
+</style>
+
+<script is:inline>
+  (() => {
+    const roots = document.querySelectorAll("[data-ps-consent-root]");
+    for (const root of roots) {
+      if (!(root instanceof HTMLElement) || root.dataset.psConsentInit === "1") continue;
+      root.dataset.psConsentInit = "1";
+
+      const cookieName = root.dataset.cookieName || "__Host-ps_consent";
+      const policyVersion = Number(root.dataset.policyVersion || "1");
+      const maxAgeSeconds = Number(root.dataset.maxAge || String(180 * 24 * 60 * 60));
+
+      const banner = root.querySelector('[data-testid="consent-banner"]');
+      const manageBar = root.querySelector('[data-testid="consent-manage-bar"]');
+      const summaryEl = root.querySelector('[data-testid="consent-status-summary"]');
+      const quickWithdrawBtn = root.querySelector('[data-testid="consent-withdraw-quick"]');
+      const backdrop = root.querySelector('[data-testid="consent-preferences-backdrop"]');
+      const dialog = root.querySelector('[data-testid="consent-preferences-dialog"]');
+      const form = root.querySelector("[data-consent-form]");
+      const mapPlaceholder = root.querySelector('[data-testid="consent-map-placeholder"]');
+      const mapEmbedSlot = root.querySelector('[data-testid="consent-map-embed-slot"]');
+
+      let lastFocusedTrigger = null;
+
+      function defaultPrefs() {
+        return {
+          version: policyVersion,
+          analytics: false,
+          marketing: false,
+          maps: false,
+          updatedAt: "",
+        };
+      }
+
+      function readConsentFromCookie() {
+        const raw = document.cookie || "";
+        if (!raw) return { hasDecision: false, preferences: defaultPrefs() };
+        const parts = raw.split(";");
+        for (const part of parts) {
+          const eq = part.indexOf("=");
+          if (eq <= 0) continue;
+          const name = part.slice(0, eq).trim();
+          if (name !== cookieName) continue;
+          try {
+            const parsed = JSON.parse(decodeURIComponent(part.slice(eq + 1).trim()));
+            if (
+              parsed &&
+              typeof parsed === "object" &&
+              parsed.version === policyVersion &&
+              typeof parsed.analytics === "boolean" &&
+              typeof parsed.marketing === "boolean" &&
+              typeof parsed.maps === "boolean" &&
+              typeof parsed.updatedAt === "string" &&
+              parsed.updatedAt.length > 0
+            ) {
+              return { hasDecision: true, preferences: parsed };
+            }
+          } catch {
+            // Malformed cookie falls back strictly to default deny
+          }
+        }
+        return { hasDecision: false, preferences: defaultPrefs() };
+      }
+
+      function writeConsentCookie(prefs, maxAge) {
+        if (!cookieName.startsWith("__Host-")) {
+          throw new Error("Consent cookie must use __Host- prefix");
+        }
+        const encoded = encodeURIComponent(JSON.stringify(prefs));
+        // Host-only cookie: NEVER sets Domain= (PLAN §3.2, DEC-041)
+        const serialized = `${cookieName}=${encoded}; Path=/; Max-Age=${maxAge}; SameSite=Lax; Secure`;
+        document.cookie = serialized;
+        window.__punyasitusLastConsentSetCookie = serialized;
+      }
+
+      function syncVendorScripts(prefs) {
+        const templates = root.querySelectorAll('template[data-consent-slot="vendor"]');
+        for (const tpl of templates) {
+          if (!(tpl instanceof HTMLElement)) continue;
+          const category = tpl.dataset.consentCategory;
+          const vendorId = tpl.dataset.vendorId || "";
+          const src = tpl.dataset.vendorSrc || "";
+          if (category !== "analytics" && category !== "marketing") continue;
+
+          const allowed = prefs.version === policyVersion && prefs[category] === true;
+          const selector = `script[data-consent-loaded="true"][data-vendor-id="${CSS.escape(vendorId)}"]`;
+          const existing = document.querySelector(selector);
+
+          if (allowed && src) {
+            if (!existing) {
+              const script = document.createElement("script");
+              script.src = src;
+              script.async = true;
+              script.dataset.consentLoaded = "true";
+              script.dataset.consentCategory = category;
+              script.dataset.vendorId = vendorId;
+              document.head.appendChild(script);
+            }
+          } else if (existing) {
+            existing.remove();
+          }
+        }
+      }
+
+      function syncMapEmbed(prefs) {
+        if (!(mapEmbedSlot instanceof HTMLElement)) return;
+        const allowed = prefs.version === policyVersion && prefs.maps === true;
+        const embedUrl = mapEmbedSlot.dataset.mapEmbedUrl || "";
+        const title = mapEmbedSlot.dataset.mapTitle || "Peta Lokasi";
+
+        if (allowed && embedUrl) {
+          if (mapPlaceholder instanceof HTMLElement) {
+            mapPlaceholder.hidden = true;
+          }
+          mapEmbedSlot.hidden = false;
+          if (!mapEmbedSlot.querySelector('iframe[data-testid="consent-map-iframe"]')) {
+            const iframe = document.createElement("iframe");
+            iframe.src = embedUrl;
+            iframe.title = title;
+            iframe.loading = "lazy";
+            iframe.referrerPolicy = "no-referrer-when-downgrade";
+            iframe.setAttribute("data-testid", "consent-map-iframe");
+            mapEmbedSlot.appendChild(iframe);
+          }
+        } else {
+          // Immediately unmount iframe upon rejection or withdrawal
+          mapEmbedSlot.replaceChildren();
+          mapEmbedSlot.hidden = true;
+          if (mapPlaceholder instanceof HTMLElement) {
+            mapPlaceholder.hidden = false;
+          }
+        }
+      }
+
+      function renderState(state, withdrawn) {
+        const prefs = state.preferences;
+        const hasDecision = Boolean(state.hasDecision);
+        const anyOptional = Boolean(prefs.analytics || prefs.marketing || prefs.maps);
+
+        if (banner instanceof HTMLElement) banner.hidden = hasDecision;
+        if (manageBar instanceof HTMLElement) manageBar.hidden = !hasDecision;
+        if (quickWithdrawBtn instanceof HTMLElement) quickWithdrawBtn.hidden = !anyOptional;
+
+        if (summaryEl instanceof HTMLElement) {
+          const labels = [];
+          if (prefs.analytics) labels.push("Analitik");
+          if (prefs.marketing) labels.push("Pemasaran");
+          if (prefs.maps) labels.push("Peta");
+          summaryEl.textContent = hasDecision
+            ? labels.length > 0
+              ? `Izin aktif: ${labels.join(", ")}`
+              : "Hanya fitur esensial (pelacak opsional ditolak)"
+            : "Belum ada pilihan izin (pelacak opsional tidak dimuat)";
+        }
+
+        if (form instanceof HTMLFormElement) {
+          const analyticsBox = form.querySelector('input[name="analytics"]');
+          const marketingBox = form.querySelector('input[name="marketing"]');
+          const mapsBox = form.querySelector('input[name="maps"]');
+          if (analyticsBox instanceof HTMLInputElement) analyticsBox.checked = Boolean(prefs.analytics);
+          if (marketingBox instanceof HTMLInputElement) marketingBox.checked = Boolean(prefs.marketing);
+          if (mapsBox instanceof HTMLInputElement) mapsBox.checked = Boolean(prefs.maps);
+        }
+
+        syncVendorScripts(prefs);
+        syncMapEmbed(prefs);
+
+        window.__punyasitusConsent = { ...prefs, hasDecision };
+        window.dispatchEvent(
+          new CustomEvent("punyasitus:consent-change", {
+            detail: { preferences: prefs, hasDecision, withdrawn: Boolean(withdrawn) },
+          }),
+        );
+      }
+
+      function openDialog(trigger) {
+        lastFocusedTrigger = trigger instanceof HTMLElement ? trigger : document.activeElement;
+        if (backdrop instanceof HTMLElement) {
+          backdrop.hidden = false;
+        }
+        if (dialog instanceof HTMLElement) {
+          const firstFocus = dialog.querySelector('input[name="analytics"], button');
+          if (firstFocus instanceof HTMLElement) {
+            firstFocus.focus();
+          } else {
+            dialog.focus();
+          }
+        }
+      }
+
+      function closeDialog() {
+        if (backdrop instanceof HTMLElement) {
+          backdrop.hidden = true;
+        }
+        if (lastFocusedTrigger instanceof HTMLElement && !lastFocusedTrigger.hidden) {
+          lastFocusedTrigger.focus();
+        } else {
+          const fallback = root.querySelector(
+            '[data-testid="consent-manage-trigger"]:not([hidden]), [data-testid="consent-accept-all"]:not([hidden])',
+          );
+          if (fallback instanceof HTMLElement) fallback.focus();
+        }
+      }
+
+      function savePreferences(next) {
+        const prefs = {
+          version: policyVersion,
+          analytics: Boolean(next.analytics),
+          marketing: Boolean(next.marketing),
+          maps: Boolean(next.maps),
+          updatedAt: new Date().toISOString(),
+        };
+        writeConsentCookie(prefs, maxAgeSeconds);
+        renderState({ hasDecision: true, preferences: prefs }, false);
+      }
+
+      function performWithdraw() {
+        const reset = {
+          version: policyVersion,
+          analytics: false,
+          marketing: false,
+          maps: false,
+          updatedAt: new Date().toISOString(),
+        };
+        writeConsentCookie(reset, 0);
+        if (backdrop instanceof HTMLElement) {
+          backdrop.hidden = true;
+        }
+        renderState({ hasDecision: false, preferences: defaultPrefs() }, true);
+        const acceptBtn = root.querySelector('[data-testid="consent-accept-all"]');
+        if (acceptBtn instanceof HTMLElement) acceptBtn.focus();
+      }
+
+      root.addEventListener("click", (event) => {
+        const target = event.target instanceof Element ? event.target.closest("[data-action]") : null;
+        if (!(target instanceof HTMLElement)) return;
+        const action = target.dataset.action;
+
+        if (action === "accept-all") {
+          savePreferences({ analytics: true, marketing: true, maps: true });
+        } else if (action === "reject-optional") {
+          savePreferences({ analytics: false, marketing: false, maps: false });
+        } else if (action === "open-preferences") {
+          openDialog(target);
+        } else if (action === "close-preferences") {
+          closeDialog();
+        } else if (action === "withdraw-consent") {
+          performWithdraw();
+        } else if (action === "enable-maps") {
+          const current = readConsentFromCookie().preferences;
+          savePreferences({
+            analytics: current.analytics,
+            marketing: current.marketing,
+            maps: true,
+          });
+        }
+      });
+
+      if (form instanceof HTMLFormElement) {
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          const analyticsBox = form.querySelector('input[name="analytics"]');
+          const marketingBox = form.querySelector('input[name="marketing"]');
+          const mapsBox = form.querySelector('input[name="maps"]');
+          savePreferences({
+            analytics: analyticsBox instanceof HTMLInputElement && analyticsBox.checked,
+            marketing: marketingBox instanceof HTMLInputElement && marketingBox.checked,
+            maps: mapsBox instanceof HTMLInputElement && mapsBox.checked,
+          });
+          closeDialog();
+        });
+      }
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && backdrop instanceof HTMLElement && !backdrop.hidden) {
+          event.preventDefault();
+          closeDialog();
+        }
+      });
+
+      // Hydrate from real browser cookie (or fall back to SSR initial state)
+      const browserState = readConsentFromCookie();
+      if (browserState.hasDecision) {
+        renderState(browserState, false);
+      } else {
+        let initial = { hasDecision: false, preferences: defaultPrefs() };
+        try {
+          const parsed = JSON.parse(root.dataset.initialState || "{}");
+          if (parsed && typeof parsed.hasDecision === "boolean" && parsed.preferences) {
+            initial = parsed;
+          }
+        } catch {
+          // Use strict default deny
+        }
+        renderState(initial, false);
+      }
+    }
+  })();
+</script>

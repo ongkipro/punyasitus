@@ -1,6 +1,6 @@
 # Status — punyasitus
 
-Updated: 2026-11-22
+Updated: 2026-11-23
 Status: Active
 State: IMPLEMENTING
 Review-Risk: R3
@@ -11,11 +11,11 @@ Independent-Review-Head: UNSET
 
 ## Now
 
-Wave 0 (`TASK-023`, `19c2b0a`), Wave 1 (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`, `TASK-032`, `ff9505d`), and Foundation Step F2 (`TASK-002` Host Routing Middleware & `TASK-028` Durable Queues/Cron, `RUN-20261122T163016Z-333b3a9f`) implemented via parallel child worktrees (`f2-routing`, `f2-queues`). `TASK-002` adds authoritative `PLATFORM_DB` host resolution (`<=5s` active-only isolate cache, `60s` moved-host quarantine), 8-step `PLAN §3.3` middleware + neutral 404/503 state pages, post-gate `caches.default` key isolation, and `TenantStore` DO binding. `TASK-028` adds strict Zod job envelopes, log/error redaction, `PLATFORM_DB.job_ledger` atomic lease acquisition & recovery, capped retries + DLQ + failed-job view, provider reconciliation hook, and deterministic single-enqueue-per-period Cron dispatch wired into `apps/web/src/worker/index.ts`.
+Wave 0 (`TASK-023`, `19c2b0a`), Wave 1 (`TASK-001`, `024`, `010`, `011`, `032`, `ff9505d`), Foundation Step F2 (`TASK-002`, `028`, `dc052fd`), and Foundation Step F3 (`TASK-077` Email Adapter, `TASK-029` Rate Limits & Idempotency, `TASK-031` Consent, Retention & Privacy, `RUN-20261122T165305Z-d67413c7`) implemented via 3 parallel child worktrees (`f3-email`, `f3-ratelimits`, `f3-privacy`). Production Worker `queue()` now wires `createEmailQueueHandler()` and `createRetentionJobRegistry()`.
 
 ## Next
 
-Complete independent cross-family R3 review and `delivery-ledger finish` for Foundation Step F2 (`TASK-002`, `TASK-028`), commit/push to `main`, then execute Foundation Step F3 (`TASK-077` Email Adapter, `TASK-029` Rate Limits, `TASK-031` Consent/Privacy) in parallel.
+Complete independent cross-family R3 review and `delivery-ledger finish` for Foundation Step F3 (`TASK-077`, `TASK-029`, `TASK-031`), commit/push to `main`, then execute Foundation Step F4 (`TASK-025` Better Auth Organization Sessions & RBAC, `TASK-030` First-Party Click Counters, `TASK-037` Telemetry & Backups) in parallel — unlocking 95 downstream feature tasks.
 
 ## Blockers
 

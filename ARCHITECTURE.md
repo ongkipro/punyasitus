@@ -1,7 +1,7 @@
 # Architecture — punyasitus
 
-Updated: 2026-11-22
-Current state: Wave 0 (`TASK-023`), Wave 1 (`TASK-001`, `TASK-024`, `TASK-010`, `TASK-011`, `TASK-032`), and Wave 2 Foundation Step F2 (`TASK-002`, `TASK-028`) implemented; next is Foundation Step F3 (`TASK-077`, `TASK-029`, `TASK-031`).
+Updated: 2026-11-23
+Current state: Wave 0 (`TASK-023`), Wave 1 (`TASK-001`, `024`, `010`, `011`, `032`), Wave 2 F2 (`TASK-002`, `028`), and Wave 2 F3 (`TASK-077`, `029`, `031`) implemented; next is Foundation Step F4 (`TASK-025` Better Auth + RBAC, `TASK-030`, `TASK-037`).
 
 ## Pinned Workspace & Runtime Versions (`TASK-023`)
 

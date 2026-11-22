@@ -1,8 +1,11 @@
 import { handle } from "@astrojs/cloudflare/handler";
 import { isDcvPassThroughPath } from "@punyasitus/core";
+import { redactJobLogRecord } from "@punyasitus/core/jobs/index";
 import { dispatchScheduledCron } from "./cron/index.ts";
 import type { JobQueuePayload, PunyasitusEnv } from "./env.d.ts";
-import { processDurableQueueBatch } from "./queues/index.ts";
+import { EMAIL_DELIVERY_TOPIC, createEmailQueueHandler } from "./queues/email/handler.ts";
+import { processDurableQueueBatch, type DurableJobRegistry } from "./queues/index.ts";
+import { createRetentionJobRegistry } from "./queues/retention/index.ts";
 
 // Durable Object class export (only handlers + DO classes may be exported by a Worker entrypoint)
 export { TenantStore } from "./tenant-store.ts";
@@ -10,6 +13,33 @@ export { TenantStore } from "./tenant-store.ts";
 type AstroRequest = Parameters<typeof handle>[0];
 type AstroEnv = Parameters<typeof handle>[1];
 type AstroCtx = Parameters<typeof handle>[2];
+
+const WORKER_JOB_REGISTRY: DurableJobRegistry = {
+  ...createRetentionJobRegistry(),
+  [EMAIL_DELIVERY_TOPIC]: createEmailQueueHandler({
+    onOwnerSuppressionNotice(event) {
+      console.warn(
+        JSON.stringify(
+          redactJobLogRecord({
+            event: "email.owner_suppression_notice",
+            tenantId: event.tenantId,
+            messageKey: event.messageKey,
+            template: event.template,
+            reason: event.notice.reason,
+            emailHash: event.notice.emailHash,
+            suppressedAt: event.notice.suppressedAt,
+          }),
+        ),
+      );
+    },
+  }),
+  // Deferred to TASK-037 (F4): explicit no-op ack prevents daily cron dead-letter noise until backup export ships.
+  "cron.daily_platform_backup": {
+    async execute() {
+      // Wired in TASK-037
+    },
+  },
+};
 
 export default {
   async fetch(
@@ -30,7 +60,7 @@ export default {
   },
 
   async queue(batch: MessageBatch<JobQueuePayload>, env: PunyasitusEnv): Promise<void> {
-    await processDurableQueueBatch(batch, env, {});
+    await processDurableQueueBatch(batch, env, WORKER_JOB_REGISTRY);
   },
 
   async scheduled(controller: ScheduledController, env: PunyasitusEnv): Promise<void> {
