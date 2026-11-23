@@ -9,6 +9,10 @@ import {
   type ThemeTokens,
   type ThemeVariants,
 } from "@punyasitus/core/theme/index";
+import {
+  getStyleVariantsForTheme,
+  type ThemeStyleVariantDefinition,
+} from "@punyasitus/core/theme/variants";
 
 /**
  * Platform Theme Manifest: `sales` — Sales Compro, Personal Branding & Services
@@ -88,6 +92,7 @@ export const SALES_THEME_MANIFEST = Object.freeze({
   }),
   defaultTokens: DEFAULT_TOKENS,
   defaultVariants: DEFAULT_VARIANTS,
+  styleVariants: getStyleVariantsForTheme(SALES_THEME_ID) as readonly ThemeStyleVariantDefinition[],
   palette: Object.freeze({
     surface: "#ffffff",
     surfaceMuted: "#f5f7fb",

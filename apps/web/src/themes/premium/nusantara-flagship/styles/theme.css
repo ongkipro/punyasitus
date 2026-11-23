@@ -1,0 +1,59 @@
+/*
+ * PunyaSitus Curated Premium Theme (`paid_once`): `premium-nusantara-flagship`
+ * High-Conversion Flagship Showcase (0 KiB JS, WCAG AA >= 4.5:1, <= 1 custom font)
+ */
+
+[data-ps-premium-theme="premium-nusantara-flagship"] {
+  --nf-primary: var(--ps-brand-primary, #7f1d1d);
+  --nf-on-primary: var(--ps-brand-on-primary, #ffffff);
+  --nf-secondary: var(--ps-brand-secondary, #78350f);
+  --nf-surface: var(--ps-surface, #ffffff);
+  --nf-surface-muted: var(--ps-surface-muted, #faf7f4);
+  --nf-ink: var(--ps-ink, #181414);
+  --nf-ink-muted: var(--ps-ink-muted, #544949);
+  --nf-border: var(--ps-border, #e5d9d3);
+  --nf-radius: var(--ps-radius, 8px);
+  background-color: var(--nf-surface);
+  color: var(--nf-ink);
+  overflow-x: clip;
+}
+
+[data-ps-premium-theme="premium-nusantara-flagship"][data-ps-style-variant="emerald-flagship"] {
+  --nf-primary: #065f46;
+  --nf-on-primary: #ffffff;
+  --nf-secondary: #0c4a6e;
+  --nf-surface: #ffffff;
+  --nf-surface-muted: #f2f8f6;
+  --nf-ink: #0e1d19;
+  --nf-ink-muted: #415750;
+  --nf-border: #cfe2dc;
+}
+
+[data-ps-premium-theme="premium-nusantara-flagship"] .nf-flagship-bar {
+  background-color: var(--nf-primary);
+  color: var(--nf-on-primary);
+  padding-block: 0.5625rem;
+}
+
+[data-ps-premium-theme="premium-nusantara-flagship"] .nf-flagship-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+[data-ps-premium-theme="premium-nusantara-flagship"] .ps-card {
+  border: 1px solid var(--nf-border);
+  border-radius: var(--nf-radius);
+  background-color: var(--nf-surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ps-premium-theme="premium-nusantara-flagship"] * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

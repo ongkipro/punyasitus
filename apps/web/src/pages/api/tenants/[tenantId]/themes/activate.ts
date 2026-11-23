@@ -118,12 +118,18 @@ export async function handleTenantThemesActivateRequest(
       );
     }
 
+    const rawStyleVariantId =
+      typeof parsedBody.body.styleVariantId === "string" && parsedBody.body.styleVariantId.trim()
+        ? parsedBody.body.styleVariantId.trim()
+        : null;
+
     const activated = await activateTenantThemeFromLibrary(
       auth.ctx.platformDb,
       auth.ctx.tenantDb,
       auth.ctx.member,
       {
         themeId: rawThemeId,
+        styleVariantId: rawStyleVariantId,
         expectedVersion: versionCheck.expectedVersion,
         nowMs: options.nowMs,
       },

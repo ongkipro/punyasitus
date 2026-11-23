@@ -9,6 +9,10 @@ import {
   type ThemeTokens,
   type ThemeVariants,
 } from "@punyasitus/core/theme/index";
+import {
+  getStyleVariantsForTheme,
+  type ThemeStyleVariantDefinition,
+} from "@punyasitus/core/theme/variants";
 
 /**
  * Platform Theme Manifest: `dealer` — Automotive & Vehicle Showroom
@@ -88,6 +92,7 @@ export const DEALER_THEME_MANIFEST = Object.freeze({
   }),
   defaultTokens: DEFAULT_TOKENS,
   defaultVariants: DEFAULT_VARIANTS,
+  styleVariants: getStyleVariantsForTheme(DEALER_THEME_ID) as readonly ThemeStyleVariantDefinition[],
   palette: Object.freeze({
     surface: "#ffffff",
     surfaceMuted: "#f4f6f8",

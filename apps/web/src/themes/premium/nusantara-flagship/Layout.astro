@@ -1,0 +1,59 @@
+---
+import "./styles/theme.css";
+import SEOHead from "../../../components/SEOHead.astro";
+import type { PublicThemeRouteShellContract } from "../../../core/theme-registry.ts";
+import DefaultLayout from "../../default/Layout.astro";
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly pageTitle?: string;
+  readonly pageDescription?: string;
+}
+
+const { contract, pageTitle, pageDescription } = Astro.props;
+const isFocused = contract.shell.layoutMode === "focused";
+const styleVariant = contract.shell.themeStyle.variants.styleVariant || "garuda-gold";
+---
+
+<DefaultLayout
+  shell={contract.shell}
+  pageTitle={pageTitle}
+  pageDescription={pageDescription}
+  currentPath={contract.pathname}
+  privacyPolicyUrl={contract.consent.privacyPolicyUrl}
+  showConsent={contract.consent.required}
+  vendorScripts={contract.consent.vendorScripts}
+  mapEmbed={contract.consent.mapEmbed}
+  initialCookieHeader={contract.consent.initialCookieHeader}
+  headerCtaLabel={contract.headerCtaLabel}
+  headerCtaHref={contract.headerCtaHref}
+>
+  <SEOHead
+    slot="head"
+    metadata={contract.seoMetadata}
+    jsonLd={contract.schemaGraph ?? undefined}
+    omitTitle={true}
+    omitDescription={true}
+  />
+
+  <div
+    class="nf-theme-root"
+    data-ps-premium-theme="premium-nusantara-flagship"
+    data-ps-style-variant={styleVariant}
+    data-ps-route-kind={contract.routeKind}
+    data-testid="premium-theme-nusantara-flagship"
+  >
+    {!isFocused && (
+      <div class="nf-flagship-bar">
+        <div class="ps-container nf-flagship-inner">
+          <span>{contract.shell.business.name}</span>
+          <span>{contract.shell.business.weekdayHours ?? "Konsultasi & Informasi via WhatsApp"}</span>
+        </div>
+      </div>
+    )}
+
+    <slot />
+  </div>
+
+  <slot name="floating" slot="floating" />
+</DefaultLayout>

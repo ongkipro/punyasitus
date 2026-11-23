@@ -12,6 +12,7 @@ import {
   type TenantCustomThemeGrantSummary,
   type TenantServiceSeatUsage,
 } from "@punyasitus/db/custom-themes/index";
+import { listConsoleThemeStoreOverview } from "@punyasitus/db/themes/store/index";
 import { ConsoleCustomThemesPanel } from "@/components/admin/custom-theme";
 import ConsoleLayout from "@/layouts/ConsoleLayout.astro";
 import {
@@ -67,10 +68,12 @@ if (!authz.ok) {
 }
 
 const { actor, platformDb, nowMs, host } = authz.ctx;
-const [rawPackages, rawRequests] = await Promise.all([
+const [rawPackages, rawRequests, storeOverview] = await Promise.all([
   listCustomThemePackages(platformDb, { limit: 100 }),
   listConsoleCustomThemeRequests(platformDb, { limit: 100 }),
+  listConsoleThemeStoreOverview(platformDb),
 ]);
+const paidCatalogItems = storeOverview.catalog.filter((item) => item.tier === "paid_once");
 
 const distinctTenantIds = Array.from(new Set(rawRequests.map((r) => r.tenantId)));
 const enrichmentEntries = await Promise.all(
@@ -165,6 +168,50 @@ const navLinks = [
         tanpa izin tema dan otomatis mencabut keanggotaan sementara Tim Setup.
       </p>
     </header>
+
+    <section
+      data-testid="console-theme-store-overview"
+      aria-label="Ringkasan Katalog Tema Premium dan Lisensi"
+      class="rounded-lg border border-border bg-card p-4 space-y-3"
+    >
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <h2 class="text-base font-semibold text-foreground">
+            Katalog Toko Tema Premium (Beli Sekali) &amp; Lisensi Aktif
+          </h2>
+          <p class="text-xs text-muted-foreground">
+            Lisensi berlaku ketat per website (<code>tenant_theme_entitlements</code>). Endpoint
+            operator: <code>/api/console/custom-themes/store</code> (2FA step-up + CSRF).
+          </p>
+        </div>
+        <div class="flex flex-wrap gap-2 text-xs tabular-nums">
+          <span class="rounded border border-border bg-muted px-2.5 py-1 font-medium text-foreground">
+            {paidCatalogItems.length} tema premium
+          </span>
+          <span class="rounded border border-border bg-muted px-2.5 py-1 font-medium text-foreground">
+            {storeOverview.entitlements.length} lisensi aktif
+          </span>
+          <span class="rounded border border-border bg-muted px-2.5 py-1 font-medium text-foreground">
+            {storeOverview.recentReceipts.length} kuitansi terbit
+          </span>
+        </div>
+      </div>
+      {paidCatalogItems.length > 0 && (
+        <div class="grid gap-2 sm:grid-cols-2">
+          {paidCatalogItems.map((item) => (
+            <div class="flex items-center justify-between rounded-md border border-border bg-background px-3 py-2 text-xs">
+              <div class="min-w-0">
+                <p class="truncate font-semibold text-foreground">{item.name}</p>
+                <p class="text-muted-foreground">{item.id}</p>
+              </div>
+              <span class="shrink-0 font-semibold text-foreground tabular-nums">
+                Rp {new Intl.NumberFormat("id-ID").format(item.priceIdr)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
 
     <ConsoleCustomThemesPanel
       client:load

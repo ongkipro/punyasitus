@@ -4,8 +4,12 @@ import { PREVIEW_IFRAME_SANDBOX } from "@punyasitus/core/preview/index";
 import {
   AlertCircleIcon,
   AlertTriangleIcon,
+  ArrowRightIcon,
   CheckCircle2Icon,
+  CreditCardIcon,
+  DownloadIcon,
   EyeIcon,
+  FileTextIcon,
   HistoryIcon,
   LayersIcon,
   LockIcon,
@@ -17,6 +21,7 @@ import {
   ShieldCheckIcon,
   SlidersHorizontalIcon,
   SmartphoneIcon,
+  TagIcon,
   XIcon,
 } from "lucide-react";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -33,6 +38,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import type {
+  PremiumThemeStoreItemDto,
+  StyleVariantDto,
   ThemeLibraryActivateResultDto,
   ThemeLibraryItemDto,
   ThemeLibraryPreviewResultDto,
@@ -45,11 +52,15 @@ export interface ThemeLibraryProps {
   readonly themesApiUrl: string;
   readonly previewApiUrl: string;
   readonly activateApiUrl: string;
+  readonly variantsApiUrl?: string;
+  readonly checkoutApiUrl?: string;
+  readonly receiptsBaseUrl?: string;
+  readonly customThemeServiceHref?: string;
   readonly customizerHref: string;
   readonly initialState: ThemeLibraryStateDto;
 }
 
-type ThemeTierFilter = "all" | "included" | "custom";
+type ThemeTierFilter = "all" | "included" | "premium" | "custom";
 
 interface ApiErrorNotice {
   readonly code: string;
@@ -59,6 +70,54 @@ interface ApiErrorNotice {
     readonly code: string;
     readonly message: string;
   }[];
+}
+
+interface PreviewTargetState {
+  readonly id: string;
+  readonly name: string;
+  readonly tier: "included" | "paid_once" | "custom";
+  readonly entitled: boolean;
+  readonly isActive: boolean;
+  readonly hasSavedConfig: boolean;
+  readonly styleVariantId?: string;
+  readonly compatibility: ThemeLibraryItemDto["compatibility"];
+  readonly libraryItem?: ThemeLibraryItemDto;
+  readonly premiumItem?: PremiumThemeStoreItemDto;
+}
+
+interface ConfirmTargetState {
+  readonly id: string;
+  readonly name: string;
+  readonly hasSavedConfig: boolean;
+  readonly styleVariantId?: string;
+}
+
+interface CheckoutOrderSnapshot {
+  readonly id: string;
+  readonly themeId: string;
+  readonly status: string;
+  readonly basePriceIdr: number;
+  readonly discountAmountIdr: number;
+  readonly netBaseAmountIdr: number;
+  readonly channelCode: string;
+  readonly channelFeeIdr: number;
+  readonly totalPayableIdr: number;
+  readonly couponCode: string | null;
+  readonly providerReffId: string;
+  readonly providerTransactionId: string | null;
+  readonly paymentInstructions: Record<string, unknown> | null;
+}
+
+const CHECKOUT_CHANNELS = [
+  { code: "QRIS", label: "QRIS (Gratis biaya saluran)" },
+  { code: "VA_BCA", label: "BCA Virtual Account (+Rp 4.000)" },
+  { code: "VA_BNI", label: "BNI Virtual Account (+Rp 4.000)" },
+  { code: "VA_BRI", label: "BRI Virtual Account (+Rp 4.000)" },
+  { code: "VA_MANDIRI", label: "Mandiri Virtual Account (+Rp 4.000)" },
+] as const;
+
+function formatIdr(amount: number): string {
+  return `Rp ${new Intl.NumberFormat("id-ID").format(amount)}`;
 }
 
 function formatDateTimeId(iso: string | null): string | null {
@@ -74,31 +133,33 @@ function formatDateTimeId(iso: string | null): string | null {
   }
 }
 
-function ThemePalettePreview({ theme }: { readonly theme: ThemeLibraryItemDto }) {
-  const effectiveTokens = theme.savedTokens ?? theme.defaultTokens;
-  const surface = effectiveTokens.surfaceColor ?? theme.palette.surface;
-  const surfaceMuted = theme.palette.surfaceMuted;
-  const primary = effectiveTokens.primaryColor;
-  const secondary = effectiveTokens.secondaryColor;
-  const border = theme.palette.border;
-  const ink = effectiveTokens.textColor ?? theme.palette.ink;
-
+function ThemePalettePreview({
+  surface,
+  surfaceMuted,
+  primary,
+  secondary,
+  border,
+  ink,
+}: {
+  readonly surface: string;
+  readonly surfaceMuted: string;
+  readonly primary: string;
+  readonly secondary: string;
+  readonly border: string;
+  readonly ink: string;
+}) {
   return (
     <div
       className="relative overflow-hidden rounded-md border border-border"
       style={{ backgroundColor: surface }}
       aria-hidden="true"
     >
-      {/* Miniature top nav bar */}
       <div
         className="flex items-center justify-between px-3 py-2"
         style={{ backgroundColor: surface, borderBottom: `1px solid ${border}` }}
       >
         <div className="flex items-center gap-1.5">
-          <span
-            className="inline-block size-2.5 rounded-xs"
-            style={{ backgroundColor: primary }}
-          />
+          <span className="inline-block size-2.5 rounded-xs" style={{ backgroundColor: primary }} />
           <span
             className="inline-block h-2 w-14 rounded-xs opacity-75"
             style={{ backgroundColor: ink }}
@@ -113,15 +174,14 @@ function ThemePalettePreview({ theme }: { readonly theme: ThemeLibraryItemDto })
             className="inline-block h-1.5 w-6 rounded-xs opacity-35"
             style={{ backgroundColor: ink }}
           />
-          <span
-            className="inline-block h-3.5 w-9 rounded-xs"
-            style={{ backgroundColor: primary }}
-          />
+          <span className="inline-block h-3.5 w-9 rounded-xs" style={{ backgroundColor: primary }} />
         </div>
       </div>
 
-      {/* Miniature hero block */}
-      <div className="grid grid-cols-[1.3fr_0.9fr] gap-2.5 p-3" style={{ backgroundColor: surfaceMuted }}>
+      <div
+        className="grid grid-cols-[1.3fr_0.9fr] gap-2.5 p-3"
+        style={{ backgroundColor: surfaceMuted }}
+      >
         <div className="flex flex-col justify-center gap-1.5">
           <span
             className="inline-block h-2 w-10 rounded-xs"
@@ -155,10 +215,7 @@ function ThemePalettePreview({ theme }: { readonly theme: ThemeLibraryItemDto })
             style={{ backgroundColor: ink }}
           />
           <div className="flex items-center gap-1">
-            <span
-              className="inline-block size-3 rounded-xs"
-              style={{ backgroundColor: primary }}
-            />
+            <span className="inline-block size-3 rounded-xs" style={{ backgroundColor: primary }} />
             <span
               className="inline-block size-3 rounded-xs"
               style={{ backgroundColor: secondary }}
@@ -180,15 +237,26 @@ export function ThemeLibrary({
   themesApiUrl,
   previewApiUrl,
   activateApiUrl,
+  variantsApiUrl,
+  checkoutApiUrl,
+  receiptsBaseUrl,
+  customThemeServiceHref,
   customizerHref,
   initialState,
 }: ThemeLibraryProps) {
+  const effectiveVariantsApiUrl = variantsApiUrl ?? `${themesApiUrl}/variants`;
+  const effectiveCheckoutApiUrl = checkoutApiUrl ?? `${themesApiUrl}/checkout`;
+  const effectiveReceiptsBaseUrl = receiptsBaseUrl ?? `${themesApiUrl}/receipts`;
+  const effectiveCustomHref =
+    customThemeServiceHref ?? `/dashboard/${encodeURIComponent(tenantHandle)}/appearance/themes/custom`;
+
   const [libraryState, setLibraryState] = React.useState<ThemeLibraryStateDto>(initialState);
   const [tierFilter, setTierFilter] = React.useState<ThemeTierFilter>("all");
   const [searchQuery, setSearchQuery] = React.useState<string>("");
 
   const [isRefreshing, setIsRefreshing] = React.useState<boolean>(false);
   const [isActivating, setIsActivating] = React.useState<boolean>(false);
+  const [applyingVariantId, setApplyingVariantId] = React.useState<string | null>(null);
 
   const [conflictNotice, setConflictNotice] = React.useState<ApiErrorNotice | null>(null);
   const [errorNotice, setErrorNotice] = React.useState<ApiErrorNotice | null>(null);
@@ -198,7 +266,7 @@ export function ThemeLibrary({
   } | null>(null);
 
   // Preview dialog state
-  const [previewTarget, setPreviewTarget] = React.useState<ThemeLibraryItemDto | null>(null);
+  const [previewTarget, setPreviewTarget] = React.useState<PreviewTargetState | null>(null);
   const [previewViewport, setPreviewViewport] = React.useState<"desktop" | "mobile">("desktop");
   const [previewResult, setPreviewResult] = React.useState<ThemeLibraryPreviewResultDto | null>(
     null,
@@ -207,7 +275,15 @@ export function ThemeLibrary({
   const [previewError, setPreviewError] = React.useState<string | null>(null);
 
   // Activation confirmation dialog state
-  const [confirmTarget, setConfirmTarget] = React.useState<ThemeLibraryItemDto | null>(null);
+  const [confirmTarget, setConfirmTarget] = React.useState<ConfirmTargetState | null>(null);
+
+  // Premium checkout dialog state
+  const [checkoutTarget, setCheckoutTarget] = React.useState<PremiumThemeStoreItemDto | null>(null);
+  const [checkoutChannel, setCheckoutChannel] = React.useState<string>("QRIS");
+  const [checkoutCoupon, setCheckoutCoupon] = React.useState<string>("");
+  const [isCheckingOut, setIsCheckingOut] = React.useState<boolean>(false);
+  const [checkoutError, setCheckoutError] = React.useState<string | null>(null);
+  const [checkoutOrder, setCheckoutOrder] = React.useState<CheckoutOrderSnapshot | null>(null);
 
   const previewAbortRef = React.useRef<AbortController | null>(null);
   const previewSeqRef = React.useRef<number>(0);
@@ -218,6 +294,11 @@ export function ThemeLibrary({
     };
   }, []);
 
+  const premiumThemes = React.useMemo(
+    () => libraryState.premiumThemes ?? [],
+    [libraryState.premiumThemes],
+  );
+
   const activeTheme = React.useMemo(
     () =>
       libraryState.themes.find((t) => t.id === libraryState.activeThemeId) ??
@@ -225,6 +306,23 @@ export function ThemeLibrary({
       null,
     [libraryState.themes, libraryState.activeThemeId],
   );
+
+  const activePremiumTheme = React.useMemo(
+    () => premiumThemes.find((t) => t.id === libraryState.activeThemeId) ?? null,
+    [premiumThemes, libraryState.activeThemeId],
+  );
+
+  const activeStyleVariants: readonly StyleVariantDto[] = React.useMemo(() => {
+    if (activePremiumTheme) return activePremiumTheme.styleVariants;
+    return activeTheme?.styleVariants ?? [];
+  }, [activePremiumTheme, activeTheme]);
+
+  const activeStyleVariantId =
+    libraryState.activeStyleVariantId ??
+    activePremiumTheme?.activeStyleVariantId ??
+    activeTheme?.activeStyleVariantId ??
+    activeStyleVariants[0]?.styleVariantKey ??
+    "default";
 
   const includedCount = React.useMemo(
     () => libraryState.themes.filter((t) => !t.isCustom).length,
@@ -234,8 +332,10 @@ export function ThemeLibrary({
     () => libraryState.themes.filter((t) => t.isCustom).length,
     [libraryState.themes],
   );
+  const premiumCount = premiumThemes.length;
 
   const filteredThemes = React.useMemo(() => {
+    if (tierFilter === "premium") return [];
     const q = searchQuery.trim().toLowerCase();
     return libraryState.themes.filter((theme) => {
       if (tierFilter === "included" && theme.isCustom) return false;
@@ -248,6 +348,19 @@ export function ThemeLibrary({
       );
     });
   }, [libraryState.themes, tierFilter, searchQuery]);
+
+  const filteredPremiumThemes = React.useMemo(() => {
+    if (tierFilter === "included" || tierFilter === "custom") return [];
+    const q = searchQuery.trim().toLowerCase();
+    return premiumThemes.filter((theme) => {
+      if (!q) return true;
+      return (
+        theme.name.toLowerCase().includes(q) ||
+        theme.id.toLowerCase().includes(q) ||
+        theme.description.toLowerCase().includes(q)
+      );
+    });
+  }, [premiumThemes, tierFilter, searchQuery]);
 
   const isEditorReadOnly =
     !libraryState.permissions.canActivate &&
@@ -288,15 +401,15 @@ export function ThemeLibrary({
   }, [themesApiUrl]);
 
   const openCompatibilityPreview = React.useCallback(
-    async (theme: ThemeLibraryItemDto) => {
-      setPreviewTarget(theme);
+    async (target: PreviewTargetState) => {
+      setPreviewTarget(target);
       setPreviewResult(null);
       setPreviewError(null);
       setErrorNotice(null);
 
-      if (!theme.compatibility.compatible) {
+      if (!target.compatibility.compatible) {
         setPreviewError(
-          theme.compatibility.blockingReasons[0]?.message ??
+          target.compatibility.blockingReasons[0]?.message ??
             "Tema ini tidak kompatibel dengan struktur konten situs saat ini.",
         );
         return;
@@ -318,7 +431,10 @@ export function ThemeLibrary({
             "Content-Type": "application/json",
             Accept: "application/json",
           },
-          body: JSON.stringify({ themeId: theme.id }),
+          body: JSON.stringify({
+            themeId: target.id,
+            ...(target.styleVariantId ? { styleVariantId: target.styleVariantId } : {}),
+          }),
         });
         const json = (await res.json()) as ThemeLibraryPreviewResultDto & {
           readonly error?: ApiErrorNotice;
@@ -348,6 +464,69 @@ export function ThemeLibrary({
     [previewApiUrl],
   );
 
+  const handleApplyStyleVariant = React.useCallback(
+    async (themeId: string, variant: StyleVariantDto) => {
+      if (!libraryState.permissions.canActivate) return;
+      setApplyingVariantId(variant.id);
+      setErrorNotice(null);
+      setConflictNotice(null);
+      setSuccessBanner(null);
+
+      try {
+        const res = await fetch(effectiveVariantsApiUrl, {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({
+            themeId,
+            styleVariantId: variant.styleVariantKey,
+            expectedVersion: libraryState.version,
+          }),
+        });
+        const json = (await res.json()) as ThemeLibraryActivateResultDto & {
+          readonly error?: ApiErrorNotice;
+        };
+
+        if (res.status === 409 || json.error?.code === "STALE_VERSION") {
+          setConflictNotice(
+            json.error ?? {
+              code: "STALE_VERSION",
+              message: "Perubahan lain terdeteksi. Muat ulang status terbaru sebelum menerapkan varian.",
+            },
+          );
+          return;
+        }
+
+        if (!res.ok) {
+          setErrorNotice(
+            json.error ?? {
+              code: "VARIANT_APPLY_FAILED",
+              message: "Gagal menerapkan varian gaya tema.",
+            },
+          );
+          return;
+        }
+
+        setLibraryState(json);
+        setSuccessBanner({
+          title: `Varian gaya "${variant.name}" diterapkan`,
+          detail: `Palet WCAG AA (${variant.minContrastRatio.toFixed(1)}:1) & tipografi ${variant.fontLabel} aktif tanpa mengubah halaman, artikel, atau penawaran (Cache v${json.cacheVersion}).`,
+        });
+      } catch {
+        setErrorNotice({
+          code: "NETWORK_ERROR",
+          message: "Koneksi terputus saat menerapkan varian gaya.",
+        });
+      } finally {
+        setApplyingVariantId(null);
+      }
+    },
+    [effectiveVariantsApiUrl, libraryState.permissions.canActivate, libraryState.version],
+  );
+
   const handleConfirmActivate = React.useCallback(async () => {
     if (!confirmTarget || !libraryState.permissions.canActivate) return;
 
@@ -366,6 +545,7 @@ export function ThemeLibrary({
         },
         body: JSON.stringify({
           themeId: confirmTarget.id,
+          ...(confirmTarget.styleVariantId ? { styleVariantId: confirmTarget.styleVariantId } : {}),
           expectedVersion: libraryState.version,
           confirm: true,
         }),
@@ -420,6 +600,51 @@ export function ThemeLibrary({
     }
   }, [activateApiUrl, confirmTarget, libraryState.permissions.canActivate, libraryState.version]);
 
+  const handleSubmitCheckout = React.useCallback(async () => {
+    if (!checkoutTarget || !libraryState.permissions.canActivate) return;
+    setIsCheckingOut(true);
+    setCheckoutError(null);
+
+    try {
+      const res = await fetch(effectiveCheckoutApiUrl, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "Idempotency-Key": crypto.randomUUID(),
+        },
+        body: JSON.stringify({
+          themeId: checkoutTarget.id,
+          channelCode: checkoutChannel,
+          ...(checkoutCoupon.trim() ? { couponCode: checkoutCoupon.trim() } : {}),
+        }),
+      });
+
+      const json = (await res.json()) as {
+        readonly order?: CheckoutOrderSnapshot;
+        readonly error?: ApiErrorNotice;
+      };
+
+      if (!res.ok || !json.order) {
+        setCheckoutError(json.error?.message ?? "Gagal membuat tagihan pembelian tema.");
+        return;
+      }
+
+      setCheckoutOrder(json.order);
+    } catch {
+      setCheckoutError("Koneksi terputus saat membuat tagihan pembelian tema.");
+    } finally {
+      setIsCheckingOut(false);
+    }
+  }, [
+    checkoutChannel,
+    checkoutCoupon,
+    checkoutTarget,
+    effectiveCheckoutApiUrl,
+    libraryState.permissions.canActivate,
+  ]);
+
   return (
     <div className="mx-auto flex w-full max-w-6xl flex-col gap-6" data-testid="theme-library-root">
       {/* Page Header */}
@@ -427,16 +652,16 @@ export function ThemeLibrary({
         <div className="min-w-0 space-y-1">
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <h1 className="text-2xl font-semibold tracking-tight text-foreground">
-              Perpustakaan Tema
+              Tema &amp; Varian Gaya
             </h1>
             <Badge variant="outline" className="tabular-nums" data-testid="theme-library-version">
               Versi v{libraryState.version}
             </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            Kelola tema bawaan dan tema kustom berizin untuk{" "}
-            <span className="font-medium text-foreground">{workspaceName}</span> ({tenantHandle}).
-            Pratinjau kompatibilitas tersedia sebelum mengaktifkan tema baru tanpa menghapus konten.
+            Pilih varian gaya WCAG AA instan, tema bawaan gratis, tema premium beli sekali, atau
+            tema kustom untuk <span className="font-medium text-foreground">{workspaceName}</span>{" "}
+            ({tenantHandle}) tanpa kehilangan konten.
           </p>
         </div>
 
@@ -477,28 +702,31 @@ export function ThemeLibrary({
             className="truncate text-sm font-semibold text-foreground"
             data-testid="active-theme-name"
           >
-            {activeTheme?.name ?? libraryState.activeThemeId}
+            {activePremiumTheme?.name ?? activeTheme?.name ?? libraryState.activeThemeId}
           </p>
           <p className="text-xs text-muted-foreground tabular-nums" data-testid="active-theme-id">
-            ID: {libraryState.activeThemeId}
+            ID: {libraryState.activeThemeId} · Varian: {activeStyleVariantId}
           </p>
         </div>
 
         <div className="min-w-0 space-y-0.5">
-          <p className="text-xs font-medium text-muted-foreground">Tema Tersedia</p>
-          <p className="text-sm font-semibold text-foreground tabular-nums" data-testid="available-themes-count">
-            {libraryState.themes.length} tema ({includedCount} bawaan, {customCount} kustom)
+          <p className="text-xs font-medium text-muted-foreground">Katalog Tema</p>
+          <p
+            className="text-sm font-semibold text-foreground tabular-nums"
+            data-testid="available-themes-count"
+          >
+            {libraryState.themes.length} aktif ({includedCount} gratis, {customCount} kustom)
           </p>
-          <p className="text-xs text-muted-foreground">
-            Hanya tema bawaan &amp; berizin untuk situs ini
+          <p className="text-xs text-muted-foreground tabular-nums">
+            +{premiumCount} tema premium beli sekali
           </p>
         </div>
 
         <div className="min-w-0 space-y-0.5">
           <p className="text-xs font-medium text-muted-foreground">Konten Terlindungi</p>
           <p className="text-sm font-semibold text-foreground tabular-nums">
-            {libraryState.contentSummary.pages} halaman · {libraryState.contentSummary.posts} artikel ·{" "}
-            {libraryState.contentSummary.offerings} penawaran
+            {libraryState.contentSummary.pages} halaman · {libraryState.contentSummary.posts}{" "}
+            artikel · {libraryState.contentSummary.offerings} penawaran
           </p>
           <p className="text-xs text-muted-foreground tabular-nums">
             {libraryState.contentSummary.menus} menu · {libraryState.contentSummary.media} media
@@ -508,7 +736,10 @@ export function ThemeLibrary({
 
         <div className="min-w-0 space-y-0.5">
           <p className="text-xs font-medium text-muted-foreground">Status Publikasi</p>
-          <p className="text-sm font-semibold text-foreground tabular-nums" data-testid="cache-version-badge">
+          <p
+            className="text-sm font-semibold text-foreground tabular-nums"
+            data-testid="cache-version-badge"
+          >
             Cache v{libraryState.cacheVersion}
           </p>
           <p className="text-xs text-muted-foreground">
@@ -516,6 +747,118 @@ export function ThemeLibrary({
           </p>
         </div>
       </section>
+
+      {/* Live Style Variant Swatch Picker for Active Theme (DESIGN.md §7, REQ-096) */}
+      {activeStyleVariants.length > 0 && (
+        <section
+          aria-label="Pemilih Varian Gaya Tema Aktif"
+          className="space-y-3 rounded-lg border border-border bg-card p-4"
+          data-testid="style-variant-picker"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h2 className="text-base font-semibold text-foreground">
+                Varian Gaya untuk {activePremiumTheme?.name ?? activeTheme?.name ?? libraryState.activeThemeId}
+              </h2>
+              <p className="text-xs text-muted-foreground">
+                Klik satu kali untuk mengganti palet warna WCAG AA (&ge; 4,5:1), pasangan font (&le; 1
+                font kustom), dan kepadatan kartu dengan 0% kehilangan konten.
+              </p>
+            </div>
+            <Badge variant="success" data-testid="style-variant-wcag-badge">
+              <ShieldCheckIcon className="size-3" aria-hidden="true" />
+              Semua Varian Terverifikasi WCAG AA
+            </Badge>
+          </div>
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            {activeStyleVariants.map((variant) => {
+              const isSelected = activeStyleVariantId === variant.styleVariantKey;
+              const isBusy = applyingVariantId === variant.id;
+              return (
+                <div
+                  key={variant.id}
+                  data-testid={`style-variant-card-${variant.styleVariantKey}`}
+                  data-variant-selected={isSelected ? "true" : "false"}
+                  className={`flex min-w-0 flex-col justify-between gap-3 rounded-md border p-3 transition-colors ${
+                    isSelected
+                      ? "border-primary bg-primary/5 ring-1 ring-primary/25"
+                      : "border-border bg-background"
+                  }`}
+                >
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-1" aria-label={`Palet warna ${variant.name}`}>
+                        {variant.swatches.map((hex, idx) => (
+                          <span
+                            key={`${variant.id}-sw-${idx}`}
+                            className="inline-block size-5 rounded-sm border border-border"
+                            style={{ backgroundColor: hex }}
+                            title={hex}
+                          />
+                        ))}
+                      </div>
+                      <Badge variant="outline" className="text-[11px] tabular-nums">
+                        AA {variant.minContrastRatio.toFixed(1)}:1
+                      </Badge>
+                    </div>
+
+                    <div>
+                      <p className="text-sm font-semibold text-foreground">{variant.name}</p>
+                      <p className="text-xs text-muted-foreground">{variant.tagline}</p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                      <span className="rounded bg-muted px-1.5 py-0.5 font-medium text-foreground">
+                        {variant.fontLabel}
+                      </span>
+                      <span>·</span>
+                      <span>{variant.mood === "dark" ? "Gelap" : variant.mood === "warm" ? "Hangat" : "Terang"}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11 min-w-0 flex-1 px-2.5"
+                      disabled={!libraryState.permissions.canPreview}
+                      onClick={() =>
+                        openCompatibilityPreview({
+                          id: libraryState.activeThemeId,
+                          name: `${activePremiumTheme?.name ?? activeTheme?.name ?? libraryState.activeThemeId} — ${variant.name}`,
+                          tier: activePremiumTheme ? "paid_once" : (activeTheme?.tier ?? "included"),
+                          entitled: true,
+                          isActive: true,
+                          hasSavedConfig: false,
+                          styleVariantId: variant.styleVariantKey,
+                          compatibility: activePremiumTheme?.compatibility ?? activeTheme!.compatibility,
+                        })
+                      }
+                      data-testid={`btn-preview-variant-${variant.styleVariantKey}`}
+                    >
+                      <EyeIcon className="size-3.5" aria-hidden="true" />
+                      <span>Pratinjau</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={isSelected ? "secondary" : "default"}
+                      size="sm"
+                      className="min-h-11 min-w-0 flex-1 px-2.5"
+                      disabled={!libraryState.permissions.canActivate || isSelected || isBusy}
+                      onClick={() => handleApplyStyleVariant(libraryState.activeThemeId, variant)}
+                      data-testid={`btn-apply-variant-${variant.styleVariantKey}`}
+                    >
+                      <span>{isSelected ? "Aktif" : isBusy ? "Menerapkan..." : "Terapkan"}</span>
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       {/* Locked / Suspended Read-Only Banner */}
       {libraryState.permissions.isLocked && (
@@ -537,7 +880,7 @@ export function ThemeLibrary({
           <AlertTitle>Akses Terbatas (Peran Editor)</AlertTitle>
           <AlertDescription>
             Sebagai <strong>Editor</strong>, Anda dapat melihat daftar tema yang tersedia untuk
-            situs ini. Pratinjau dan aktivasi tema hanya dapat dilakukan oleh{" "}
+            situs ini. Pratinjau, pembelian, dan aktivasi tema hanya dapat dilakukan oleh{" "}
             <strong>Pemilik Situs</strong> atau <strong>Admin</strong>.
           </AlertDescription>
         </Alert>
@@ -594,18 +937,19 @@ export function ThemeLibrary({
         </Alert>
       )}
 
-      {/* Filter Tabs & Search Bar */}
+      {/* Theme Store Filter Tabs (Gratis / Premium / Kustom) & Search Bar */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div
           className="flex flex-wrap items-center gap-2"
           role="tablist"
-          aria-label="Filter kategori tema"
+          aria-label="Filter kategori toko tema"
         >
           {(
             [
-              { id: "all", label: "Semua Tema", count: libraryState.themes.length },
-              { id: "included", label: "Tema Bawaan", count: includedCount },
-              { id: "custom", label: "Tema Kustom", count: customCount },
+              { id: "all", label: "Semua", count: libraryState.themes.length + premiumCount },
+              { id: "included", label: "Gratis", count: includedCount },
+              { id: "premium", label: "Premium", count: premiumCount },
+              { id: "custom", label: "Kustom", count: customCount },
             ] as const
           ).map((tab) => {
             const selected = tierFilter === tab.id;
@@ -645,8 +989,181 @@ export function ThemeLibrary({
         </div>
       </div>
 
-      {/* Theme Gallery Grid */}
-      {filteredThemes.length === 0 ? (
+      {/* Curated Paid-Once Premium Theme Store Grid */}
+      {filteredPremiumThemes.length > 0 && (
+        <section
+          aria-label="Toko Tema Premium Beli Sekali"
+          className="space-y-3"
+          data-testid="premium-theme-store-section"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-foreground">
+              Tema Premium (Beli Sekali per Website)
+            </h2>
+            <span className="text-xs text-muted-foreground">
+              Pratinjau draf bebas risiko sebelum membeli · Lisensi berlaku khusus untuk situs ini
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {filteredPremiumThemes.map((theme) => {
+              const canPreviewCard = libraryState.permissions.canPreview;
+              const canActivateOwned =
+                theme.entitled &&
+                !theme.isActive &&
+                theme.compatibility.compatible &&
+                libraryState.permissions.canActivate;
+
+              return (
+                <Card
+                  key={theme.id}
+                  className={theme.isActive ? "border-primary/70 ring-1 ring-primary/20" : undefined}
+                  data-testid={`premium-theme-card-${theme.id}`}
+                  data-theme-entitled={theme.entitled ? "true" : "false"}
+                >
+                  <CardHeader className="gap-2.5">
+                    <ThemePalettePreview
+                      surface={theme.palette.surface}
+                      surfaceMuted={theme.palette.surfaceMuted}
+                      primary={theme.defaultTokens.primaryColor}
+                      secondary={theme.defaultTokens.secondaryColor}
+                      border={theme.palette.border}
+                      ink={theme.palette.ink}
+                    />
+
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      {theme.isActive && (
+                        <Badge variant="success" data-testid={`badge-active-${theme.id}`}>
+                          <CheckCircle2Icon className="size-3" aria-hidden="true" />
+                          Aktif
+                        </Badge>
+                      )}
+                      {theme.entitled ? (
+                        <Badge variant="success" data-testid={`badge-entitled-${theme.id}`}>
+                          <ShieldCheckIcon className="size-3" aria-hidden="true" />
+                          Dimiliki (Situs Ini)
+                        </Badge>
+                      ) : (
+                        <Badge variant="secondary" className="tabular-nums" data-testid={`badge-price-${theme.id}`}>
+                          <TagIcon className="size-3" aria-hidden="true" />
+                          Beli Sekali · {formatIdr(theme.priceIdr)}
+                        </Badge>
+                      )}
+                      <Badge variant="outline" className="tabular-nums">
+                        {theme.styleVariants.length} Varian AA
+                      </Badge>
+                    </div>
+
+                    <div>
+                      <CardTitle>{theme.name}</CardTitle>
+                      <CardDescription className="mt-1">{theme.description}</CardDescription>
+                    </div>
+                  </CardHeader>
+
+                  <CardContent className="flex flex-1 flex-col gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      {theme.styleVariants.map((sv) => (
+                        <span
+                          key={sv.id}
+                          className="inline-flex items-center gap-1.5 rounded border border-border bg-muted/50 px-2 py-1 text-xs"
+                        >
+                          <span
+                            className="inline-block size-3 rounded-xs border border-border"
+                            style={{ backgroundColor: sv.swatches[0] }}
+                          />
+                          <span>{sv.name}</span>
+                        </span>
+                      ))}
+                    </div>
+
+                    {theme.receipt && (
+                      <div
+                        className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/60 px-3 py-2 text-xs"
+                        data-testid={`premium-receipt-bar-${theme.id}`}
+                      >
+                        <span className="inline-flex items-center gap-1.5 font-medium text-foreground tabular-nums">
+                          <FileTextIcon className="size-3.5 text-primary" aria-hidden="true" />
+                          Kuitansi {theme.receipt.receiptNumber}
+                        </span>
+                        <a
+                          href={`${effectiveReceiptsBaseUrl}/${encodeURIComponent(theme.receipt.id)}`}
+                          className="inline-flex min-h-9 items-center gap-1 font-medium text-primary underline-offset-4 hover:underline"
+                          data-testid={`link-theme-receipt-${theme.receipt.id}`}
+                        >
+                          <DownloadIcon className="size-3.5" aria-hidden="true" />
+                          <span>Unduh PDF</span>
+                        </a>
+                      </div>
+                    )}
+                  </CardContent>
+
+                  <CardFooter className="flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      variant="outline"
+                      className="min-h-11 w-full sm:flex-1"
+                      disabled={!canPreviewCard}
+                      onClick={() =>
+                        openCompatibilityPreview({
+                          id: theme.id,
+                          name: theme.name,
+                          tier: "paid_once",
+                          entitled: theme.entitled,
+                          isActive: theme.isActive,
+                          hasSavedConfig: false,
+                          compatibility: theme.compatibility,
+                          premiumItem: theme,
+                        })
+                      }
+                      data-testid={`btn-preview-premium-${theme.id}`}
+                    >
+                      <EyeIcon className="size-4" aria-hidden="true" />
+                      <span>Pratinjau di Situs Saya</span>
+                    </Button>
+
+                    {theme.entitled ? (
+                      <Button
+                        variant={theme.isActive ? "secondary" : "default"}
+                        className="min-h-11 w-full sm:w-auto"
+                        disabled={!canActivateOwned || isActivating}
+                        onClick={() =>
+                          setConfirmTarget({
+                            id: theme.id,
+                            name: theme.name,
+                            hasSavedConfig: false,
+                          })
+                        }
+                        data-testid={`btn-activate-premium-${theme.id}`}
+                      >
+                        <span>{theme.isActive ? "Sedang Aktif" : "Aktifkan Tema"}</span>
+                      </Button>
+                    ) : (
+                      <Button
+                        variant="default"
+                        className="min-h-11 w-full sm:w-auto"
+                        disabled={!libraryState.permissions.canActivate}
+                        onClick={() => {
+                          setCheckoutTarget(theme);
+                          setCheckoutError(null);
+                          setCheckoutOrder(null);
+                          setCheckoutCoupon("");
+                          setCheckoutChannel("QRIS");
+                        }}
+                        data-testid={`btn-buy-premium-${theme.id}`}
+                      >
+                        <CreditCardIcon className="size-4" aria-hidden="true" />
+                        <span>Beli Sekali</span>
+                      </Button>
+                    )}
+                  </CardFooter>
+                </Card>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Built-in & Granted Custom Theme Gallery Grid */}
+      {tierFilter !== "premium" && filteredThemes.length === 0 ? (
         <Card data-testid="themes-empty-state">
           <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
             <PaletteIcon className="size-8 text-muted-foreground" aria-hidden="true" />
@@ -657,163 +1174,247 @@ export function ThemeLibrary({
               <p className="text-sm text-muted-foreground">
                 {tierFilter === "custom" && customCount === 0
                   ? "Belum ada tema kustom yang diberikan akses oleh operator platform untuk situs ini."
-                  : "Coba ubah kata kunci pencarian atau pilih tab Semua Tema."}
+                  : "Coba ubah kata kunci pencarian atau pilih tab Semua."}
               </p>
             </div>
-            <Button
-              variant="outline"
-              className="min-h-11"
-              onClick={() => {
-                setTierFilter("all");
-                setSearchQuery("");
-              }}
-              data-testid="btn-reset-theme-filter"
-            >
-              Tampilkan Semua Tema
-            </Button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {tierFilter === "custom" && (
+                <Button
+                  variant="default"
+                  className="min-h-11"
+                  render={<a href={effectiveCustomHref} data-testid="link-custom-theme-service" />}
+                >
+                  <span>Pesan Desain Tema Custom</span>
+                  <ArrowRightIcon className="size-4" aria-hidden="true" />
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                className="min-h-11"
+                onClick={() => {
+                  setTierFilter("all");
+                  setSearchQuery("");
+                }}
+                data-testid="btn-reset-theme-filter"
+              >
+                Tampilkan Semua Tema
+              </Button>
+            </div>
           </CardContent>
         </Card>
       ) : (
-        <section
-          aria-label="Daftar tema yang tersedia"
-          className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
-          data-testid="themes-gallery-grid"
-        >
-          {filteredThemes.map((theme) => {
-            const canPreviewCard = libraryState.permissions.canPreview;
-            const canActivateCard =
-              libraryState.permissions.canActivate &&
-              !theme.isActive &&
-              theme.compatibility.compatible;
+        filteredThemes.length > 0 && (
+          <section
+            aria-label="Daftar tema yang tersedia"
+            className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3"
+            data-testid="themes-gallery-grid"
+          >
+            {filteredThemes.map((theme) => {
+              const effectiveTokens = theme.savedTokens ?? theme.defaultTokens;
+              const canPreviewCard = libraryState.permissions.canPreview;
+              const canActivateCard =
+                libraryState.permissions.canActivate &&
+                !theme.isActive &&
+                theme.compatibility.compatible;
 
-            return (
-              <Card
-                key={theme.id}
-                className={theme.isActive ? "border-primary/70 ring-1 ring-primary/20" : undefined}
-                data-testid={`theme-card-${theme.id}`}
-                data-theme-active={theme.isActive ? "true" : "false"}
-                data-theme-compatible={theme.compatibility.compatible ? "true" : "false"}
-              >
-                <CardHeader className="gap-2.5">
-                  <ThemePalettePreview theme={theme} />
+              return (
+                <Card
+                  key={theme.id}
+                  className={theme.isActive ? "border-primary/70 ring-1 ring-primary/20" : undefined}
+                  data-testid={`theme-card-${theme.id}`}
+                  data-theme-active={theme.isActive ? "true" : "false"}
+                  data-theme-compatible={theme.compatibility.compatible ? "true" : "false"}
+                >
+                  <CardHeader className="gap-2.5">
+                    <ThemePalettePreview
+                      surface={effectiveTokens.surfaceColor ?? theme.palette.surface}
+                      surfaceMuted={theme.palette.surfaceMuted}
+                      primary={effectiveTokens.primaryColor}
+                      secondary={effectiveTokens.secondaryColor}
+                      border={theme.palette.border}
+                      ink={effectiveTokens.textColor ?? theme.palette.ink}
+                    />
 
-                  <div className="flex flex-wrap items-center gap-1.5 pt-1">
-                    {theme.isActive && (
-                      <Badge variant="success" data-testid={`badge-active-${theme.id}`}>
-                        <CheckCircle2Icon className="size-3" aria-hidden="true" />
-                        Aktif
-                      </Badge>
-                    )}
-                    {theme.isRecommended && (
-                      <Badge variant="info">Direkomendasikan</Badge>
-                    )}
-                    <Badge variant={theme.isCustom ? "secondary" : "outline"}>
-                      {theme.isCustom ? "Tema Kustom Berizin" : "Bawaan Platform"}
-                    </Badge>
-                    <Badge
-                      variant={theme.compatibility.compatible ? "success" : "destructive"}
-                      data-testid={`badge-compat-${theme.id}`}
-                    >
-                      {theme.compatibility.compatible ? (
-                        <>
-                          <ShieldCheckIcon className="size-3" aria-hidden="true" />
-                          Kompatibel
-                        </>
-                      ) : (
-                        <>
-                          <AlertTriangleIcon className="size-3" aria-hidden="true" />
-                          Tidak Kompatibel
-                        </>
+                    <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                      {theme.isActive && (
+                        <Badge variant="success" data-testid={`badge-active-${theme.id}`}>
+                          <CheckCircle2Icon className="size-3" aria-hidden="true" />
+                          Aktif
+                        </Badge>
                       )}
-                    </Badge>
-                  </div>
+                      {theme.isRecommended && <Badge variant="info">Direkomendasikan</Badge>}
+                      <Badge variant={theme.isCustom ? "secondary" : "outline"}>
+                        {theme.isCustom ? "Tema Kustom Berizin" : "Gratis · Bawaan"}
+                      </Badge>
+                      <Badge
+                        variant={theme.compatibility.compatible ? "success" : "destructive"}
+                        data-testid={`badge-compat-${theme.id}`}
+                      >
+                        {theme.compatibility.compatible ? (
+                          <>
+                            <ShieldCheckIcon className="size-3" aria-hidden="true" />
+                            Kompatibel
+                          </>
+                        ) : (
+                          <>
+                            <AlertTriangleIcon className="size-3" aria-hidden="true" />
+                            Tidak Kompatibel
+                          </>
+                        )}
+                      </Badge>
+                    </div>
 
-                  <div>
-                    <CardTitle>{theme.name}</CardTitle>
-                    <CardDescription className="mt-1 line-clamp-2">
-                      {theme.description}
-                    </CardDescription>
-                  </div>
-                </CardHeader>
+                    <div>
+                      <CardTitle>{theme.name}</CardTitle>
+                      <CardDescription className="mt-1 line-clamp-2">
+                        {theme.description}
+                      </CardDescription>
+                    </div>
+                  </CardHeader>
 
-                <CardContent className="flex flex-1 flex-col gap-3">
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
-                    <span className="inline-flex items-center gap-1">
-                      <LayersIcon className="size-3.5" aria-hidden="true" />
-                      {theme.supportedRoutes.length} rute · {theme.supportedSectionTypes.length}{" "}
-                      bagian
-                    </span>
-                    <span>Skema v{theme.schemaVersion}</span>
-                    <span>v{theme.version}</span>
-                  </div>
-
-                  {theme.hasSavedConfig && (
-                    <div
-                      className="flex items-start gap-2 rounded-md border border-border bg-muted/60 px-2.5 py-2 text-xs text-foreground"
-                      data-testid={`saved-config-note-${theme.id}`}
-                    >
-                      <HistoryIcon
-                        className="mt-0.5 size-3.5 shrink-0 text-primary"
-                        aria-hidden="true"
-                      />
-                      <span>
-                        Konfigurasi tersimpan tersedia ({theme.savedTokens?.primaryColor ?? "default"}
-                        ) dan akan dipulihkan otomatis saat diaktifkan.
+                  <CardContent className="flex flex-1 flex-col gap-3">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground tabular-nums">
+                      <span className="inline-flex items-center gap-1">
+                        <LayersIcon className="size-3.5" aria-hidden="true" />
+                        {theme.supportedRoutes.length} rute · {theme.supportedSectionTypes.length}{" "}
+                        bagian
                       </span>
+                      <span>Skema v{theme.schemaVersion}</span>
+                      {theme.styleVariants && theme.styleVariants.length > 0 && (
+                        <span>{theme.styleVariants.length} varian AA</span>
+                      )}
                     </div>
-                  )}
 
-                  {!theme.compatibility.compatible && (
-                    <div
-                      className="rounded-md border border-destructive-border bg-destructive-soft px-3 py-2 text-xs text-destructive"
-                      role="status"
-                      data-testid={`incompatibility-reasons-${theme.id}`}
-                    >
-                      <p className="font-semibold">Aktivasi diblokir:</p>
-                      <ul className="mt-1 list-disc pl-4">
-                        {theme.compatibility.blockingReasons.map((reason, idx) => (
-                          <li key={`${reason.code}-${idx}`}>{reason.message}</li>
+                    {theme.styleVariants && theme.styleVariants.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {theme.styleVariants.map((sv) => (
+                          <span
+                            key={sv.id}
+                            title={`${sv.name} (${sv.fontLabel})`}
+                            className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 text-[11px] text-foreground"
+                          >
+                            <span
+                              className="inline-block size-2.5 rounded-xs"
+                              style={{ backgroundColor: sv.swatches[0] }}
+                            />
+                            <span>{sv.name}</span>
+                          </span>
                         ))}
-                      </ul>
-                    </div>
-                  )}
+                      </div>
+                    )}
 
-                  {theme.compatibility.compatible && theme.compatibility.warnings.length > 0 && (
-                    <div className="rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-xs text-warning">
-                      {theme.compatibility.warnings[0]}
-                    </div>
-                  )}
-                </CardContent>
+                    {theme.hasSavedConfig && (
+                      <div
+                        className="flex items-start gap-2 rounded-md border border-border bg-muted/60 px-2.5 py-2 text-xs text-foreground"
+                        data-testid={`saved-config-note-${theme.id}`}
+                      >
+                        <HistoryIcon
+                          className="mt-0.5 size-3.5 shrink-0 text-primary"
+                          aria-hidden="true"
+                        />
+                        <span>
+                          Konfigurasi tersimpan tersedia ({theme.savedTokens?.primaryColor ?? "default"}
+                          ) dan akan dipulihkan otomatis saat diaktifkan.
+                        </span>
+                      </div>
+                    )}
 
-                <CardFooter className="flex flex-col gap-2 sm:flex-row">
-                  <Button
-                    variant="outline"
-                    className="min-h-11 w-full sm:flex-1"
-                    disabled={!canPreviewCard}
-                    onClick={() => openCompatibilityPreview(theme)}
-                    data-testid={`btn-preview-${theme.id}`}
-                  >
-                    <EyeIcon className="size-4" aria-hidden="true" />
-                    <span>Pratinjau Kompatibilitas</span>
-                  </Button>
+                    {!theme.compatibility.compatible && (
+                      <div
+                        className="rounded-md border border-destructive-border bg-destructive-soft px-3 py-2 text-xs text-destructive"
+                        role="status"
+                        data-testid={`incompatibility-reasons-${theme.id}`}
+                      >
+                        <p className="font-semibold">Aktivasi diblokir:</p>
+                        <ul className="mt-1 list-disc pl-4">
+                          {theme.compatibility.blockingReasons.map((reason, idx) => (
+                            <li key={`${reason.code}-${idx}`}>{reason.message}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
 
-                  <Button
-                    variant={theme.isActive ? "secondary" : "default"}
-                    className="min-h-11 w-full sm:w-auto"
-                    disabled={!canActivateCard || isActivating}
-                    onClick={() => setConfirmTarget(theme)}
-                    data-testid={`btn-activate-${theme.id}`}
-                  >
-                    <span>{theme.isActive ? "Sedang Aktif" : "Aktifkan Tema"}</span>
-                  </Button>
-                </CardFooter>
-              </Card>
-            );
-          })}
+                    {theme.compatibility.compatible && theme.compatibility.warnings.length > 0 && (
+                      <div className="rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-xs text-warning">
+                        {theme.compatibility.warnings[0]}
+                      </div>
+                    )}
+                  </CardContent>
+
+                  <CardFooter className="flex flex-col flex-wrap gap-2 sm:flex-row">
+                    <Button
+                      variant="outline"
+                      className="min-h-11 w-full sm:flex-1"
+                      disabled={!canPreviewCard}
+                      onClick={() =>
+                        openCompatibilityPreview({
+                          id: theme.id,
+                          name: theme.name,
+                          tier: theme.tier,
+                          entitled: true,
+                          isActive: theme.isActive,
+                          hasSavedConfig: theme.hasSavedConfig,
+                          compatibility: theme.compatibility,
+                          libraryItem: theme,
+                        })
+                      }
+                      data-testid={`btn-preview-${theme.id}`}
+                    >
+                      <EyeIcon className="size-4 shrink-0" aria-hidden="true" />
+                      <span className="truncate">Pratinjau Kompatibilitas</span>
+                    </Button>
+
+                    <Button
+                      variant={theme.isActive ? "secondary" : "default"}
+                      className="min-h-11 w-full sm:w-auto"
+                      disabled={!canActivateCard || isActivating}
+                      onClick={() =>
+                        setConfirmTarget({
+                          id: theme.id,
+                          name: theme.name,
+                          hasSavedConfig: theme.hasSavedConfig,
+                        })
+                      }
+                      data-testid={`btn-activate-${theme.id}`}
+                    >
+                      <span>{theme.isActive ? "Sedang Aktif" : "Aktifkan Tema"}</span>
+                    </Button>
+                  </CardFooter>
+                </Card>
+              );
+            })}
+          </section>
+        )
+      )}
+
+      {/* Custom Dev CTA Strip on Kustom tab */}
+      {(tierFilter === "custom" || tierFilter === "all") && (
+        <section
+          aria-label="Layanan Desain Tema Kustom"
+          className="flex flex-col justify-between gap-3 rounded-lg border border-border bg-card p-4 sm:flex-row sm:items-center"
+          data-testid="custom-dev-cta-card"
+        >
+          <div className="space-y-1">
+            <h2 className="text-sm font-semibold text-foreground">
+              Butuh Desain Tema Khusus Merek Anda? (Custom Dev)
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              Tim PunyaSitus membangun tema eksklusif tanpa memodifikasi inti CMS dan merilisnya
+              khusus untuk situs Anda.
+            </p>
+          </div>
+          <Button
+            variant="outline"
+            className="min-h-11 shrink-0"
+            render={<a href={effectiveCustomHref} data-testid="btn-open-custom-theme-requests" />}
+          >
+            <span>Pesan Desain Tema Custom</span>
+            <ArrowRightIcon className="size-4" aria-hidden="true" />
+          </Button>
         </section>
       )}
 
-      {/* Sandboxed Compatibility Preview Dialog (@base-ui/react/dialog) */}
+      {/* Sandboxed Compatibility & Pre-Purchase Preview Dialog (@base-ui/react/dialog) */}
       <DialogPrimitive.Root
         open={previewTarget !== null}
         onOpenChange={(open) => {
@@ -837,7 +1438,9 @@ export function ThemeLibrary({
                   Pratinjau Kompatibilitas — {previewTarget?.name ?? ""}
                 </DialogPrimitive.Title>
                 <DialogPrimitive.Description className="text-xs text-muted-foreground">
-                  Pratinjau draf dengan konten publik situs Anda. Status situs publik tidak diubah.
+                  {previewTarget && !previewTarget.entitled
+                    ? "Pratinjau draf pra-pembelian (no-store, noindex). Situs publik Anda belum berubah."
+                    : "Pratinjau draf dengan konten publik situs Anda. Status situs publik tidak diubah."}
                 </DialogPrimitive.Description>
               </div>
 
@@ -870,16 +1473,45 @@ export function ThemeLibrary({
                 </div>
 
                 {previewTarget &&
+                  previewTarget.entitled &&
                   !previewTarget.isActive &&
                   previewTarget.compatibility.compatible &&
                   libraryState.permissions.canActivate && (
                     <Button
                       variant="default"
                       className="min-h-11"
-                      onClick={() => setConfirmTarget(previewTarget)}
+                      onClick={() =>
+                        setConfirmTarget({
+                          id: previewTarget.id,
+                          name: previewTarget.name,
+                          hasSavedConfig: previewTarget.hasSavedConfig,
+                          styleVariantId: previewTarget.styleVariantId,
+                        })
+                      }
                       data-testid="btn-activate-from-preview"
                     >
                       <span>Aktifkan Tema</span>
+                    </Button>
+                  )}
+
+                {previewTarget &&
+                  !previewTarget.entitled &&
+                  previewTarget.premiumItem &&
+                  libraryState.permissions.canActivate && (
+                    <Button
+                      variant="default"
+                      className="min-h-11"
+                      onClick={() => {
+                        const target = previewTarget.premiumItem!;
+                        setPreviewTarget(null);
+                        setCheckoutTarget(target);
+                        setCheckoutError(null);
+                        setCheckoutOrder(null);
+                      }}
+                      data-testid="btn-buy-from-preview"
+                    >
+                      <CreditCardIcon className="size-4" aria-hidden="true" />
+                      <span>Beli Sekali · {formatIdr(previewTarget.premiumItem.priceIdr)}</span>
                     </Button>
                   )}
 
@@ -899,27 +1531,25 @@ export function ThemeLibrary({
               </div>
             </div>
 
-            {/* Compatibility Report Strip */}
             {previewTarget && (
               <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-muted/40 px-4 py-2 text-xs text-muted-foreground">
                 <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <Badge variant={previewTarget.compatibility.compatible ? "success" : "destructive"}>
                     {previewTarget.compatibility.compatible ? "Kompatibel" : "Tidak Kompatibel"}
                   </Badge>
+                  {!previewTarget.entitled && (
+                    <Badge variant="warning" data-testid="preview-unpurchased-badge">
+                      Pratinjau Pra-Pembelian (noindex)
+                    </Badge>
+                  )}
                   <span className="tabular-nums">
                     Bagian didukung: {previewTarget.compatibility.supportedSections.length}
                   </span>
-                  {previewTarget.hasSavedConfig && (
-                    <span className="font-medium text-primary">
-                      Menggunakan konfigurasi tersimpan tema ini
-                    </span>
-                  )}
                 </div>
-                <span>Sandbox iframe terisolasi (tanpa skrip &amp; tanpa mutasi langsung)</span>
+                <span>Sandbox iframe terisolasi (no-store, noindex)</span>
               </div>
             )}
 
-            {/* Sandboxed Preview Frame Body */}
             <div className="flex flex-1 flex-col items-center overflow-auto bg-muted/60 p-3 sm:p-4">
               {isPreviewLoading && (
                 <div
@@ -958,6 +1588,166 @@ export function ThemeLibrary({
                 </div>
               )}
             </div>
+          </DialogPrimitive.Popup>
+        </DialogPrimitive.Portal>
+      </DialogPrimitive.Root>
+
+      {/* Commercial Theme Store Checkout Dialog (@base-ui/react/dialog) */}
+      <DialogPrimitive.Root
+        open={checkoutTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !isCheckingOut) {
+            setCheckoutTarget(null);
+            setCheckoutOrder(null);
+            setCheckoutError(null);
+          }
+        }}
+      >
+        <DialogPrimitive.Portal>
+          <DialogPrimitive.Backdrop className="fixed inset-0 z-[65] bg-foreground/40" />
+          <DialogPrimitive.Popup
+            className="fixed top-1/2 left-1/2 z-[70] flex w-[min(34rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col gap-4 rounded-lg border border-border bg-card p-5 text-foreground shadow-lg"
+            data-testid="theme-checkout-dialog"
+          >
+            <div className="space-y-1">
+              <DialogPrimitive.Title className="text-lg font-semibold text-foreground">
+                Beli Sekali — {checkoutTarget?.name ?? ""}
+              </DialogPrimitive.Title>
+              <DialogPrimitive.Description className="text-xs text-muted-foreground">
+                Lisensi berlaku permanen khusus untuk situs <strong>{workspaceName}</strong> (
+                {tenantHandle}). Harga dihitung di server; belum termasuk PPN (non-PKP).
+              </DialogPrimitive.Description>
+            </div>
+
+            <Separator />
+
+            {checkoutError && (
+              <Alert variant="destructive" data-testid="checkout-error-alert">
+                <AlertCircleIcon aria-hidden="true" />
+                <AlertTitle>Gagal Memproses Pembayaran</AlertTitle>
+                <AlertDescription>{checkoutError}</AlertDescription>
+              </Alert>
+            )}
+
+            {!checkoutOrder ? (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-3 py-2.5 text-sm">
+                  <span>Harga Lisensi Tema</span>
+                  <strong className="tabular-nums">
+                    {checkoutTarget ? formatIdr(checkoutTarget.priceIdr) : "-"}
+                  </strong>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor="theme-checkout-channel" className="text-xs font-medium text-foreground">
+                    Saluran Pembayaran (AutoLaris)
+                  </label>
+                  <select
+                    id="theme-checkout-channel"
+                    value={checkoutChannel}
+                    onChange={(e) => setCheckoutChannel(e.target.value)}
+                    className="min-h-11 w-full rounded-md border border-input bg-background px-3 text-base sm:text-sm"
+                    data-testid="select-theme-channel"
+                  >
+                    {CHECKOUT_CHANNELS.map((ch) => (
+                      <option key={ch.code} value={ch.code}>
+                        {ch.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor="theme-checkout-coupon" className="text-xs font-medium text-foreground">
+                    Kode Kupon Promo (Opsional, maks. 1 kupon)
+                  </label>
+                  <Input
+                    id="theme-checkout-coupon"
+                    type="text"
+                    value={checkoutCoupon}
+                    onChange={(e) => setCheckoutCoupon(e.target.value)}
+                    placeholder="Contoh: HEMAT20"
+                    className="min-h-11 text-base sm:text-sm"
+                    data-testid="input-theme-coupon"
+                  />
+                </div>
+
+                <div className="flex flex-col-reverse gap-2 pt-1 sm:flex-row sm:justify-end">
+                  <Button
+                    variant="outline"
+                    className="min-h-11"
+                    onClick={() => setCheckoutTarget(null)}
+                    disabled={isCheckingOut}
+                    data-testid="btn-cancel-checkout"
+                  >
+                    Batal
+                  </Button>
+                  <Button
+                    variant="default"
+                    className="min-h-11"
+                    onClick={handleSubmitCheckout}
+                    disabled={isCheckingOut}
+                    data-testid="btn-submit-checkout"
+                  >
+                    {isCheckingOut ? "Membuat Tagihan..." : "Buat Tagihan Pembayaran"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3" data-testid="checkout-order-summary">
+                <div className="space-y-1.5 rounded-md border border-border bg-muted/40 p-3 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">ID Pesanan</span>
+                    <span className="font-mono font-medium">{checkoutOrder.id}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Harga Dasar</span>
+                    <span className="tabular-nums">{formatIdr(checkoutOrder.basePriceIdr)}</span>
+                  </div>
+                  {checkoutOrder.discountAmountIdr > 0 && (
+                    <div className="flex justify-between text-primary">
+                      <span>Diskon Kupon ({checkoutOrder.couponCode})</span>
+                      <span className="tabular-nums">
+                        -{formatIdr(checkoutOrder.discountAmountIdr)}
+                      </span>
+                    </div>
+                  )}
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">
+                      Biaya Saluran ({checkoutOrder.channelCode})
+                    </span>
+                    <span className="tabular-nums">{formatIdr(checkoutOrder.channelFeeIdr)}</span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between text-sm font-semibold text-foreground">
+                    <span>Total Tagihan</span>
+                    <span className="tabular-nums">{formatIdr(checkoutOrder.totalPayableIdr)}</span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-muted-foreground">
+                  Referensi AutoLaris:{" "}
+                  <code className="font-mono text-foreground">{checkoutOrder.providerReffId}</code>.
+                  Setelah pembayaran terkonfirmasi, aktivasi tema dan kuitansi PDF bernomor otomatis
+                  terbuka khusus untuk situs ini.
+                </p>
+
+                <div className="flex justify-end gap-2">
+                  <Button
+                    variant="default"
+                    className="min-h-11"
+                    onClick={() => {
+                      setCheckoutTarget(null);
+                      setCheckoutOrder(null);
+                      void refreshLibraryState();
+                    }}
+                    data-testid="btn-close-checkout-order"
+                  >
+                    Selesai &amp; Muat Ulang Status
+                  </Button>
+                </div>
+              </div>
+            )}
           </DialogPrimitive.Popup>
         </DialogPrimitive.Portal>
       </DialogPrimitive.Root>

@@ -1,0 +1,67 @@
+/*
+ * PunyaSitus Curated Premium Theme (`paid_once`): `premium-atelier-editorial`
+ * Architectural Ivory & Obsidian Editorial (0 KiB JS, WCAG AA >= 4.5:1, <= 1 custom font)
+ */
+
+[data-ps-premium-theme="premium-atelier-editorial"] {
+  --ae-primary: var(--ps-brand-primary, #1c2434);
+  --ae-on-primary: var(--ps-brand-on-primary, #ffffff);
+  --ae-secondary: var(--ps-brand-secondary, #7c3f1d);
+  --ae-surface: var(--ps-surface, #fbf9f5);
+  --ae-surface-muted: var(--ps-surface-muted, #f2ede4);
+  --ae-ink: var(--ps-ink, #15171c);
+  --ae-ink-muted: var(--ps-ink-muted, #4a4f59);
+  --ae-border: var(--ps-border, #dad2c4);
+  --ae-radius: var(--ps-radius, 2px);
+  background-color: var(--ae-surface);
+  color: var(--ae-ink);
+  overflow-x: clip;
+}
+
+[data-ps-premium-theme="premium-atelier-editorial"][data-ps-style-variant="midnight-atelier"] {
+  --ae-primary: #e5c07b;
+  --ae-on-primary: #050505;
+  --ae-secondary: #7dd3fc;
+  --ae-surface: #10131a;
+  --ae-surface-muted: #1a1f2b;
+  --ae-ink: #f8f7f4;
+  --ae-ink-muted: #cbd5e1;
+  --ae-border: #323a4d;
+}
+
+[data-ps-premium-theme="premium-atelier-editorial"] .ae-masthead {
+  border-bottom: 1px solid var(--ae-border);
+  background-color: var(--ae-surface-muted);
+  padding-block: 0.625rem;
+}
+
+[data-ps-premium-theme="premium-atelier-editorial"] .ae-masthead-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--ae-ink-muted);
+}
+
+[data-ps-premium-theme="premium-atelier-editorial"] .ae-masthead-brand {
+  font-weight: 700;
+  color: var(--ae-ink);
+}
+
+[data-ps-premium-theme="premium-atelier-editorial"] .ps-card {
+  border: 1px solid var(--ae-border);
+  border-top: 2px solid var(--ae-primary);
+  border-radius: var(--ae-radius);
+  background-color: var(--ae-surface);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ps-premium-theme="premium-atelier-editorial"] * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}

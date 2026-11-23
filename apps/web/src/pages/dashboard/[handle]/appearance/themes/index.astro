@@ -124,6 +124,10 @@ Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
     themesApiUrl={`/api/tenants/${encodeURIComponent(rawHandle)}/themes`}
     previewApiUrl={`/api/tenants/${encodeURIComponent(rawHandle)}/themes/preview`}
     activateApiUrl={`/api/tenants/${encodeURIComponent(rawHandle)}/themes/activate`}
+    variantsApiUrl={`/api/tenants/${encodeURIComponent(rawHandle)}/themes/variants`}
+    checkoutApiUrl={`/api/tenants/${encodeURIComponent(rawHandle)}/themes/checkout`}
+    receiptsBaseUrl={`/api/tenants/${encodeURIComponent(rawHandle)}/themes/receipts`}
+    customThemeServiceHref={`${basePath}/appearance/themes/custom`}
     customizerHref={`${basePath}/appearance`}
     initialState={initialState}
   />
