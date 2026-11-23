@@ -4,6 +4,7 @@ import type {
   AuthorizedTenantMember,
   VerifiedPlatformOperatorContext,
 } from "@punyasitus/auth";
+import type { LiveTenantEntitlement } from "@punyasitus/auth/entitlements/index";
 import type { SurfaceKind } from "@punyasitus/core";
 import type { TenantContext } from "../core/tenant.ts";
 
@@ -33,6 +34,7 @@ declare global {
       authUser: AuthLocalsUser | null;
       authSession: AuthLocalsSession | null;
       authorizedTenantMember: AuthorizedTenantMember | null;
+      tenantEntitlement: LiveTenantEntitlement | null;
       platformOperator: VerifiedPlatformOperatorContext | null;
       twoFactorVerifiedAtMs: number | null;
     }

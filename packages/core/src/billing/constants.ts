@@ -22,11 +22,21 @@ export const AUTOLARIS_COD_VALUE = "0" as const;
 export const AUTOLARIS_FIXED_ORIGIN = "https://api-h2h.autolaris.com" as const;
 export const AUTOLARIS_REFF_ID_MAX_LENGTH = 30 as const;
 
+export const TRIAL_DURATION_SECONDS = 604_800 as const; // Exact 7 days (168h, REQ-059 / REQ-060)
+export const TRIAL_DURATION_MS = TRIAL_DURATION_SECONDS * 1000;
+export const DAY_MS = 24 * 60 * 60 * 1000;
 export const GRACE_WINDOW_MS = 72 * 60 * 60 * 1000; // H+1..H+3
 export const LOCKED_WINDOW_MS = 168 * 60 * 60 * 1000; // H+4..H+7
 export const PAID_DELETION_WINDOW_MS = 45 * 24 * 60 * 60 * 1000; // H+45
 export const TRIAL_DELETION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // +30d after trial end
 export const DEFAULT_OBLIGATION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+export const REMINDER_H_MINUS_3_MS = 3 * DAY_MS; // 72h before period end
+export const REMINDER_H_MINUS_1_MS = 1 * DAY_MS; // 24h before period end
+export const REMINDER_H0_WINDOW_MS = 1 * DAY_MS; // Day of expiry (H0..H+1)
+
+export const TRIAL_STORAGE_QUOTA_BYTES = 100 * 1024 * 1024; // 100 MB during trial (DEC-035 C8)
+export const PAID_STORAGE_QUOTA_BYTES = 1024 * 1024 * 1024; // 1 GB when active/grace/locked
 
 export const NON_PKP_TAX_NOTICE =
   "Harga belum termasuk PPN (penyelenggara belum PKP; bukti bayar berupa kuitansi layanan, bukan faktur pajak)." as const;

@@ -1,10 +1,18 @@
 ---
 import "../styles/admin/globals.css";
+import { buildServiceAccessViewModel } from "@punyasitus/auth/entitlements/index";
 import { AdminShell, type AdminShellProps } from "@/components/admin/AdminShell";
+import {
+  ServiceAccessBanner,
+  SuspendedRecoveryShell,
+  type ServiceAccessContext,
+} from "@/components/admin/service-access";
+import Maintenance from "@/components/Maintenance.astro";
 
 export interface Props extends Omit<AdminShellProps, "surface" | "children"> {
   title: string;
   surface?: "dashboard" | "agency" | "affiliate";
+  serviceAccess?: ServiceAccessContext;
 }
 
 const {
@@ -23,7 +31,96 @@ const {
   publicSiteHref,
   userDisplayName,
   userRoleLabel,
+  serviceAccess: explicitServiceAccess,
 } = Astro.props;
+
+const isDevFixtureRoute = Astro.url.pathname.startsWith("/_dev/");
+const showDevMaintenancePreview =
+  isDevFixtureRoute && Astro.url.searchParams.get("maintenance") === "1";
+
+if (showDevMaintenancePreview) {
+  Astro.response.status = 503;
+  Astro.response.headers.set("Cache-Control", "no-store, no-cache, must-revalidate");
+  Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+  Astro.response.headers.set("Retry-After", "60");
+}
+
+// Resolve authoritative server-side service access from middleware locals when present,
+// or from explicit props / dev fixture query params (`?serviceAccess=1`).
+let resolvedServiceAccess: ServiceAccessContext | undefined = explicitServiceAccess;
+
+if (!resolvedServiceAccess && Astro.locals.tenantEntitlement && Astro.locals.authorizedTenantMember) {
+  const vm = buildServiceAccessViewModel({
+    entitlement: Astro.locals.tenantEntitlement,
+    role: Astro.locals.authorizedTenantMember.role,
+    basePath: basePath ?? `/dashboard/${Astro.locals.tenantEntitlement.handle}`,
+  });
+  resolvedServiceAccess = {
+    status: vm.status,
+    operatorHold: vm.operatorHold,
+    operatorHoldReason: vm.operatorHoldReason,
+    suspensionReason: vm.suspensionReason,
+    agencyManaged: vm.agencyManaged,
+    isPayer: vm.isPayer,
+    canExportLeadsCsv: vm.canExportLeadsCsv,
+    daysRemaining: vm.daysRemaining,
+    trialEndsAtLabel: vm.trialEndsAtLabel,
+    paidThroughLabel: vm.paidThroughLabel,
+    graceEndsAtLabel: vm.graceEndsAtLabel,
+    lockedEndsAtLabel: vm.lockedEndsAtLabel,
+    deletionDueAtLabel: vm.deletionDueAtLabel,
+    billingHref: vm.billingHref,
+    leadsExportHref: vm.leadsExportHref,
+    signOutHref: vm.signOutHref,
+  };
+} else if (
+  !resolvedServiceAccess &&
+  isDevFixtureRoute &&
+  Astro.url.searchParams.get("serviceAccess") === "1"
+) {
+  const roleParam = Astro.url.searchParams.get("role") ?? "owner";
+  const isPayer = roleParam !== "member" && roleParam !== "editor" && roleParam !== "admin";
+  const operatorHold = Astro.url.searchParams.get("hold") === "1";
+  const reasonParam = Astro.url.searchParams.get("reason");
+  const effectiveStatus = lifecycleStatus ?? "active";
+  resolvedServiceAccess = {
+    status: effectiveStatus,
+    operatorHold,
+    operatorHoldReason: operatorHold
+      ? "Peninjauan kepatuhan konten sementara oleh operator"
+      : null,
+    suspensionReason: operatorHold
+      ? "operator_hold"
+      : reasonParam === "trial_expired"
+        ? "trial_expired"
+        : effectiveStatus === "suspended"
+          ? "subscription_overdue"
+          : null,
+    isPayer,
+    canExportLeadsCsv: isPayer,
+    daysRemaining:
+      lifecycleDaysRemaining ??
+      (effectiveStatus === "trial" ? 5 : effectiveStatus === "grace" ? 2 : 3),
+    trialEndsAtLabel: "29 Nov 2026, 17.00 WIB",
+    graceEndsAtLabel: "26 Nov 2026, 23.59 WIB (H+4)",
+    lockedEndsAtLabel: "30 Nov 2026, 23.59 WIB (H+8)",
+    deletionDueAtLabel:
+      reasonParam === "trial_expired"
+        ? "29 Des 2026, 17.00 WIB"
+        : "07 Jan 2027, 23.59 WIB",
+    billingHref: `${basePath ?? ""}#langganan`,
+    leadsExportHref: `${basePath ?? ""}#ekspor-prospek`,
+    signOutHref: "/auth/login?signOut=1",
+  };
+}
+
+const isSuspendedRecoveryMode =
+  surface === "dashboard" && resolvedServiceAccess?.status === "suspended";
+const showServiceAccessBanner =
+  surface === "dashboard" &&
+  resolvedServiceAccess !== undefined &&
+  resolvedServiceAccess.status !== "active" &&
+  resolvedServiceAccess.status !== "suspended";
 ---
 
 <!doctype html>
@@ -32,32 +129,52 @@ const {
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
-    <link
-      rel="icon"
-      type="image/svg+xml"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23176b51'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='700' fill='%23ffffff'%3EPS%3C/text%3E%3C/svg%3E"
-    />
-    <title>{title} — PunyaSitus</title>
+    {showDevMaintenancePreview ? (
+      <link rel="icon" href="data:," />
+    ) : (
+      <link
+        rel="icon"
+        type="image/svg+xml"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23176b51'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='700' fill='%23ffffff'%3EPS%3C/text%3E%3C/svg%3E"
+      />
+    )}
+    <title>{showDevMaintenancePreview ? "Situs dalam perbaikan" : `${title} — PunyaSitus`}</title>
   </head>
-  <body>
-    <AdminShell
-      client:load
-      surface={surface}
-      workspaceName={workspaceName}
-      workspaceSubtitle={workspaceSubtitle}
-      activeNavId={activeNavId}
-      basePath={basePath}
-      offeringLabel={offeringLabel}
-      unreadLeadsCount={unreadLeadsCount}
-      lifecycleStatus={lifecycleStatus}
-      lifecycleDaysRemaining={lifecycleDaysRemaining}
-      lifecycleReason={lifecycleReason}
-      agencyClientContext={agencyClientContext}
-      publicSiteHref={publicSiteHref}
-      userDisplayName={userDisplayName}
-      userRoleLabel={userRoleLabel}
-    >
-      <slot />
-    </AdminShell>
+  <body style={showDevMaintenancePreview ? "margin:0;padding:0;" : undefined}>
+    {showDevMaintenancePreview ? (
+      <Maintenance />
+    ) : isSuspendedRecoveryMode && resolvedServiceAccess ? (
+      <SuspendedRecoveryShell
+        client:load
+        workspaceName={workspaceName}
+        workspaceSubtitle={workspaceSubtitle}
+        userDisplayName={userDisplayName}
+        userRoleLabel={userRoleLabel}
+        access={resolvedServiceAccess}
+      />
+    ) : (
+      <AdminShell
+        client:load
+        surface={surface}
+        workspaceName={workspaceName}
+        workspaceSubtitle={workspaceSubtitle}
+        activeNavId={activeNavId}
+        basePath={basePath}
+        offeringLabel={offeringLabel}
+        unreadLeadsCount={unreadLeadsCount}
+        lifecycleStatus={showServiceAccessBanner ? "active" : lifecycleStatus}
+        lifecycleDaysRemaining={lifecycleDaysRemaining}
+        lifecycleReason={lifecycleReason}
+        agencyClientContext={agencyClientContext}
+        publicSiteHref={publicSiteHref}
+        userDisplayName={userDisplayName}
+        userRoleLabel={userRoleLabel}
+      >
+        {showServiceAccessBanner && resolvedServiceAccess ? (
+          <ServiceAccessBanner client:load access={resolvedServiceAccess} />
+        ) : null}
+        <slot />
+      </AdminShell>
+    )}
   </body>
 </html>

@@ -177,7 +177,7 @@ const SENSITIVE_CONSOLE_REAUTH_ACTIONS = new Set<PermissionAction>([
   "domain:remove_active",
 ]);
 
-const LOCKED_TENANT_ALLOWED_ACTIONS = new Set<PermissionAction>([
+export const LOCKED_TENANT_ALLOWED_ACTIONS: ReadonlySet<PermissionAction> = new Set<PermissionAction>([
   "content:read",
   "settings:read",
   "analytics:read",
@@ -191,13 +191,35 @@ const LOCKED_TENANT_ALLOWED_ACTIONS = new Set<PermissionAction>([
   "billing:receipts",
 ]);
 
-const SUSPENDED_TENANT_ALLOWED_ACTIONS = new Set<PermissionAction>([
+export const SUSPENDED_TENANT_ALLOWED_ACTIONS: ReadonlySet<PermissionAction> = new Set<PermissionAction>([
   "lead:export_csv",
   "billing:read",
   "billing:pay",
   "billing:recheck",
   "billing:receipts",
 ]);
+
+export function isActionAllowedForTenantStatus(
+  tenantStatus: TenantStatus,
+  action: PermissionAction,
+): { readonly allowed: true } | { readonly allowed: false; readonly status: 403 | 404; readonly code: ApiErrorCode } {
+  if (tenantStatus === "trial" && (action === "domain:connect" || action === "domain:make_primary")) {
+    return { allowed: false, status: 403, code: "TRIAL_DOMAIN_FORBIDDEN" };
+  }
+  if (tenantStatus === "locked" && !LOCKED_TENANT_ALLOWED_ACTIONS.has(action)) {
+    return { allowed: false, status: 403, code: "SUBSCRIPTION_LOCKED" };
+  }
+  if (tenantStatus === "suspended" && !SUSPENDED_TENANT_ALLOWED_ACTIONS.has(action)) {
+    return { allowed: false, status: 403, code: "SUBSCRIPTION_LOCKED" };
+  }
+  if (tenantStatus === "recovery" || tenantStatus === "purging") {
+    return { allowed: false, status: 403, code: "SUBSCRIPTION_LOCKED" };
+  }
+  if (tenantStatus === "purged") {
+    return { allowed: false, status: 404, code: "NOT_FOUND" };
+  }
+  return { allowed: true };
+}
 
 const AUDITED_OPERATOR_TENANT_ACTIONS = new Set<PermissionAction>([
   ...ADMIN_ACTIONS,
@@ -400,7 +422,10 @@ export function assertAuthorized(
 
   // Service lifecycle overrides (PLAN §4 & §17.1)
   if (ctx.tenantStatus) {
-    if (ctx.tenantStatus === "trial" && action === "domain:connect") {
+    if (
+      ctx.tenantStatus === "trial" &&
+      (action === "domain:connect" || action === "domain:make_primary")
+    ) {
       throw new AuthorizationError(
         403,
         "TRIAL_DOMAIN_FORBIDDEN",
@@ -572,6 +597,7 @@ export function checkSurfaceRouteAccess(
       normalized.startsWith("/affiliate") ||
       normalized.startsWith("/auth") ||
       normalized.startsWith("/account") ||
+      normalized.startsWith("/pay") ||
       normalized.startsWith("/api/auth") ||
       normalized.startsWith("/api/account") ||
       normalized.startsWith("/api/tenants/") ||

@@ -10,6 +10,8 @@ export const EMAIL_TEMPLATE_NAMES = [
   "billing-receipt",
   "domain-notice",
   "suppression-owner-notice",
+  "renewal-reminder",
+  "lifecycle-notice",
 ] as const;
 
 export type EmailTemplateName = (typeof EMAIL_TEMPLATE_NAMES)[number];
@@ -219,6 +221,36 @@ export const SuppressionOwnerNoticeTemplateDataSchema = z.strictObject({
   settingsUrl: z.string().trim().min(1).max(2048).optional(),
 });
 
+export const RenewalReminderStageSchema = z.enum([
+  "paid_h_minus_3",
+  "paid_h_minus_1",
+  "paid_h0",
+  "trial_h_minus_3",
+  "trial_h_minus_1",
+]);
+
+export const RenewalReminderTemplateDataSchema = z.strictObject({
+  recipientName: z.string().trim().max(120).optional(),
+  tenantName: z.string().trim().min(1).max(160),
+  stage: RenewalReminderStageSchema,
+  dueAtLabel: z.string().trim().min(1).max(100),
+  graceEndsAtLabel: z.string().trim().max(100).optional(),
+  amountIdr: z.number().int().nonnegative().optional(),
+  oneClickPayUrl: z.string().trim().min(1).max(2048),
+});
+
+export const LifecycleNoticeStateSchema = z.enum(["grace", "locked", "suspended"]);
+
+export const LifecycleNoticeTemplateDataSchema = z.strictObject({
+  recipientName: z.string().trim().max(120).optional(),
+  tenantName: z.string().trim().min(1).max(160),
+  state: LifecycleNoticeStateSchema,
+  deadlineLabel: z.string().trim().max(100).optional(),
+  deletionDueLabel: z.string().trim().max(100).optional(),
+  billingUrl: z.string().trim().min(1).max(2048),
+  operatorHold: z.boolean().optional(),
+});
+
 export interface EmailTemplateDataMap {
   readonly "verify-email": z.input<typeof VerifyEmailTemplateDataSchema>;
   readonly "reset-password": z.input<typeof ResetPasswordTemplateDataSchema>;
@@ -226,6 +258,8 @@ export interface EmailTemplateDataMap {
   readonly "billing-receipt": z.input<typeof BillingReceiptTemplateDataSchema>;
   readonly "domain-notice": z.input<typeof DomainNoticeTemplateDataSchema>;
   readonly "suppression-owner-notice": z.input<typeof SuppressionOwnerNoticeTemplateDataSchema>;
+  readonly "renewal-reminder": z.input<typeof RenewalReminderTemplateDataSchema>;
+  readonly "lifecycle-notice": z.input<typeof LifecycleNoticeTemplateDataSchema>;
 }
 
 export interface RenderedEmailTemplate {
@@ -534,6 +568,146 @@ export function renderEmailTemplate<T extends EmailTemplateName>(
           bodyHtml: htmlParts.join(""),
         }),
         text: textParts.join("\n"),
+      };
+    }
+
+    case "renewal-reminder": {
+      const data = RenewalReminderTemplateDataSchema.parse(rawData);
+      const greet = greeting(data.recipientName);
+      const tenant = sanitizePlainText(data.tenantName);
+      const dueAt = sanitizePlainText(data.dueAtLabel);
+      const graceEnds = data.graceEndsAtLabel ? sanitizePlainText(data.graceEndsAtLabel) : null;
+      const amountLabel =
+        typeof data.amountIdr === "number" ? formatIdr(data.amountIdr) : null;
+      const safeUrl = sanitizeActionUrl(data.oneClickPayUrl);
+
+      const stageCopy: Record<
+        z.output<typeof RenewalReminderStageSchema>,
+        { readonly subjectPrefix: string; readonly lead: string; readonly preheader: string }
+      > = {
+        paid_h_minus_3: {
+          subjectPrefix: "Pengingat H-3 perpanjangan langganan",
+          lead: `Langganan website <strong>${escapeHtml(tenant)}</strong> akan berakhir dalam 3 hari pada <strong>${escapeHtml(dueAt)}</strong>.`,
+          preheader: `Perpanjang langganan ${tenant} sebelum ${dueAt}.`,
+        },
+        paid_h_minus_1: {
+          subjectPrefix: "Pengingat H-1 perpanjangan langganan",
+          lead: `Langganan website <strong>${escapeHtml(tenant)}</strong> akan berakhir besok pada <strong>${escapeHtml(dueAt)}</strong>.`,
+          preheader: `Langganan ${tenant} berakhir besok (${dueAt}).`,
+        },
+        paid_h0: {
+          subjectPrefix: "Jatuh tempo hari ini (H0) — perpanjangan langganan",
+          lead: `Periode langganan website <strong>${escapeHtml(tenant)}</strong> jatuh tempo hari ini (<strong>${escapeHtml(dueAt)}</strong>). Anda memasuki masa tenggang 3 hari (H+1 hingga H+3).`,
+          preheader: `Langganan ${tenant} jatuh tempo hari ini.`,
+        },
+        trial_h_minus_3: {
+          subjectPrefix: "Pengingat H-3 masa uji coba gratis",
+          lead: `Masa uji coba 7 hari website <strong>${escapeHtml(tenant)}</strong> akan berakhir dalam 3 hari pada <strong>${escapeHtml(dueAt)}</strong>.`,
+          preheader: `Masa uji coba ${tenant} tersisa 3 hari.`,
+        },
+        trial_h_minus_1: {
+          subjectPrefix: "Pengingat H-1 masa uji coba gratis",
+          lead: `Masa uji coba 7 hari website <strong>${escapeHtml(tenant)}</strong> akan berakhir besok pada <strong>${escapeHtml(dueAt)}</strong>. Situs akan ditangguhkan otomatis jika belum diaktifkan.`,
+          preheader: `Masa uji coba ${tenant} berakhir besok.`,
+        },
+      };
+
+      const copy = stageCopy[data.stage];
+      const subject = sanitizeHeaderValue(`${copy.subjectPrefix} ${tenant} — PunyaSitus`);
+      const expiryNote = graceEnds
+        ? `Tautan bayar sekali klik ini hanya berlaku satu kali hingga akhir masa tenggang (${graceEnds}) dan tidak membuka sesi admin maupun data situs lainnya.`
+        : `Tautan bayar sekali klik ini hanya berlaku satu kali hingga ${dueAt} dan tidak membuka sesi admin maupun data situs lainnya.`;
+
+      const htmlParts: string[] = [
+        `<p style="margin:0 0 12px;">${greet.html}</p>`,
+        `<p style="margin:0 0 16px;">${copy.lead}</p>`,
+      ];
+      const textParts: string[] = [
+        greet.text,
+        "",
+        `${copy.subjectPrefix} untuk website ${tenant} (jatuh tempo: ${dueAt}).`,
+      ];
+
+      if (amountLabel) {
+        htmlParts.push(
+          `<p style="margin:0 0 16px;">Biaya paket dasar: <strong>${escapeHtml(amountLabel)}</strong> (belum termasuk PPN/non-PKP dan biaya kanal pembayaran).</p>`,
+        );
+        textParts.push(`Biaya paket dasar: ${amountLabel} (belum termasuk PPN/non-PKP).`);
+      }
+
+      htmlParts.push(renderPrimaryButtonHtml("Bayar Perpanjangan Sekarang", safeUrl));
+      htmlParts.push(
+        `<p style="margin:0 0 12px;font-size:13px;color:#475569;">${escapeHtml(expiryNote)}</p>`,
+      );
+      htmlParts.push(
+        `<p style="margin:0 0 12px;font-size:13px;color:#475569;word-break:break-all;">Atau salin tautan ini ke browser Anda: ${escapeHtml(safeUrl)}</p>`,
+      );
+      textParts.push("", `Tautan bayar sekali klik: ${safeUrl}`, "", expiryNote);
+
+      return {
+        template,
+        subject,
+        html: wrapIndonesianHtmlEmail({
+          title: subject,
+          preheader: copy.preheader,
+          bodyHtml: htmlParts.join(""),
+        }),
+        text: textParts.join("\n"),
+      };
+    }
+
+    case "lifecycle-notice": {
+      const data = LifecycleNoticeTemplateDataSchema.parse(rawData);
+      const greet = greeting(data.recipientName);
+      const tenant = sanitizePlainText(data.tenantName);
+      const deadline = data.deadlineLabel ? sanitizePlainText(data.deadlineLabel) : null;
+      const deletionDue = data.deletionDueLabel ? sanitizePlainText(data.deletionDueLabel) : null;
+      const safeUrl = sanitizeActionUrl(data.billingUrl);
+
+      let subject: string;
+      let summaryHtml: string;
+      let summaryText: string;
+      let ctaLabel = "Buka Halaman Langganan";
+
+      if (data.state === "grace") {
+        subject = sanitizeHeaderValue(`Masa tenggang langganan ${tenant} — PunyaSitus`);
+        summaryHtml = `Website <strong>${escapeHtml(tenant)}</strong> saat ini berada dalam <strong>masa tenggang (H+1 hingga H+3)</strong>. Situs publik tetap aktif dan CMS masih dapat disunting${deadline ? ` hingga <strong>${escapeHtml(deadline)}</strong>` : ""}.`;
+        summaryText = `Website ${tenant} berada dalam masa tenggang (H+1..H+3). Situs publik tetap aktif dan CMS masih dapat disunting${deadline ? ` hingga ${deadline}` : ""}.`;
+        ctaLabel = "Bayar Perpanjangan Sekarang";
+      } else if (data.state === "locked") {
+        subject = sanitizeHeaderValue(`Mode baca saja (terkunci) untuk ${tenant} — PunyaSitus`);
+        summaryHtml = `Website <strong>${escapeHtml(tenant)}</strong> memasuki <strong>mode terkunci (H+4 hingga H+7)</strong>. Situs publik <strong>masih aktif dan terindeks</strong>, namun penyuntingan & publikasi CMS dinonaktifkan sementara${deadline ? ` hingga batas penangguhan pada <strong>${escapeHtml(deadline)}</strong>` : ""}. Anda tetap dapat membaca konten, mengekspor prospek CSV, dan menyelesaikan pembayaran.`;
+        summaryText = `Website ${tenant} memasuki mode terkunci (H+4..H+7). Situs publik masih aktif dan terindeks, namun perubahan CMS dinonaktifkan${deadline ? ` hingga batas penangguhan pada ${deadline}` : ""}.`;
+        ctaLabel = "Aktifkan Kembali Langganan";
+      } else if (data.operatorHold) {
+        subject = sanitizeHeaderValue(`Penahanan sementara akses ${tenant} — PunyaSitus`);
+        summaryHtml = `Akses website <strong>${escapeHtml(tenant)}</strong> ditangguhkan sementara oleh operator platform. Situs publik menampilkan halaman pemeliharaan (HTTP 503). Pembayaran saja tidak mencabut penahanan operator hingga peninjauan selesai.`;
+        summaryText = `Akses website ${tenant} ditangguhkan sementara oleh operator platform (HTTP 503). Pembayaran tidak mencabut penahanan operator secara otomatis.`;
+      } else {
+        subject = sanitizeHeaderValue(`Website ${tenant} ditangguhkan (Situs dalam perbaikan) — PunyaSitus`);
+        summaryHtml = `Website <strong>${escapeHtml(tenant)}</strong> saat ini <strong>ditangguhkan</strong> dan menampilkan halaman pemeliharaan (HTTP 503). Data Anda tidak dihapus${deletionDue ? ` dan disimpan hingga <strong>${escapeHtml(deletionDue)}</strong>` : ""}. Anda tetap dapat mengekspor prospek CSV dan menyelesaikan pembayaran untuk mengaktifkan kembali situs.`;
+        summaryText = `Website ${tenant} ditangguhkan (HTTP 503). Data tetap aman${deletionDue ? ` hingga ${deletionDue}` : ""}. Selesaikan pembayaran untuk mengaktifkan kembali situs.`;
+        ctaLabel = "Bayar & Aktifkan Kembali";
+      }
+
+      const bodyHtml = [
+        `<p style="margin:0 0 12px;">${greet.html}</p>`,
+        `<p style="margin:0 0 16px;">${summaryHtml}</p>`,
+        renderPrimaryButtonHtml(ctaLabel, safeUrl),
+        `<p style="margin:0 0 12px;font-size:13px;color:#475569;word-break:break-all;">Tautan: ${escapeHtml(safeUrl)}</p>`,
+      ].join("");
+
+      const text = [greet.text, "", summaryText, "", `${ctaLabel}: ${safeUrl}`].join("\n");
+
+      return {
+        template,
+        subject,
+        html: wrapIndonesianHtmlEmail({
+          title: subject,
+          preheader: summaryText.slice(0, 140),
+          bodyHtml,
+        }),
+        text,
       };
     }
   }

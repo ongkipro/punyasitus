@@ -23,6 +23,7 @@ import {
 export const STATE_PAGE_MESSAGES = {
   notFound: "Halaman tidak ditemukan",
   suspended: "Situs dalam perbaikan",
+  suspendedBody: "Situs ini sementara tidak dapat diakses. Silakan kembali lagi nanti.",
   recovery: "Sedang dalam pemeliharaan",
   unavailable: "Layanan sedang tidak tersedia",
 } as const;
@@ -217,13 +218,14 @@ function isLocalLoopbackHostname(hostname: string): boolean {
   return lower === "127.0.0.1" || lower === "localhost" || lower === "[::1]" || lower === "::1";
 }
 
-function renderNeutralStateHtml(message: string): string {
-  return `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>${message}</title></head><body><main><h1>${message}</h1></main></body></html>`;
+function renderNeutralStateHtml(message: string, body?: string): string {
+  const bodyMarkup = body ? `<p>${body}</p>` : "";
+  return `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>${message}</title></head><body><main><h1>${message}</h1>${bodyMarkup}</main></body></html>`;
 }
 
 const STATE_PAGE_SPECS: Record<
   StatePageKind,
-  { readonly status: 404 | 503; readonly code: string; readonly message: string }
+  { readonly status: 404 | 503; readonly code: string; readonly message: string; readonly body?: string }
 > = {
   not_found: {
     status: 404,
@@ -234,6 +236,7 @@ const STATE_PAGE_SPECS: Record<
     status: 503,
     code: "SITE_SUSPENDED",
     message: STATE_PAGE_MESSAGES.suspended,
+    body: STATE_PAGE_MESSAGES.suspendedBody,
   },
   recovery: {
     status: 503,
@@ -276,7 +279,7 @@ export function createStatePageResponse(
   }
 
   headers.set("Content-Type", "text/html; charset=utf-8");
-  return new Response(renderNeutralStateHtml(spec.message), {
+  return new Response(renderNeutralStateHtml(spec.message, spec.body), {
     status: spec.status,
     headers,
   });
