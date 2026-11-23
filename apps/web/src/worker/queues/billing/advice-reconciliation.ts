@@ -11,6 +11,10 @@ import {
   redactBillingLogRecord,
   type AdviceSettlementPolicy,
 } from "@punyasitus/core/billing/index";
+import type {
+  CloudflareSendEmailBinding,
+  EmailPort,
+} from "@punyasitus/core/email/index";
 import {
   acquireAdviceReconciliationBatch,
   ensureBillingReconciliationSchema,
@@ -30,6 +34,11 @@ import type {
   JobExecutionContext,
   StructuredJobLogger,
 } from "../consumer.ts";
+import {
+  enqueueBillingReceiptDelivery,
+  issueAndDeliverSettlementReceipt,
+  type ReceiptDeliveryQueueBinding,
+} from "./receipt-delivery.ts";
 
 /**
  * Scheduled AutoLaris Advice Reconciliation & Exactly-Once Entitlement Grant Worker
@@ -66,6 +75,13 @@ export interface ReconcilePaymentAttemptOptions {
   readonly workerId?: string | null;
   readonly maxPolls?: number;
   readonly logger?: StructuredJobLogger;
+  /** Optional R2 bucket; when supplied, confirmed settlements automatically issue & store an immutable PDF receipt. */
+  readonly mediaBucket?: R2Bucket | null;
+  /** Optional durable queue binding to enqueue `billing.receipt.deliver` for async/deferred receipt delivery. */
+  readonly jobsQueue?: ReceiptDeliveryQueueBinding | null;
+  readonly emailPort?: EmailPort | null;
+  readonly cloudflareEmailBinding?: CloudflareSendEmailBinding | null;
+  readonly platformDomain?: string;
 }
 
 export interface ReconcilePaymentAttemptOutcome {
@@ -87,6 +103,8 @@ export interface ReconcilePaymentAttemptOutcome {
   readonly alreadyGranted: boolean;
   readonly settlementId: string | null;
   readonly grantId: string | null;
+  readonly receiptId?: string | null;
+  readonly receiptNumber?: string | null;
   readonly operatorHoldPreserved: boolean;
   readonly deferredTerminalState: boolean;
   readonly auditId: string | null;
@@ -184,6 +202,101 @@ async function appendOperatorCheckAudit(
   return entry.id;
 }
 
+async function ensureOrEnqueueSettlementReceipt(params: {
+  readonly options: ReconcilePaymentAttemptOptions;
+  readonly settlementId: string;
+  readonly tenantId: string;
+  readonly obligationId: string;
+  readonly nowMs: number;
+}): Promise<{ readonly receiptId: string | null; readonly receiptNumber: string | null }> {
+  const { options, settlementId, tenantId, obligationId, nowMs } = params;
+  if (options.mediaBucket) {
+    try {
+      const issued = await issueAndDeliverSettlementReceipt({
+        db: options.db,
+        mediaBucket: options.mediaBucket,
+        settlementId,
+        emailPort: options.emailPort,
+        cloudflareEmailBinding: options.cloudflareEmailBinding,
+        platformDomain: options.platformDomain,
+        nowMs,
+        logger: options.logger,
+      });
+      if (
+        (issued.emailOutcome === "failed" || issued.emailOutcome === "unknown") &&
+        issued.emailRetryable !== false &&
+        options.jobsQueue
+      ) {
+        try {
+          await enqueueBillingReceiptDelivery(
+            { PLATFORM_DB: options.db, JOBS_QUEUE: options.jobsQueue },
+            {
+              settlementId,
+              tenantId,
+              correlationId: options.requestId ?? settlementId,
+              nowMs,
+            },
+          );
+        } catch {
+          // Best-effort durable retry enqueue
+        }
+      }
+      return {
+        receiptId: issued.receipt.id,
+        receiptNumber: issued.receipt.receiptNumber,
+      };
+    } catch {
+      emitSafeBillingLog(options.logger, {
+        event: "billing.advice.receipt_issuance_deferred",
+        tenantId,
+        obligationId,
+        settlementId,
+        timestamp: nowMs,
+      });
+      if (options.jobsQueue) {
+        try {
+          await enqueueBillingReceiptDelivery(
+            { PLATFORM_DB: options.db, JOBS_QUEUE: options.jobsQueue },
+            {
+              settlementId,
+              tenantId,
+              correlationId: options.requestId ?? settlementId,
+              nowMs,
+            },
+          );
+        } catch {
+          // Never fail confirmed settlement if queue enqueue also fails
+        }
+      }
+      return { receiptId: null, receiptNumber: null };
+    }
+  }
+
+  if (options.jobsQueue) {
+    try {
+      await enqueueBillingReceiptDelivery(
+        { PLATFORM_DB: options.db, JOBS_QUEUE: options.jobsQueue },
+        {
+          settlementId,
+          tenantId,
+          correlationId: options.requestId ?? settlementId,
+          nowMs,
+        },
+      );
+    } catch {
+      emitSafeBillingLog(options.logger, {
+        event: "billing.advice.receipt_enqueue_failed",
+        tenantId,
+        obligationId,
+        settlementId,
+        timestamp: nowMs,
+      });
+    }
+  }
+
+  return { receiptId: null, receiptNumber: null };
+}
+
 /**
  * Reconciles a single payment attempt via `POST /api/h2h/advice`, enforcing the
  * explicit settlement policy, provider-ID-less safety gate, atomic exactly-once
@@ -241,6 +354,16 @@ export async function reconcilePaymentAttemptViaAdvice(
       timestamp: nowMs,
     });
 
+    const recoveredReceipt = existing?.settlement_id
+      ? await ensureOrEnqueueSettlementReceipt({
+          options,
+          settlementId: existing.settlement_id,
+          tenantId: attempt.tenantId,
+          obligationId: attempt.obligationId,
+          nowMs,
+        })
+      : { receiptId: null, receiptNumber: null };
+
     return {
       attemptId: attempt.attemptId,
       obligationId: attempt.obligationId,
@@ -254,6 +377,12 @@ export async function reconcilePaymentAttemptViaAdvice(
       alreadyGranted: true,
       settlementId: existing?.settlement_id ?? null,
       grantId: existing?.grant_id ?? null,
+      ...(recoveredReceipt.receiptId
+        ? {
+            receiptId: recoveredReceipt.receiptId,
+            receiptNumber: recoveredReceipt.receiptNumber,
+          }
+        : {}),
       operatorHoldPreserved: attempt.operatorHold,
       deferredTerminalState: false,
       auditId,
@@ -617,6 +746,14 @@ export async function reconcilePaymentAttemptViaAdvice(
   });
 
   if (settled.outcome === "settled") {
+    const issued = await ensureOrEnqueueSettlementReceipt({
+      options,
+      settlementId: settled.settlementId,
+      tenantId: attempt.tenantId,
+      obligationId: attempt.obligationId,
+      nowMs,
+    });
+
     return {
       attemptId: attempt.attemptId,
       obligationId: attempt.obligationId,
@@ -630,6 +767,9 @@ export async function reconcilePaymentAttemptViaAdvice(
       alreadyGranted: false,
       settlementId: settled.settlementId,
       grantId: settled.grantId,
+      ...(issued.receiptId
+        ? { receiptId: issued.receiptId, receiptNumber: issued.receiptNumber }
+        : {}),
       operatorHoldPreserved: settled.operatorHoldPreserved,
       deferredTerminalState: false,
       auditId: settled.auditId,
@@ -639,6 +779,14 @@ export async function reconcilePaymentAttemptViaAdvice(
   }
 
   if (settled.outcome === "already_settled") {
+    const recovered = await ensureOrEnqueueSettlementReceipt({
+      options,
+      settlementId: settled.settlementId,
+      tenantId: attempt.tenantId,
+      obligationId: attempt.obligationId,
+      nowMs,
+    });
+
     return {
       attemptId: attempt.attemptId,
       obligationId: attempt.obligationId,
@@ -652,6 +800,9 @@ export async function reconcilePaymentAttemptViaAdvice(
       alreadyGranted: true,
       settlementId: settled.settlementId,
       grantId: settled.grantId,
+      ...(recovered.receiptId
+        ? { receiptId: recovered.receiptId, receiptNumber: recovered.receiptNumber }
+        : {}),
       operatorHoldPreserved: attempt.operatorHold,
       deferredTerminalState: false,
       auditId: settled.auditId,
@@ -693,6 +844,10 @@ export interface RunBillingAdviceSweepOptions {
   readonly baseBackoffMs?: number;
   readonly maxBackoffMs?: number;
   readonly logger?: StructuredJobLogger;
+  readonly mediaBucket?: R2Bucket | null;
+  readonly jobsQueue?: ReceiptDeliveryQueueBinding | null;
+  readonly emailPort?: EmailPort | null;
+  readonly platformDomain?: string;
 }
 
 export interface BillingAdviceSweepResult {
@@ -716,7 +871,8 @@ export interface BillingAdviceSweepResult {
  * - Releases every acquired lease cleanly in `finally` with exponential backoff and poll counts.
  */
 export async function runBillingAdviceReconciliationSweep(
-  env: Pick<DurableQueueEnv, "PLATFORM_DB">,
+  env: Pick<DurableQueueEnv, "PLATFORM_DB"> &
+    Partial<Pick<DurableQueueEnv, "MEDIA_BUCKET" | "JOBS_QUEUE" | "EMAIL" | "PLATFORM_DOMAIN">>,
   options: RunBillingAdviceSweepOptions,
 ): Promise<BillingAdviceSweepResult> {
   const nowMs = Math.trunc(options.nowMs ?? Date.now());
@@ -765,6 +921,11 @@ export async function runBillingAdviceReconciliationSweep(
         workerId,
         maxPolls,
         logger: options.logger,
+        mediaBucket: options.mediaBucket ?? env.MEDIA_BUCKET ?? null,
+        jobsQueue: options.jobsQueue ?? env.JOBS_QUEUE ?? null,
+        emailPort: options.emailPort,
+        cloudflareEmailBinding: env.EMAIL as CloudflareSendEmailBinding | undefined,
+        platformDomain: options.platformDomain ?? env.PLATFORM_DOMAIN,
       });
 
       outcomes.push(res);
