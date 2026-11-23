@@ -1,0 +1,86 @@
+---
+import "./styles/theme.css";
+import SEOHead from "../../components/SEOHead.astro";
+import type { PublicThemeRouteShellContract } from "../../core/theme-registry.ts";
+import DefaultLayout from "../default/Layout.astro";
+
+export interface CredentialDisplayItem {
+  readonly label: string;
+  readonly value: string;
+}
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly pageTitle?: string;
+  readonly pageDescription?: string;
+  readonly credentials?: readonly CredentialDisplayItem[];
+}
+
+const { contract, pageTitle, pageDescription, credentials = [] } = Astro.props;
+const isFocused = contract.shell.layoutMode === "focused";
+---
+
+<DefaultLayout
+  shell={contract.shell}
+  pageTitle={pageTitle}
+  pageDescription={pageDescription}
+  currentPath={contract.pathname}
+  privacyPolicyUrl={contract.consent.privacyPolicyUrl}
+  showConsent={contract.consent.required}
+  vendorScripts={contract.consent.vendorScripts}
+  mapEmbed={contract.consent.mapEmbed}
+  initialCookieHeader={contract.consent.initialCookieHeader}
+  headerCtaLabel={contract.headerCtaLabel}
+  headerCtaHref={contract.headerCtaHref}
+>
+  <SEOHead
+    slot="head"
+    metadata={contract.seoMetadata}
+    jsonLd={contract.schemaGraph ?? undefined}
+    omitTitle={true}
+    omitDescription={true}
+  />
+
+  <div
+    class="cp-theme-root"
+    data-ps-platform-theme="compro"
+    data-ps-route-kind={contract.routeKind}
+    data-testid="platform-theme-compro"
+  >
+    {!isFocused && (
+      <div class="cp-utility-bar" data-testid="compro-credential-bar">
+        <div class="ps-container cp-utility-inner">
+          <span class="cp-utility-kicker">
+            <span class="cp-utility-swatch" aria-hidden="true"></span>
+            {contract.shell.business.name}
+          </span>
+          <ul class="cp-utility-facts">
+            {contract.shell.business.city && <li>{contract.shell.business.city}</li>}
+            {contract.shell.business.weekdayHours && (
+              <li>{contract.shell.business.weekdayHours}</li>
+            )}
+          </ul>
+        </div>
+      </div>
+    )}
+
+    {!isFocused && credentials.length > 0 && (
+      <div class="cp-credentials-strip" aria-label="Legalitas dan sertifikasi usaha">
+        <div class="ps-container">
+          <ul class="cp-credentials-list">
+            {credentials.map((cred) => (
+              <li class="cp-credential-pill">
+                <span class="cp-credential-label">{cred.label}:</span>
+                <span>{cred.value}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    )}
+
+    <slot />
+  </div>
+
+  <slot name="floating" slot="floating" />
+</DefaultLayout>

@@ -1,0 +1,120 @@
+/*
+ * PunyaSitus Platform Theme: `catalog` — Product Showcase Catalog
+ * Crisp Commercial Grid & Cobalt-Teal Merchandising (0 KiB JS, WCAG AA >= 4.5:1)
+ */
+
+[data-ps-platform-theme="catalog"] {
+  --ct-primary: var(--ps-brand-primary, #1d4ed8);
+  --ct-secondary: var(--ps-brand-secondary, #0f766e);
+  --ct-on-primary: var(--ps-brand-on-primary, #ffffff);
+  --ct-surface: var(--ps-surface, #ffffff);
+  --ct-surface-muted: var(--ps-surface-muted, #f7f8fa);
+  --ct-ink: var(--ps-ink, #111827);
+  --ct-ink-muted: var(--ps-ink-muted, #4b5563);
+  --ct-border: var(--ps-border, #dde2e8);
+  --ct-radius: var(--ps-radius, 6px);
+  background-color: var(--ct-surface);
+  color: var(--ct-ink);
+  overflow-x: clip;
+}
+
+/* Merchandising Spec & Direct-WA Ordering Strip */
+[data-ps-platform-theme="catalog"] .ct-spec-bar {
+  background-color: var(--ct-surface-muted);
+  border-bottom: 1px solid var(--ct-border);
+  padding-block: 0.5625rem;
+}
+
+[data-ps-platform-theme="catalog"] .ct-spec-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  font-size: 0.8125rem;
+  color: var(--ct-ink-muted);
+}
+
+[data-ps-platform-theme="catalog"] .ct-spec-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+[data-ps-platform-theme="catalog"] .ct-spec-tag {
+  padding: 0.1875rem 0.5rem;
+  border: 1px solid var(--ct-border);
+  border-radius: 4px;
+  background-color: var(--ct-surface);
+  color: var(--ct-ink);
+  font-weight: 600;
+  font-size: 0.75rem;
+}
+
+/* Compact Scannable Hero & 3/2/1 Product Grid */
+[data-ps-platform-theme="catalog"] .ps-hero {
+  background-color: var(--ct-surface);
+  padding-block: clamp(1.875rem, 4vw, 3rem);
+  border-bottom: 1px solid var(--ct-border);
+}
+
+[data-ps-platform-theme="catalog"] .ps-offering-card {
+  border: 1px solid var(--ct-border);
+  border-radius: var(--ct-radius);
+  background-color: var(--ct-surface);
+}
+
+[data-ps-platform-theme="catalog"] .ps-offering-price {
+  font-size: 1.125rem;
+  font-weight: 800;
+  color: var(--ct-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Semantic Product Specification <dl> */
+[data-ps-platform-theme="catalog"] .ps-prose dl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 1rem 0 1.5rem;
+  border: 1px solid var(--ct-border);
+  border-radius: var(--ct-radius);
+  overflow: hidden;
+}
+
+@media (min-width: 640px) {
+  [data-ps-platform-theme="catalog"] .ps-prose dl {
+    grid-template-columns: minmax(10rem, 32%) minmax(0, 1fr);
+  }
+}
+
+[data-ps-platform-theme="catalog"] .ps-prose dt {
+  padding: 0.6875rem 0.875rem;
+  background-color: var(--ct-surface-muted);
+  border-bottom: 1px solid var(--ct-border);
+  font-weight: 700;
+  font-size: 0.875rem;
+  color: var(--ct-ink);
+}
+
+[data-ps-platform-theme="catalog"] .ps-prose dd {
+  margin: 0;
+  padding: 0.6875rem 0.875rem;
+  border-bottom: 1px solid var(--ct-border);
+  font-size: 0.9375rem;
+  color: var(--ct-ink-muted);
+}
+
+[data-ps-platform-theme="catalog"] .ps-cta-box {
+  background-color: var(--ct-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ps-platform-theme="catalog"] * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

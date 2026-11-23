@@ -1,0 +1,68 @@
+---
+import "./styles/theme.css";
+import SEOHead from "../../components/SEOHead.astro";
+import type { PublicThemeRouteShellContract } from "../../core/theme-registry.ts";
+import DefaultLayout from "../default/Layout.astro";
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly pageTitle?: string;
+  readonly pageDescription?: string;
+  readonly affiliationLabel?: string | null;
+}
+
+const { contract, pageTitle, pageDescription, affiliationLabel = null } = Astro.props;
+const isFocused = contract.shell.layoutMode === "focused";
+---
+
+<DefaultLayout
+  shell={contract.shell}
+  pageTitle={pageTitle}
+  pageDescription={pageDescription}
+  currentPath={contract.pathname}
+  privacyPolicyUrl={contract.consent.privacyPolicyUrl}
+  showConsent={contract.consent.required}
+  vendorScripts={contract.consent.vendorScripts}
+  mapEmbed={contract.consent.mapEmbed}
+  initialCookieHeader={contract.consent.initialCookieHeader}
+  headerCtaLabel={contract.headerCtaLabel}
+  headerCtaHref={contract.headerCtaHref}
+>
+  <SEOHead
+    slot="head"
+    metadata={contract.seoMetadata}
+    jsonLd={contract.schemaGraph ?? undefined}
+    omitTitle={true}
+    omitDescription={true}
+  />
+
+  <div
+    class="sl-theme-root"
+    data-ps-platform-theme="sales"
+    data-ps-route-kind={contract.routeKind}
+    data-testid="platform-theme-sales"
+  >
+    {!isFocused && (
+      <div class="sl-authority-bar" data-testid="sales-authority-bar">
+        <div class="ps-container sl-authority-inner">
+          <span class="sl-authority-pill">
+            <span class="sl-authority-dot" aria-hidden="true"></span>
+            {affiliationLabel ?? contract.shell.business.name}
+          </span>
+          {contract.shell.business.city && (
+            <p class="sl-authority-meta">
+              Area layanan: {contract.shell.business.city}
+              {contract.shell.business.weekdayHours
+                ? ` · ${contract.shell.business.weekdayHours}`
+                : ""}
+            </p>
+          )}
+        </div>
+      </div>
+    )}
+
+    <slot />
+  </div>
+
+  <slot name="floating" slot="floating" />
+</DefaultLayout>

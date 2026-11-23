@@ -1,0 +1,130 @@
+---
+import {
+  filterExpiredTourDeparturesAtRender,
+  filterExpiredTourDeparturesInSectionsAtRender,
+  type BlueprintTourDepartureRow,
+} from "@punyasitus/core/presets/blueprints";
+import type {
+  BlogLatestSectionConfig,
+  HeroVariant,
+  SectionOfferingItem,
+} from "@punyasitus/core/theme/index";
+import type { PageAssemblyMode } from "../../../core/section-registry.ts";
+import DefaultSectionRenderer from "../../default/sections/SectionRenderer.astro";
+
+export interface FactSheetRow {
+  readonly label: string;
+  readonly value: string;
+}
+
+export interface Props {
+  readonly sections: unknown;
+  readonly themeId?: string;
+  readonly routePath?: string;
+  readonly pageSlug?: string | null;
+  readonly isHomepage?: boolean;
+  readonly mode?: PageAssemblyMode;
+  readonly businessCategory?: string | null;
+  readonly heroVariant?: HeroVariant;
+  readonly primaryOrigin?: string;
+  readonly fallbackOfferings?: readonly SectionOfferingItem[];
+  readonly fallbackPosts?: BlogLatestSectionConfig["posts"];
+  readonly fallbackBusiness?: {
+    readonly address?: string | null;
+    readonly weekdayHours?: string | null;
+    readonly holidayHours?: string | null;
+    readonly phone?: string | null;
+    readonly whatsappE164?: string | null;
+    readonly email?: string | null;
+    readonly mapsUrl?: string | null;
+  };
+  readonly aiFactSheetHeading?: string;
+  readonly aiFactSheetRows?: readonly FactSheetRow[];
+  readonly tourDepartures?: readonly BlueprintTourDepartureRow[];
+  readonly renderNow?: Date | string;
+}
+
+const {
+  sections,
+  aiFactSheetHeading,
+  aiFactSheetRows = [],
+  tourDepartures = [],
+  renderNow,
+  ...restProps
+} = Astro.props;
+
+// Render-time auto-hide for expired tour/Umrah departures (REQ-093, REQ-095)
+const safeSections = Array.isArray(sections)
+  ? filterExpiredTourDeparturesInSectionsAtRender(
+      sections as readonly { readonly type?: string; readonly config?: Record<string, unknown> }[],
+      renderNow,
+    )
+  : sections;
+
+const activeDepartures = filterExpiredTourDeparturesAtRender(tourDepartures, renderNow);
+---
+
+<div class="tr-sections-stack" data-testid="travel-sections">
+  <DefaultSectionRenderer
+    {...restProps}
+    sections={safeSections}
+    themeId={restProps.themeId ?? "travel"}
+  />
+
+  {(aiFactSheetRows.length > 0 || activeDepartures.length > 0) && (
+    <section
+      class="ps-section"
+      aria-label={aiFactSheetHeading ?? "Informasi Paket & Jadwal Keberangkatan Aktif"}
+      data-testid="ai-fact-sheet-dl"
+    >
+      <div class="ps-container">
+        <div class="ps-section-header">
+          <p class="ps-eyebrow">Fakta Terstruktur</p>
+          <h2 class="ps-section-title">
+            {aiFactSheetHeading ?? "Informasi Paket & Jadwal Keberangkatan Aktif"}
+          </h2>
+        </div>
+
+        <div class="ps-prose">
+          {aiFactSheetRows.length > 0 && (
+            <dl>
+              {aiFactSheetRows.map((row) => (
+                <>
+                  <dt>{row.label}</dt>
+                  <dd>{row.value}</dd>
+                </>
+              ))}
+            </dl>
+          )}
+
+          {activeDepartures.length > 0 && (
+            <table data-testid="travel-active-departures-table">
+              <thead>
+                <tr>
+                  <th scope="col">Paket</th>
+                  <th scope="col">Tanggal Berangkat</th>
+                  <th scope="col">Durasi</th>
+                  <th scope="col">Maskapai</th>
+                  <th scope="col">Hotel</th>
+                  <th scope="col">Harga/Pax</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activeDepartures.map((row) => (
+                  <tr data-departure-date={row.departureDate}>
+                    <td>{row.packageName}</td>
+                    <td>{row.departureDate}</td>
+                    <td>{row.durationLabel}</td>
+                    <td>{row.airline}</td>
+                    <td>{row.hotelSummary}</td>
+                    <td>{row.priceIdrLabel}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </section>
+  )}
+</div>

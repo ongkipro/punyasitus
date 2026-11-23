@@ -1,0 +1,84 @@
+---
+import "./styles/theme.css";
+import {
+  filterExpiredTourDeparturesAtRender,
+  type BlueprintTourDepartureRow,
+} from "@punyasitus/core/presets/blueprints";
+import SEOHead from "../../components/SEOHead.astro";
+import type { PublicThemeRouteShellContract } from "../../core/theme-registry.ts";
+import DefaultLayout from "../default/Layout.astro";
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly pageTitle?: string;
+  readonly pageDescription?: string;
+  readonly skKemenagPpiu?: string | null;
+  readonly tourDepartures?: readonly BlueprintTourDepartureRow[];
+  readonly renderNow?: Date | string;
+}
+
+const {
+  contract,
+  pageTitle,
+  pageDescription,
+  skKemenagPpiu = null,
+  tourDepartures = [],
+  renderNow,
+} = Astro.props;
+const isFocused = contract.shell.layoutMode === "focused";
+const cleanPpiu = skKemenagPpiu?.trim() || null;
+const activeDepartures = filterExpiredTourDeparturesAtRender(tourDepartures, renderNow);
+---
+
+<DefaultLayout
+  shell={contract.shell}
+  pageTitle={pageTitle}
+  pageDescription={pageDescription}
+  currentPath={contract.pathname}
+  privacyPolicyUrl={contract.consent.privacyPolicyUrl}
+  showConsent={contract.consent.required}
+  vendorScripts={contract.consent.vendorScripts}
+  mapEmbed={contract.consent.mapEmbed}
+  initialCookieHeader={contract.consent.initialCookieHeader}
+  headerCtaLabel={contract.headerCtaLabel}
+  headerCtaHref={contract.headerCtaHref}
+>
+  <SEOHead
+    slot="head"
+    metadata={contract.seoMetadata}
+    jsonLd={contract.schemaGraph ?? undefined}
+    omitTitle={true}
+    omitDescription={true}
+  />
+
+  <div
+    class="tr-theme-root"
+    data-ps-platform-theme="travel"
+    data-ps-route-kind={contract.routeKind}
+    data-active-departures-count={String(activeDepartures.length)}
+    data-testid="platform-theme-travel"
+  >
+    {!isFocused && (
+      <div class="tr-trust-ribbon" data-testid="travel-trust-ribbon">
+        <div class="ps-container tr-trust-inner">
+          <span class="tr-trust-title">
+            {cleanPpiu
+              ? `${contract.shell.business.name} · SK Kemenag PPIU/PIHK ${cleanPpiu}`
+              : `${contract.shell.business.name} · Biro Perjalanan & Paket Wisata`}
+          </span>
+          <ul class="tr-trust-items">
+            <li>Rincian Paket &amp; Jadwal Keberangkatan</li>
+            {activeDepartures.length > 0 && (
+              <li>{activeDepartures.length} Jadwal Aktif</li>
+            )}
+            {contract.shell.business.city && <li>{contract.shell.business.city}</li>}
+          </ul>
+        </div>
+      </div>
+    )}
+
+    <slot />
+  </div>
+
+  <slot name="floating" slot="floating" />
+</DefaultLayout>

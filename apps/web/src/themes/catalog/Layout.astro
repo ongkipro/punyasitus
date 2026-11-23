@@ -1,0 +1,65 @@
+---
+import "./styles/theme.css";
+import SEOHead from "../../components/SEOHead.astro";
+import type { PublicThemeRouteShellContract } from "../../core/theme-registry.ts";
+import DefaultLayout from "../default/Layout.astro";
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly pageTitle?: string;
+  readonly pageDescription?: string;
+}
+
+const { contract, pageTitle, pageDescription } = Astro.props;
+const isFocused = contract.shell.layoutMode === "focused";
+---
+
+<DefaultLayout
+  shell={contract.shell}
+  pageTitle={pageTitle}
+  pageDescription={pageDescription}
+  currentPath={contract.pathname}
+  privacyPolicyUrl={contract.consent.privacyPolicyUrl}
+  showConsent={contract.consent.required}
+  vendorScripts={contract.consent.vendorScripts}
+  mapEmbed={contract.consent.mapEmbed}
+  initialCookieHeader={contract.consent.initialCookieHeader}
+  headerCtaLabel={contract.headerCtaLabel}
+  headerCtaHref={contract.headerCtaHref}
+>
+  <SEOHead
+    slot="head"
+    metadata={contract.seoMetadata}
+    jsonLd={contract.schemaGraph ?? undefined}
+    omitTitle={true}
+    omitDescription={true}
+  />
+
+  <div
+    class="ct-theme-root"
+    data-ps-platform-theme="catalog"
+    data-ps-route-kind={contract.routeKind}
+    data-testid="platform-theme-catalog"
+  >
+    {!isFocused && (
+      <div class="ct-spec-bar" data-testid="catalog-spec-bar">
+        <div class="ps-container ct-spec-inner">
+          <span>
+            Katalog Produk <strong>{contract.shell.business.name}</strong> — Informasi &amp; pemesanan melalui WhatsApp
+          </span>
+          <ul class="ct-spec-tags">
+            <li class="ct-spec-tag">Ecer &amp; Grosir</li>
+            <li class="ct-spec-tag">Tanya Stok Langsung</li>
+            {contract.shell.business.city && (
+              <li class="ct-spec-tag">{contract.shell.business.city}</li>
+            )}
+          </ul>
+        </div>
+      </div>
+    )}
+
+    <slot />
+  </div>
+
+  <slot name="floating" slot="floating" />
+</DefaultLayout>

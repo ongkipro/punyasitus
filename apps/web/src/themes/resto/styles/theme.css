@@ -1,0 +1,127 @@
+/*
+ * PunyaSitus Platform Theme: `resto` — F&B & Multi-Branch Offline Outlets
+ * Warm Terracotta & Paper-Cream Hospitality (0 KiB JS, WCAG AA >= 4.5:1)
+ */
+
+[data-ps-platform-theme="resto"] {
+  --rs-primary: var(--ps-brand-primary, #9a3412);
+  --rs-secondary: var(--ps-brand-secondary, #14532d);
+  --rs-on-primary: var(--ps-brand-on-primary, #ffffff);
+  --rs-surface: var(--ps-surface, #fffdf9);
+  --rs-surface-muted: var(--ps-surface-muted, #f7f2ea);
+  --rs-ink: var(--ps-ink, #1f1712);
+  --rs-ink-muted: var(--ps-ink-muted, #5c4d42);
+  --rs-border: var(--ps-border, #e5dacb);
+  --rs-radius: var(--ps-radius, 10px);
+  background-color: var(--rs-surface);
+  color: var(--rs-ink);
+  overflow-x: clip;
+}
+
+/* Operating Hours & Outlet Hospitality Bar */
+[data-ps-platform-theme="resto"] .rs-hospitality-bar {
+  background-color: var(--rs-surface-muted);
+  border-bottom: 1px solid var(--rs-border);
+  padding-block: 0.625rem;
+}
+
+[data-ps-platform-theme="resto"] .rs-hospitality-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.25rem;
+  font-size: 0.875rem;
+}
+
+[data-ps-platform-theme="resto"] .rs-hospitality-name {
+  font-weight: 700;
+  color: var(--rs-primary);
+}
+
+[data-ps-platform-theme="resto"] .rs-hospitality-hours {
+  margin: 0;
+  color: var(--rs-ink-muted);
+  font-size: 0.8125rem;
+}
+
+/* Warm Menu & Multi-Branch Hospitality Framing */
+[data-ps-platform-theme="resto"] .ps-hero {
+  background-color: var(--rs-surface-muted);
+  border-top: 3px solid var(--rs-primary);
+  border-bottom: 1px solid var(--rs-border);
+}
+
+[data-ps-platform-theme="resto"] .ps-eyebrow {
+  color: var(--rs-secondary);
+}
+
+[data-ps-platform-theme="resto"] .ps-card {
+  border: 1px solid var(--rs-border);
+  border-radius: var(--rs-radius);
+  background-color: var(--rs-surface);
+}
+
+[data-ps-platform-theme="resto"] .ps-offering-price {
+  color: var(--rs-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-ps-platform-theme="resto"] .ps-prose dl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 1rem 0 1.5rem;
+  border: 1px solid var(--rs-border);
+  border-left: 3px solid var(--rs-primary);
+  border-radius: var(--rs-radius);
+  overflow: hidden;
+  background-color: var(--rs-surface);
+}
+
+@media (min-width: 640px) {
+  [data-ps-platform-theme="resto"] .ps-prose dl {
+    grid-template-columns: minmax(11rem, 34%) minmax(0, 1fr);
+  }
+}
+
+[data-ps-platform-theme="resto"] .ps-prose dt {
+  padding: 0.6875rem 0.875rem;
+  background-color: var(--rs-surface-muted);
+  border-bottom: 1px solid var(--rs-border);
+  font-weight: 700;
+  font-size: 0.875rem;
+  color: var(--rs-ink);
+}
+
+[data-ps-platform-theme="resto"] .ps-prose dd {
+  margin: 0;
+  padding: 0.6875rem 0.875rem;
+  border-bottom: 1px solid var(--rs-border);
+  font-size: 0.9375rem;
+  color: var(--rs-ink-muted);
+}
+
+[data-ps-platform-theme="resto"] .ps-prose table {
+  border: 1px solid var(--rs-border);
+  background-color: var(--rs-surface);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-ps-platform-theme="resto"] .ps-prose thead th {
+  background-color: var(--rs-surface-muted);
+  color: var(--rs-ink);
+  border-color: var(--rs-border);
+}
+
+[data-ps-platform-theme="resto"] .ps-cta-box {
+  background-color: var(--rs-primary);
+  border-top: 3px solid var(--rs-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ps-platform-theme="resto"] * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

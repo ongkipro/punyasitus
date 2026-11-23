@@ -1,0 +1,63 @@
+---
+import "./styles/theme.css";
+import SEOHead from "../../components/SEOHead.astro";
+import type { PublicThemeRouteShellContract } from "../../core/theme-registry.ts";
+import DefaultLayout from "../default/Layout.astro";
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly pageTitle?: string;
+  readonly pageDescription?: string;
+  readonly showroomNote?: string | null;
+}
+
+const { contract, pageTitle, pageDescription, showroomNote = null } = Astro.props;
+const isFocused = contract.shell.layoutMode === "focused";
+---
+
+<DefaultLayout
+  shell={contract.shell}
+  pageTitle={pageTitle}
+  pageDescription={pageDescription}
+  currentPath={contract.pathname}
+  privacyPolicyUrl={contract.consent.privacyPolicyUrl}
+  showConsent={contract.consent.required}
+  vendorScripts={contract.consent.vendorScripts}
+  mapEmbed={contract.consent.mapEmbed}
+  initialCookieHeader={contract.consent.initialCookieHeader}
+  headerCtaLabel={contract.headerCtaLabel}
+  headerCtaHref={contract.headerCtaHref}
+>
+  <SEOHead
+    slot="head"
+    metadata={contract.seoMetadata}
+    jsonLd={contract.schemaGraph ?? undefined}
+    omitTitle={true}
+    omitDescription={true}
+  />
+
+  <div
+    class="dl-theme-root"
+    data-ps-platform-theme="dealer"
+    data-ps-route-kind={contract.routeKind}
+    data-testid="platform-theme-dealer"
+  >
+    {!isFocused && (
+      <div class="dl-showroom-bar" data-testid="dealer-showroom-bar">
+        <div class="ps-container dl-showroom-inner">
+          <span class="dl-showroom-title">{contract.shell.business.name} · Katalog Kendaraan</span>
+          <p class="dl-showroom-meta">
+            {showroomNote ??
+              (contract.shell.business.city
+                ? `Informasi Unit & Spesifikasi · ${contract.shell.business.city}`
+                : "Informasi Unit & Spesifikasi")}
+          </p>
+        </div>
+      </div>
+    )}
+
+    <slot />
+  </div>
+
+  <slot name="floating" slot="floating" />
+</DefaultLayout>
