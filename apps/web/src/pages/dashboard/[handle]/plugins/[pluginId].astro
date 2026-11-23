@@ -1,0 +1,120 @@
+---
+import { isBuiltinPluginId } from "@punyasitus/core/plugins/index";
+import { getActiveTenantPluginEntitlement } from "@punyasitus/db/plugins/index";
+import { getRegisteredPlugin } from "@/core/plugin-registry";
+import { listTenantPluginsForAdmin, resolveActivePluginForTenant } from "@/core/plugin-runtime";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { PluginDetailClient } from "./_PluginDetailClient";
+import { neutralPluginNotFoundResponse, resolvePluginAdminServerContext } from "./_server-context";
+
+const resolved = await resolvePluginAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+const ctx = resolved.ctx;
+
+const rawPluginId = (Astro.params.pluginId ?? "").trim().toLowerCase();
+if (!rawPluginId || isBuiltinPluginId(rawPluginId)) {
+  return neutralPluginNotFoundResponse();
+}
+
+const registered = getRegisteredPlugin(rawPluginId);
+if (!registered) {
+  return neutralPluginNotFoundResponse();
+}
+
+// Verify PLATFORM_DB entitlement BEFORE any plugin-scoped TenantStore queries
+const entitlement = await getActiveTenantPluginEntitlement(
+  ctx.platformDb,
+  ctx.tenantId,
+  registered.manifest.id,
+);
+if (!entitlement) {
+  if (registered.manifest.visibility === "private_client") {
+    return neutralPluginNotFoundResponse();
+  }
+  return new Response("Situs belum memiliki lisensi aktif untuk plugin ini.", {
+    status: 403,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "private, no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const runtimeDeps = {
+  platformDb: ctx.platformDb,
+  tenantStore: ctx.tenantStore,
+  resolveTenantDb: () => ctx.tenantDb,
+};
+const tenantSnapshot = {
+  id: ctx.tenantId,
+  handle: ctx.handle,
+  name: ctx.workspaceName,
+  status: ctx.permissions.tenantStatus,
+};
+
+const allItems = await listTenantPluginsForAdmin(runtimeDeps, tenantSnapshot);
+const item = allItems.find((entry) => entry.id === registered.manifest.id);
+if (!item || !item.installed) {
+  return neutralPluginNotFoundResponse();
+}
+
+let adminState: Record<string, unknown> | null = null;
+const activeResolution = await resolveActivePluginForTenant(
+  runtimeDeps,
+  tenantSnapshot,
+  registered.manifest.id,
+);
+if (activeResolution.active && registered.adminSlots?.loadState) {
+  adminState = await registered.adminSlots.loadState({
+    tenant: tenantSnapshot,
+    actorUserId: ctx.userId,
+    actorRole: ctx.permissions.role,
+    config: activeResolution.installed.config,
+    db: activeResolution.scopedDb,
+  });
+}
+---
+
+<DashboardLayout
+  title={`${item.name} — Plugin — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="plugins"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <PluginDetailClient
+    client:load
+    basePath={ctx.basePath}
+    apiUrl={`/api/tenants/${encodeURIComponent(ctx.handle)}/plugins/${encodeURIComponent(item.id)}`}
+    plugin={{
+      id: item.id,
+      name: item.name,
+      description: item.description,
+      version: item.version,
+      visibility: item.visibility,
+      tablePrefix: item.tablePrefix,
+      permissions: item.permissions,
+      enabled: item.enabled,
+      schemaVersion: item.schemaVersion,
+      config: item.config,
+    }}
+    configFields={registered.adminSlots?.configFields ?? []}
+    adminState={adminState}
+    permissions={{
+      roleLabel: ctx.permissions.roleLabel,
+      isLocked: ctx.permissions.isLocked,
+      canManagePlugins: ctx.permissions.canManagePlugins,
+    }}
+  />
+</DashboardLayout>

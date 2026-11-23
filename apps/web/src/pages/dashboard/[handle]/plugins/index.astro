@@ -1,0 +1,56 @@
+---
+import { listTenantPluginsForAdmin } from "@/core/plugin-runtime";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { PluginStorefrontClient } from "./_PluginStorefrontClient";
+import { resolvePluginAdminServerContext } from "./_server-context";
+
+const resolved = await resolvePluginAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+const ctx = resolved.ctx;
+
+const items = await listTenantPluginsForAdmin(
+  {
+    platformDb: ctx.platformDb,
+    tenantStore: ctx.tenantStore,
+    resolveTenantDb: () => ctx.tenantDb,
+  },
+  {
+    id: ctx.tenantId,
+    handle: ctx.handle,
+    name: ctx.workspaceName,
+    status: ctx.permissions.tenantStatus,
+  },
+);
+---
+
+<DashboardLayout
+  title={`Plugin — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="plugins"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <PluginStorefrontClient
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    apiBaseUrl={`/api/tenants/${encodeURIComponent(ctx.handle)}/plugins`}
+    initialItems={items}
+    permissions={{
+      role: ctx.permissions.role,
+      roleLabel: ctx.permissions.roleLabel,
+      isLocked: ctx.permissions.isLocked,
+      canManagePlugins: ctx.permissions.canManagePlugins,
+    }}
+  />
+</DashboardLayout>
