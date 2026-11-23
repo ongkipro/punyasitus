@@ -1,0 +1,72 @@
+---
+import {
+  composePublicSeoHead,
+  type ComposePublicSeoHeadInput,
+} from "@punyasitus/core/seo/local-entity";
+import { generateOpenGraphMetadata, type SocialMetadataDto } from "@punyasitus/core/og-generator";
+import type { SchemaGraphDocument } from "@punyasitus/core/schema-generator";
+import type { SearchAppearanceSettings, VerificationTokensConfig } from "@punyasitus/core/seo/editor";
+
+/**
+ * Single Public `<head>` & Schema.org Authority Component (`PublicSeoHead.astro`; TASK-053, REQ-054).
+ *
+ * Delegates directly to `composePublicSeoHead()` -> `renderSeoHeadHtml()` (TASK-016) +
+ * `renderVerificationMetaTags()` (TASK-052) + RSS `<link rel="alternate">` (PLAN §15.7) +
+ * the single safely escaped `@graph` JSON-LD block (`generateSchemaGraph()`, TASK-015).
+ *
+ * Pair with `<Layout managedHead={true}>` so every public page emits:
+ * - Exactly ONE `<title>`
+ * - At most ONE `<meta name="description">`
+ * - Exactly ONE `<meta name="robots">`
+ * - At most ONE `<link rel="canonical">`
+ * - At most ONE `<script type="application/ld+json">` (`@graph`)
+ * - Zero second head/schema authority, zero admin CSS, zero client JS.
+ */
+
+export interface Props {
+  readonly metadata?: SocialMetadataDto;
+  readonly schemaGraph?: SchemaGraphDocument | null;
+  readonly seoAutopilotEnabled?: boolean;
+  readonly publishedVerificationTokens?: VerificationTokensConfig | null;
+  readonly blogEnabled?: boolean;
+  readonly siteName?: string;
+  readonly searchAppearance?: SearchAppearanceSettings | null;
+  readonly templateValues?: ComposePublicSeoHeadInput["templateValues"];
+}
+
+const {
+  metadata,
+  schemaGraph = null,
+  seoAutopilotEnabled = true,
+  publishedVerificationTokens = null,
+  blogEnabled = false,
+  siteName,
+  searchAppearance = null,
+  templateValues,
+} = Astro.props;
+
+const safeMetadata: SocialMetadataDto =
+  metadata ??
+  generateOpenGraphMetadata({
+    seo: {
+      surface: "error",
+      routeKind: "error_404",
+      pathname: "/",
+      tenant: null,
+    },
+    siteName: siteName || "PunyaSitus",
+  });
+
+const composed = composePublicSeoHead({
+  metadata: safeMetadata,
+  schemaGraph,
+  seoAutopilotEnabled,
+  publishedVerificationTokens,
+  blogEnabled,
+  siteName: siteName || safeMetadata.og.siteName,
+  searchAppearance,
+  templateValues,
+});
+---
+
+<Fragment set:html={composed.html} />

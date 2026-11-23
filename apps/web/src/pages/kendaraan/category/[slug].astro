@@ -1,5 +1,6 @@
 ---
 import { env } from "cloudflare:workers";
+import { enrichPublicOfferingCategoryArchiveResult } from "../../../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
@@ -25,10 +26,14 @@ if (result.kind === "response") {
 }
 
 applyPublicRouteResponseMeta(Astro.response, result.http);
+const enriched =
+  result.kind === "offering_category_archive"
+    ? await enrichPublicOfferingCategoryArchiveResult(result, deps)
+    : null;
 ---
 
 {result.kind === "not_found" ? (
   <PublicNotFoundView result={result} />
 ) : (
-  <OfferingCategoryArchiveView result={result} />
+  <OfferingCategoryArchiveView result={result} headProps={enriched?.head ?? null} />
 )}

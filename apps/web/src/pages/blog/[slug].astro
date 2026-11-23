@@ -2,7 +2,9 @@
 import { env } from "cloudflare:workers";
 import "../../themes/default/sections/sections.css";
 import "../layanan/_public-pages.css";
-import SEOHead from "../../components/SEOHead.astro";
+import { formatAuthorSameAsLabel } from "@punyasitus/core/seo/local-entity";
+import PublicSeoHead from "../../components/seo/PublicSeoHead.astro";
+import { enrichPublicBlogDetailResult } from "../../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
@@ -26,6 +28,24 @@ if (result.kind === "response") {
 }
 
 applyPublicRouteResponseMeta(Astro.response, result.http);
+const enriched =
+  result.kind === "blog_detail" ? await enrichPublicBlogDetailResult(result, deps) : null;
+const authorProfile = enriched?.authorProfile ?? null;
+const displayAuthorName =
+  authorProfile?.name ?? (result.kind === "blog_detail" ? result.post.authorName ?? "" : "");
+const authorInitials =
+  displayAuthorName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part.charAt(0).toUpperCase())
+    .join("") || "TR";
+const blogIndexHref = enriched ? enriched.blogIndexHref : result.kind === "blog_detail" && result.shell.site.blogEnabled ? "/blog" : null;
+const catalogCta = enriched?.catalogCta ?? null;
+const relatedPostsToRender =
+  enriched?.validatedRelatedPosts ?? (result.kind === "blog_detail" ? result.relatedPosts : []);
+const linkedCategoryNames = new Set((enriched?.categoryLinks ?? []).map((c) => c.name));
+const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
 ---
 
 {result.kind === "not_found" ? (
@@ -35,15 +55,20 @@ applyPublicRouteResponseMeta(Astro.response, result.http);
     shell={result.shell}
     pageTitle={result.pageTitle}
     pageDescription={result.seoMetadata.description || undefined}
+    managedHead={true}
     currentPath={result.currentPath}
     initialCookieHeader={Astro.request.headers.get("cookie")}
   >
-    <SEOHead
+    <PublicSeoHead
       slot="head"
-      metadata={result.seoMetadata}
-      jsonLd={result.schemaGraph ?? undefined}
-      omitTitle={true}
-      omitDescription={Boolean(result.seoMetadata.description)}
+      metadata={enriched?.head.metadata ?? result.seoMetadata}
+      schemaGraph={enriched?.head.schemaGraph ?? result.schemaGraph}
+      seoAutopilotEnabled={enriched?.head.seoAutopilotEnabled ?? false}
+      publishedVerificationTokens={enriched?.head.publishedVerificationTokens ?? null}
+      blogEnabled={enriched?.head.blogEnabled ?? result.shell.site.blogEnabled}
+      siteName={enriched?.head.siteName ?? result.shell.site.title}
+      searchAppearance={enriched?.head.searchAppearance ?? null}
+      templateValues={enriched?.head.templateValues}
     />
 
     <article class="ps-article-shell" data-testid="blog-detail-article" data-post-slug={result.post.slug}>
@@ -51,12 +76,27 @@ applyPublicRouteResponseMeta(Astro.response, result.http);
         <header class="ps-article-header">
           <PublicBreadcrumbs items={result.breadcrumbs} />
 
-          {result.post.categoryNames.length > 0 && (
-            <div class="ps-offering-badges">
-              {result.post.categoryNames.map((cat) => (
-                <span class="ps-badge">{cat}</span>
+          {enriched && enriched.categoryLinks.length > 0 ? (
+            <div class="ps-offering-badges" data-testid="blog-category-links">
+              {enriched.categoryLinks.map((cat) => (
+                <a href={cat.href} class="ps-badge ps-badge--link">
+                  {cat.name}
+                </a>
               ))}
+              {result.post.categoryNames
+                .filter((name) => !linkedCategoryNames.has(name))
+                .map((cat) => (
+                  <span class="ps-badge">{cat}</span>
+                ))}
             </div>
+          ) : (
+            result.post.categoryNames.length > 0 && (
+              <div class="ps-offering-badges">
+                {result.post.categoryNames.map((cat) => (
+                  <span class="ps-badge">{cat}</span>
+                ))}
+              </div>
+            )
           )}
 
           <h1 class="ps-route-title" data-testid="blog-detail-title">{result.post.title}</h1>
@@ -64,9 +104,9 @@ applyPublicRouteResponseMeta(Astro.response, result.http);
           {result.post.excerpt && <p class="ps-route-lead">{result.post.excerpt}</p>}
 
           <div class="ps-article-meta" data-testid="blog-detail-meta">
-            {result.post.authorName && (
+            {(authorProfile?.name ?? result.post.authorName) && (
               <span>
-                Oleh <strong>{result.post.authorName}</strong>
+                Oleh <strong>{authorProfile?.name ?? result.post.authorName}</strong>
               </span>
             )}
             {result.post.publishedDateLabel && (
@@ -100,46 +140,108 @@ applyPublicRouteResponseMeta(Astro.response, result.http);
         <div
           class:list={[
             "ps-article-layout",
-            result.post.showToc && "ps-article-layout--with-toc",
+            (enriched?.showToc ?? result.post.showToc) && "ps-article-layout--with-toc",
           ]}
         >
           <div>
             <div
               class="ps-prose"
               data-testid="blog-detail-body"
-              set:html={result.post.sanitizedHtml}
+              set:html={enriched?.sanitizedHtmlWithAnchors ?? result.post.sanitizedHtml}
             />
 
-            {result.post.tagNames.length > 0 && (
-              <div class="ps-tags-row" aria-label="Tag artikel">
-                {result.post.tagNames.map((tag) => (
-                  <span class="ps-badge">#{tag}</span>
+            {enriched && enriched.tagLinks.length > 0 ? (
+              <div class="ps-tags-row" aria-label="Tag artikel" data-testid="blog-tag-links">
+                {enriched.tagLinks.map((tag) => (
+                  <a href={tag.href} class="ps-badge ps-badge--link">
+                    #{tag.name}
+                  </a>
                 ))}
+                {result.post.tagNames
+                  .filter((name) => !linkedTagNames.has(name))
+                  .map((tag) => (
+                    <span class="ps-badge">#{tag}</span>
+                  ))}
               </div>
+            ) : (
+              result.post.tagNames.length > 0 && (
+                <div class="ps-tags-row" aria-label="Tag artikel">
+                  {result.post.tagNames.map((tag) => (
+                    <span class="ps-badge">#{tag}</span>
+                  ))}
+                </div>
+              )
             )}
 
-            {result.post.authorName && (
-              <aside class="ps-author-box" aria-label="Tentang penulis">
-                <p class="ps-author-name">{result.post.authorName}</p>
-                <p class="ps-author-bio">
-                  {result.post.authorBio ??
-                    `Tim redaksi dan pengelola informasi resmi ${result.shell.business.name}.`}
-                </p>
+            {(authorProfile?.name ?? result.post.authorName) && (
+              <aside class="ps-author-box" aria-label="Tentang penulis" data-testid="blog-author-box">
+                <div class="ps-author-box__row">
+                  {authorProfile?.avatar ? (
+                    <img
+                      src={authorProfile.avatar.url}
+                      alt={authorProfile.avatar.alt}
+                      width={authorProfile.avatar.width}
+                      height={authorProfile.avatar.height}
+                      loading="lazy"
+                      decoding="async"
+                      class="ps-author-avatar"
+                    />
+                  ) : (
+                    <span class="ps-author-avatar-fallback" aria-hidden="true">
+                      {authorInitials}
+                    </span>
+                  )}
+                  <div class="ps-author-box__body">
+                    <p class="ps-author-name" data-testid="blog-author-name">
+                      {authorProfile?.name ?? result.post.authorName}
+                    </p>
+                    <p class="ps-author-bio" data-testid="blog-author-bio">
+                      {authorProfile?.bio ??
+                        result.post.authorBio ??
+                        `Tim redaksi dan pengelola informasi resmi ${result.shell.business.name}.`}
+                    </p>
+                    {authorProfile && authorProfile.sameAs.length > 0 && (
+                      <ul class="ps-author-links" aria-label="Tautan profil penulis" data-testid="blog-author-links">
+                        {authorProfile.sameAs.map((href) => (
+                          <li>
+                            <a
+                              href={href}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              class="ps-author-sameas-link"
+                            >
+                              {formatAuthorSameAsLabel(href)}
+                            </a>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </div>
               </aside>
             )}
 
-            <div class="ps-actions" style="margin-top: 1.5rem;">
-              <a href="/blog" class="ps-btn ps-btn--secondary" data-testid="blog-back-link">
-                &larr; Kembali ke Semua Artikel
-              </a>
-            </div>
+            {(blogIndexHref || catalogCta) && (
+              <div class="ps-actions" style="margin-top: 1.5rem;">
+                {blogIndexHref && (
+                  <a href={blogIndexHref} class="ps-btn ps-btn--secondary" data-testid="blog-back-link">
+                    &larr; Kembali ke Semua Artikel
+                  </a>
+                )}
+                {catalogCta && (
+                  <a href={catalogCta.href} class="ps-btn ps-btn--primary" data-testid="blog-services-link">
+                    {catalogCta.label}
+                  </a>
+                )}
+              </div>
+            )}
           </div>
 
-          {result.post.showToc && (
+          {(enriched?.showToc ?? result.post.showToc) && (
             <nav class="ps-toc" aria-label="Daftar isi" data-testid="blog-detail-toc">
               <h2 class="ps-toc-heading">Daftar Isi</h2>
               <ol class="ps-toc-list">
-                {result.post.toc.map((entry) => (
+                {(enriched?.toc ?? result.post.toc).map((entry) => (
                   <li class={`ps-toc-item--h${entry.level}`}>
                     <a href={`#${entry.id}`} class="ps-toc-link">
                       {entry.text}
@@ -153,20 +255,22 @@ applyPublicRouteResponseMeta(Astro.response, result.http);
       </div>
     </article>
 
-    {result.relatedPosts.length > 0 && (
+    {relatedPostsToRender.length > 0 && (
       <section class="ps-related-section" aria-labelledby="related-posts-heading">
         <div class="ps-container">
           <header class="ps-section-header ps-section-header--row">
             <h2 id="related-posts-heading" class="ps-section-title">
               Artikel Lainnya
             </h2>
-            <a href="/blog" class="ps-btn ps-btn--secondary">
-              Semua Artikel
-            </a>
+            {blogIndexHref && (
+              <a href={blogIndexHref} class="ps-btn ps-btn--secondary">
+                Semua Artikel
+              </a>
+            )}
           </header>
 
           <div class="ps-archive-grid">
-            {result.relatedPosts.map((related) => (
+            {relatedPostsToRender.map((related) => (
               <article class="ps-card ps-post-card" data-post-slug={related.slug}>
                 <div class="ps-post-body">
                   {related.categoryName && (

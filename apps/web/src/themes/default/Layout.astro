@@ -18,6 +18,12 @@ export interface Props {
   readonly shell: TenantShellData;
   readonly pageTitle?: string;
   readonly pageDescription?: string;
+  /**
+   * When `true`, `<slot name="head" />` (e.g. `<PublicSeoHead>`) is the single authoritative
+   * emitter for `<title>`, `<meta name="description">`, `<meta name="robots">`, canonical, OG,
+   * verification meta, RSS discovery, and JSON-LD `@graph` — preventing duplicate head tags.
+   */
+  readonly managedHead?: boolean;
   readonly layoutMode?: ShellLayoutMode;
   readonly currentPath?: string;
   readonly privacyPolicyUrl?: string;
@@ -37,6 +43,7 @@ const {
   shell,
   pageTitle,
   pageDescription,
+  managedHead = false,
   layoutMode,
   currentPath = "/",
   privacyPolicyUrl = "/kebijakan-privasi",
@@ -140,9 +147,9 @@ function isCurrentNavPath(href: string, activePath: string): boolean {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>{resolvedTitle}</title>
-    {resolvedDescription && <meta name="description" content={resolvedDescription} />}
-    {(shell.isPreview || shell.site.siteVisibility === "noindex") && (
+    {!managedHead && <title>{resolvedTitle}</title>}
+    {!managedHead && resolvedDescription && <meta name="description" content={resolvedDescription} />}
+    {!managedHead && (shell.isPreview || shell.site.siteVisibility === "noindex") && (
       <meta name="robots" content="noindex, nofollow" />
     )}
     <slot name="head" />

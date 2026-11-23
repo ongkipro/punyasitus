@@ -1,5 +1,6 @@
 ---
 import { env } from "cloudflare:workers";
+import { enrichPublicBlogTaxonomyArchiveResult } from "../../../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
@@ -21,10 +22,14 @@ if (result.kind === "response") {
 }
 
 applyPublicRouteResponseMeta(Astro.response, result.http);
+const enriched =
+  result.kind === "blog_taxonomy_archive"
+    ? await enrichPublicBlogTaxonomyArchiveResult(result, deps)
+    : null;
 ---
 
 {result.kind === "not_found" ? (
   <PublicNotFoundView result={result} />
 ) : (
-  <BlogTaxonomyArchiveView result={result} />
+  <BlogTaxonomyArchiveView result={result} headProps={enriched?.head ?? null} />
 )}

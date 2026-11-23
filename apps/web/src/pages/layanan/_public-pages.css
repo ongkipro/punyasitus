@@ -529,6 +529,72 @@
   border-top: 1px solid var(--ps-border);
 }
 
+.ps-page-breadcrumbs-bar {
+  padding-block: 0.75rem;
+  border-bottom: 1px solid var(--ps-border);
+  background-color: var(--ps-surface);
+}
+
+.ps-badge--link {
+  text-decoration: none;
+  color: inherit;
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.ps-badge--link:hover,
+.ps-badge--link:focus-visible {
+  border-color: var(--ps-brand-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.ps-author-box__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.ps-author-avatar,
+.ps-author-avatar-fallback {
+  flex: 0 0 3.25rem;
+  width: 3.25rem;
+  height: 3.25rem;
+  border-radius: 999px;
+  object-fit: cover;
+}
+
+.ps-author-avatar-fallback {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--ps-brand-primary);
+  color: var(--ps-brand-on-primary);
+  font-weight: 700;
+  font-size: 0.9375rem;
+}
+
+.ps-author-box__body {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ps-author-links {
+  list-style: none;
+  margin: 0.625rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.875rem;
+}
+
+.ps-author-sameas-link {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ps-brand-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 /* Responsive Breakpoints (DESIGN.md §1: 768px, 1024px — max 3 cols) */
 @media (min-width: 768px) {
   .ps-archive-grid {

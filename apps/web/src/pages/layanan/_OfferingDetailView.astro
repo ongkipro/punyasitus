@@ -1,7 +1,11 @@
 ---
 import "../../themes/default/sections/sections.css";
 import "./_public-pages.css";
-import SEOHead from "../../components/SEOHead.astro";
+import PublicSeoHead from "../../components/seo/PublicSeoHead.astro";
+import type {
+  PublicSeoHeadProps,
+  PublishedTaxonomyChipLink,
+} from "../../components/seo/public-seo-context.ts";
 import {
   formatDateOnlyIndonesian,
   type PublicOfferingDetailRenderResult,
@@ -13,10 +17,15 @@ import PublicBreadcrumbs from "./_PublicBreadcrumbs.astro";
 
 export interface Props {
   readonly result: PublicOfferingDetailRenderResult;
+  readonly headProps?: PublicSeoHeadProps | null;
+  readonly categoryLinks?: readonly PublishedTaxonomyChipLink[];
+  readonly sanitizedDescriptionHtml?: string | null;
 }
 
-const { result } = Astro.props;
+const { result, headProps = null, categoryLinks = [], sanitizedDescriptionHtml = null } = Astro.props;
 const { descriptor, offering, relatedOfferings } = result;
+const effectiveDescriptionHtml = sanitizedDescriptionHtml ?? offering.descriptionHtml;
+const linkedCategoryNames = new Set(categoryLinks.map((c) => c.name));
 
 const serviceModeLabels: Readonly<Record<string, string>> = {
   onsite: "Di lokasi klien",
@@ -179,25 +188,43 @@ const creditTenors = offering.vehicleCreditRows[0]?.installments.map((i) => i.te
   shell={result.shell}
   pageTitle={result.pageTitle}
   pageDescription={result.seoMetadata.description || undefined}
+  managedHead={true}
   currentPath={result.currentPath}
   initialCookieHeader={Astro.request.headers.get("cookie")}
 >
-  <SEOHead
+  <PublicSeoHead
     slot="head"
-    metadata={result.seoMetadata}
-    jsonLd={result.schemaGraph ?? undefined}
-    omitTitle={true}
-    omitDescription={Boolean(result.seoMetadata.description)}
+    metadata={headProps?.metadata ?? result.seoMetadata}
+    schemaGraph={headProps?.schemaGraph ?? result.schemaGraph}
+    seoAutopilotEnabled={headProps?.seoAutopilotEnabled ?? true}
+    publishedVerificationTokens={headProps?.publishedVerificationTokens ?? null}
+    blogEnabled={headProps?.blogEnabled ?? result.shell.site.blogEnabled}
+    siteName={headProps?.siteName ?? result.shell.site.title}
+    searchAppearance={headProps?.searchAppearance ?? null}
+    templateValues={headProps?.templateValues}
   />
 
   <section class="ps-route-hero">
     <div class="ps-container ps-route-hero-inner">
       <PublicBreadcrumbs items={result.breadcrumbs} />
       <div class="ps-offering-badges">
-        <span class="ps-badge">{descriptor.singularLabel}</span>
-        {offering.categoryNames.map((cat) => (
-          <span class="ps-badge">{cat}</span>
-        ))}
+        <a href={descriptor.prefix} class="ps-badge ps-badge--link">{descriptor.singularLabel}</a>
+        {categoryLinks.length > 0 ? (
+          <>
+            {categoryLinks.map((cat) => (
+              <a href={cat.href} class="ps-badge ps-badge--link">
+                {cat.name}
+              </a>
+            ))}
+            {offering.categoryNames
+              .filter((name) => !linkedCategoryNames.has(name))
+              .map((cat) => (
+                <span class="ps-badge">{cat}</span>
+              ))}
+          </>
+        ) : (
+          offering.categoryNames.map((cat) => <span class="ps-badge">{cat}</span>)
+        )}
         {offering.badge && <span class="ps-badge ps-badge--brand">{offering.badge}</span>}
         {offering.unitStatusLabel && (
           <span class={statusBadgeClass(offering.unitStatus)} data-testid="vehicle-unit-status">
@@ -247,10 +274,10 @@ const creditTenors = offering.vehicleCreditRows[0]?.installments.map((i) => i.te
           </div>
         )}
 
-        {offering.descriptionHtml && (
+        {effectiveDescriptionHtml && (
           <section class="ps-detail-block" aria-labelledby="desc-heading">
             <h2 id="desc-heading">Deskripsi</h2>
-            <div class="ps-prose" set:html={offering.descriptionHtml} />
+            <div class="ps-prose" set:html={effectiveDescriptionHtml} />
           </section>
         )}
 

@@ -1,7 +1,7 @@
 ---
 import "../../themes/default/sections/sections.css";
 import "./_public-pages.css";
-import SEOHead from "../../components/SEOHead.astro";
+import PublicSeoHead from "../../components/seo/PublicSeoHead.astro";
 import type { PublicBrandedNotFoundResult } from "../../core/public-routes.ts";
 import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.astro";
 import Layout from "../../themes/default/Layout.astro";
@@ -17,14 +17,16 @@ const { result } = Astro.props;
   shell={result.shell}
   pageTitle={result.pageTitle}
   pageDescription={result.message}
+  managedHead={true}
   currentPath={result.currentPath}
   initialCookieHeader={Astro.request.headers.get("cookie")}
 >
-  <SEOHead
+  <PublicSeoHead
     slot="head"
     metadata={result.seoMetadata}
-    omitTitle={true}
-    omitDescription={true}
+    schemaGraph={null}
+    blogEnabled={false}
+    siteName={result.shell.site.title}
   />
 
   <section class="ps-archive-section" data-testid="public-not-found-page">
