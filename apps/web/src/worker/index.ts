@@ -9,6 +9,10 @@ import {
   DEFAULT_CRON_JOB_DEFINITIONS,
   dispatchScheduledCron,
 } from "./cron/index.ts";
+import {
+  TRUST_WATCH_CRON_JOB_DEFINITION,
+  createTrustWatchJobRegistry,
+} from "./cron/trust-watch.ts";
 import type { JobQueuePayload, PunyasitusEnv } from "./env.d.ts";
 import {
   CONTENT_PURGE_CRON_JOB_DEFINITIONS,
@@ -54,6 +58,7 @@ const WORKER_JOB_REGISTRY: DurableJobRegistry = {
   ...createDomainJobRegistry(),
   ...createSeoJobRegistry(),
   ...createPluginJobRegistry(),
+  ...createTrustWatchJobRegistry(),
   [EMAIL_DELIVERY_TOPIC]: createEmailQueueHandler({
     onOwnerSuppressionNotice(event) {
       console.warn(
@@ -103,6 +108,7 @@ export default {
       ...CONTENT_PURGE_CRON_JOB_DEFINITIONS,
       ...OFFBOARDING_CRON_JOB_DEFINITIONS,
       ...EXPORT_CRON_JOB_DEFINITIONS,
+      TRUST_WATCH_CRON_JOB_DEFINITION,
     ]);
     await sweepAllTenantsExpiredQuarantine(env, { nowMs: controller.scheduledTime });
   },

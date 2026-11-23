@@ -1,0 +1,124 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  authorizeConsoleRequest,
+  consoleNeutralNotFoundResponse,
+  DEFAULT_SECOND_FACTOR_WINDOW_MS,
+  resolveConsoleHostContext,
+} from "@punyasitus/auth/platform/index";
+import {
+  listScreeningReviews,
+  listScreeningRules,
+  listTrustWatchRuns,
+} from "@punyasitus/db/content-screening/index";
+import ConsoleLayout from "../../../layouts/ConsoleLayout.astro";
+import {
+  DEFAULT_FALLBACK_SAAS_ZONE,
+  DEFAULT_PRIMARY_SAAS_ZONE,
+} from "../../../worker/cron/trust-watch.ts";
+import { buildConsoleAbuseRuntimeEnv } from "../../api/console/abuse/_shared.ts";
+import { SharedDomainProtectionPanel } from "./_SharedDomainProtectionPanel";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const runtimeEnv = env as typeof env & {
+  readonly AUTH_SECRET?: string;
+  readonly CONSOLE_AUTH_SECRET?: string;
+  readonly SAAS_ZONE?: string;
+};
+const consoleEnv = buildConsoleAbuseRuntimeEnv(runtimeEnv);
+
+const hostCheck = resolveConsoleHostContext(Astro.request, consoleEnv);
+if (!hostCheck) {
+  return consoleNeutralNotFoundResponse();
+}
+
+const authz = await authorizeConsoleRequest(
+  Astro.request,
+  consoleEnv,
+  { action: "console.screening.view", requireStepUp: false },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  if (authz.response.status === 404) {
+    return consoleNeutralNotFoundResponse();
+  }
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>Akses Console Operasional Dibatasi</title></head><body><main><h1>Akses Console Operasional Dibatasi</h1><p>Hanya operator platform aktif dengan 2FA terverifikasi yang dapat mengelola perlindungan domain bersama.</p></main></body></html>`,
+    {
+      status: authz.response.status,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    },
+  );
+}
+
+const { actor, platformDb, nowMs, host } = authz.ctx;
+const [scrRes, trustRes, rulesRes] = await Promise.all([
+  listScreeningReviews(platformDb, { status: "all", limit: 20 }),
+  listTrustWatchRuns(platformDb, 5),
+  listScreeningRules(platformDb),
+]);
+
+const primarySaasZone = runtimeEnv.SAAS_ZONE || DEFAULT_PRIMARY_SAAS_ZONE;
+const stepUpFresh =
+  actor.twoFactorVerifiedAtMs !== null &&
+  nowMs - actor.twoFactorVerifiedAtMs <= DEFAULT_SECOND_FACTOR_WINDOW_MS;
+---
+
+<ConsoleLayout
+  title="Antrean Penyaringan Konten & Trust+"
+  workspaceSubtitle={host.host}
+  activeNavId="queues"
+  basePath="/console"
+  userDisplayName={actor.grant.name ?? actor.grant.email ?? "Operator Platform"}
+  userRoleLabel={actor.grant.role === "platform_support" ? "Dukungan Platform" : "Superadmin Platform"}
+>
+  <div class="space-y-5" data-testid="console-screening-page">
+    <section
+      data-testid="console-context-banner"
+      aria-label="Konteks akses platform"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning-border bg-warning-soft px-4 py-3 text-xs text-warning md:text-sm"
+    >
+      <p class="font-medium">
+        Console Operasional Platform — Perlindungan Domain Bersama (Trust+ &amp; Penyaringan Publikasi)
+      </p>
+      <span class="rounded border border-warning-border bg-card px-2 py-0.5 text-xs font-medium text-foreground">
+        {stepUpFresh ? "2FA Step-Up Aktif (<10m)" : "2FA Perlu Verifikasi Ulang"}
+      </span>
+    </section>
+
+    <div class="flex flex-wrap items-center gap-2">
+      <a
+        href="/console/abuse"
+        class="inline-flex min-h-11 items-center rounded-md border border-border bg-card px-3.5 text-sm font-medium text-foreground hover:bg-muted md:min-h-9"
+      >
+        ← Kembali ke Antrean Moderasi
+      </a>
+    </div>
+
+    <SharedDomainProtectionPanel
+      client:load
+      initialReviews={scrRes.items}
+      initialCounts={scrRes.counts}
+      initialLatestTrustRun={trustRes[0] ?? null}
+      initialOperatorRules={rulesRes.operatorRules}
+      builtinRulesCount={rulesRes.builtinRulesCount}
+      primarySaasZone={primarySaasZone}
+      fallbackSaasZone={DEFAULT_FALLBACK_SAAS_ZONE}
+      stepUpFresh={stepUpFresh}
+    />
+  </div>
+</ConsoleLayout>
