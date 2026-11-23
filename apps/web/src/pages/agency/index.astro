@@ -1,0 +1,352 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  agencyGatePageErrorResponse,
+  agencyNeutralNotFoundResponse,
+  authorizeAgencyRequest,
+} from "@punyasitus/auth/agency/index";
+import { getAgencyBillingOverview } from "@punyasitus/db/agencies/index";
+import { Building2Icon, PercentIcon, ReceiptTextIcon, ShieldCheckIcon } from "lucide-react";
+import AgencyLayout from "@/layouts/AgencyLayout.astro";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { resolveAgencyRuntimeEnv } from "../api/agency/_shared";
+import { AgencyEnrollmentPanel } from "./_AgencyEnrollmentPanel";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const agencyEnv = resolveAgencyRuntimeEnv(env as unknown as Record<string, unknown>);
+const authz = await authorizeAgencyRequest(
+  Astro.request,
+  agencyEnv,
+  {
+    action: "agency.page.overview",
+    requireAgencyMembership: false,
+    enforceCsrf: false,
+  },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email, name: Astro.locals.authUser.name }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  if (authz.response.status === 404) {
+    return agencyNeutralNotFoundResponse();
+  }
+  const msg =
+    authz.code === "TOTP_ENROLLMENT_REQUIRED"
+      ? "Autentikasi dua faktor (TOTP 2FA) wajib diaktifkan sebelum membuka Portal Agensi."
+      : authz.code === "TOTP_REQUIRED"
+        ? "Verifikasi kode autentikasi dua faktor (2FA) untuk melanjutkan ke Portal Agensi."
+        : "Masuk dengan akun terverifikasi untuk mengakses Portal Agensi.";
+  return agencyGatePageErrorResponse(
+    authz.response.status === 401 ? 401 : 403,
+    authz.code,
+    msg,
+  );
+}
+
+const { actor, platformDb, nowMs } = authz.ctx;
+const activeAgency = actor.activeAgency;
+const overview = activeAgency
+  ? await getAgencyBillingOverview(platformDb, activeAgency.id, { nowMs })
+  : null;
+const inviteParam = Astro.url.searchParams.get("invite") ?? "";
+
+function formatIdr(amount: number): string {
+  return `Rp ${new Intl.NumberFormat("id-ID").format(amount)}`;
+}
+
+function statusLabel(status: string): string {
+  switch (status) {
+    case "active":
+      return "Aktif";
+    case "trial":
+      return "Uji Coba";
+    case "grace":
+      return "Masa Tenggang";
+    case "locked":
+      return "Terkunci";
+    case "suspended":
+      return "Ditangguhkan";
+    default:
+      return status;
+  }
+}
+
+const navLinks = [
+  { href: "/agency", label: "Ringkasan", current: true },
+  { href: "/agency/clients", label: "Daftar Klien", current: false },
+  { href: "/agency/billing", label: "Tagihan & Kuitansi", current: false },
+];
+---
+
+<AgencyLayout
+  title={activeAgency ? `Beranda — ${activeAgency.name}` : "Pendaftaran Portal Agensi"}
+  workspaceName={activeAgency ? activeAgency.name : "Portal Agensi"}
+  workspaceSubtitle={activeAgency ? `Diskon ${activeAgency.effectiveDiscountPercent}%` : "Aktivasi Mitra Agensi"}
+  activeNavId="home"
+  basePath="/agency"
+  userDisplayName={actor.userName}
+  userRoleLabel="Admin Agensi (2FA Aktif)"
+>
+  {!overview ? (
+    <div class="space-y-5" data-testid="agency-onboarding-page">
+      <header class="space-y-1">
+        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+          Aktifkan Portal Agensi / Reseller
+        </h1>
+        <p class="text-sm text-muted-foreground">
+          Kelola situs klien dalam satu portal, atur penagihan terpusat atas nama agensi, dan
+          pantau kuota uji coba serta kuitansi PDF bernomor.
+        </p>
+      </header>
+
+      <AgencyEnrollmentPanel
+        client:load
+        userEmail={actor.userEmail}
+        userName={actor.userName}
+        initialInviteToken={inviteParam}
+      />
+    </div>
+  ) : (
+    <div class="space-y-5" data-testid="agency-overview-page" data-agency-id={overview.agency.id}>
+      <nav
+        aria-label="Navigasi Portal Agensi"
+        data-testid="agency-section-nav"
+        class="flex flex-wrap items-center gap-2 border-b border-border pb-3"
+      >
+        {navLinks.map((link) => (
+          <a
+            href={link.href}
+            aria-current={link.current ? "page" : undefined}
+            class:list={[
+              "inline-flex min-h-11 items-center rounded-md border px-3.5 text-sm font-medium transition-colors md:min-h-9",
+              link.current
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card text-foreground hover:bg-muted",
+            ]}
+          >
+            {link.label}
+          </a>
+        ))}
+      </nav>
+
+      <header class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div class="space-y-1">
+          <div class="flex flex-wrap items-center gap-2">
+            <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+              {overview.agency.name}
+            </h1>
+            <Badge variant="secondary" data-testid="agency-discount-badge" className="tabular-nums">
+              Diskon Agensi {overview.agency.effectiveDiscountPercent}%
+            </Badge>
+            <Badge variant="outline">2FA Wajib Aktif</Badge>
+          </div>
+          <p class="text-sm text-muted-foreground">
+            Ringkasan situs klien, kuota uji coba gratis, dan tagihan terpusat 100% atas nama agensi.
+          </p>
+        </div>
+
+        <a
+          href="/agency/clients"
+          data-testid="agency-overview-create-client-link"
+          class="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:opacity-90 md:min-h-9"
+        >
+          Kelola &amp; Buat Situs Klien
+        </a>
+      </header>
+
+      <section
+        aria-label="Metrik utama agensi"
+        class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+      >
+        <Card size="sm" data-testid="agency-kpi-clients">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium">Total Situs Klien</CardDescription>
+            <Building2Icon className="size-4 text-primary" aria-hidden="true" />
+          </CardHeader>
+          <CardContent className="space-y-1">
+            <p class="text-2xl font-bold text-foreground tabular-nums">
+              {overview.agency.totalClientCount}
+            </p>
+            <p class="text-xs text-muted-foreground tabular-nums">
+              {overview.agency.trialQuota.paidClientCount} klien berbayar aktif
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card size="sm" data-testid="agency-trial-cap-meter">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium">Kuota Uji Coba Gratis</CardDescription>
+            <ShieldCheckIcon className="size-4 text-primary" aria-hidden="true" />
+          </CardHeader>
+          <CardContent className="space-y-1.5">
+            {overview.agency.trialQuota.unlockedByPaidClient ? (
+              <>
+                <p class="text-2xl font-bold text-foreground">Terbuka</p>
+                <p class="text-xs text-muted-foreground">
+                  Batas 3 uji coba awal telah terbuka setelah klien berbayar pertama.
+                </p>
+              </>
+            ) : (
+              <>
+                <p class="text-2xl font-bold text-foreground tabular-nums">
+                  {overview.agency.trialQuota.unpaidTrialCount} / {overview.agency.trialQuota.unpaidTrialCap}
+                </p>
+                <p class="text-xs text-muted-foreground">
+                  Maksimal {overview.agency.trialQuota.unpaidTrialCap} uji coba sebelum 1 klien berbayar.
+                </p>
+              </>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card size="sm" data-testid="agency-kpi-discount">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium">Tarif Bulanan Agensi</CardDescription>
+            <PercentIcon className="size-4 text-primary" aria-hidden="true" />
+          </CardHeader>
+          <CardContent className="space-y-1">
+            <p class="text-2xl font-bold text-foreground tabular-nums">
+              {formatIdr(overview.pricing.discountedMonthlyIdr)}
+            </p>
+            <p class="text-xs text-muted-foreground tabular-nums">
+              Harga dasar {formatIdr(overview.pricing.baseMonthlyIdr)} · Diskon {overview.pricing.effectiveDiscountPercent}%
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card size="sm" data-testid="agency-kpi-receipts">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <CardDescription className="text-xs font-medium">Kuitansi PDF Terbit</CardDescription>
+            <ReceiptTextIcon className="size-4 text-primary" aria-hidden="true" />
+          </CardHeader>
+          <CardContent className="space-y-1">
+            <p class="text-2xl font-bold text-foreground tabular-nums">
+              {overview.receipts.length}
+            </p>
+            <p class="text-xs text-muted-foreground">
+              Seluruh pengingat &amp; kuitansi dikirim ke {overview.agency.billingEmail}
+            </p>
+          </CardContent>
+        </Card>
+      </section>
+
+      <Alert variant="info" data-testid="agency-billing-isolation-notice">
+        <ShieldCheckIcon className="size-4" aria-hidden="true" />
+        <AlertTitle>Isolasi Penagihan 100% Atas Nama Agensi</AlertTitle>
+        <AlertDescription>
+          Seluruh langganan, pengingat perpanjangan, dan kuitansi PDF situs klien dikelola melalui
+          Portal Agensi. Anggota klien (Pemilik/Admin/Editor) tidak melihat tagihan maupun menerima
+          email pembayaran. Setiap aksi agensi pada situs klien dicatat dengan identitas pengguna agensi.
+        </AlertDescription>
+      </Alert>
+
+      <Card>
+        <CardHeader className="border-b border-border">
+          <CardTitle>Situs Klien Terbaru</CardTitle>
+          <CardDescription>
+            Menampilkan situs klien yang terhubung langsung dengan agensi {overview.agency.name}.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="p-0">
+          {overview.clients.length === 0 ? (
+            <div class="space-y-3 p-6 text-sm text-muted-foreground" data-testid="agency-clients-empty">
+              <p>
+                Belum ada situs klien terdaftar. Mulai dengan membuat situs klien pertama Anda di
+                halaman Daftar Klien.
+              </p>
+              <a
+                href="/agency/clients"
+                class="inline-flex min-h-11 items-center rounded-md border border-border bg-card px-3.5 text-sm font-medium text-foreground transition-colors hover:bg-muted md:min-h-9"
+              >
+                Buka Daftar Klien
+              </a>
+            </div>
+          ) : (
+            <>
+              <div class="hidden md:block">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Nama Situs</TableHead>
+                      <TableHead>Domain</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Pembayar</TableHead>
+                      <TableHead className="text-right">Aksi</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {overview.clients.slice(0, 8).map((c) => (
+                      <TableRow>
+                        <TableCell className="font-medium text-foreground">{c.name}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">
+                          {c.primaryHost}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={c.effectiveStatus === "active" ? "default" : "secondary"}>
+                            {statusLabel(c.effectiveStatus)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">Agensi (100%)</TableCell>
+                        <TableCell className="text-right">
+                          <a
+                            href={`/agency/clients/${encodeURIComponent(c.handle)}`}
+                            class="inline-flex min-h-9 items-center rounded-md border border-border bg-card px-3 text-xs font-medium text-foreground hover:bg-muted"
+                          >
+                            Kelola Klien
+                          </a>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <ul class="divide-y divide-border md:hidden">
+                {overview.clients.slice(0, 8).map((c) => (
+                  <li class="flex flex-col gap-2 p-4">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="font-medium text-foreground">{c.name}</span>
+                      <Badge variant={c.effectiveStatus === "active" ? "default" : "secondary"}>
+                        {statusLabel(c.effectiveStatus)}
+                      </Badge>
+                    </div>
+                    <p class="font-mono text-xs text-muted-foreground">{c.primaryHost}</p>
+                    <a
+                      href={`/agency/clients/${encodeURIComponent(c.handle)}`}
+                      class="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-card px-3 text-sm font-medium text-foreground hover:bg-muted"
+                    >
+                      Kelola Klien
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  )}
+</AgencyLayout>

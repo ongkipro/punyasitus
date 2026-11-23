@@ -1,0 +1,123 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  agencyGatePageErrorResponse,
+  agencyNeutralNotFoundResponse,
+  authorizeAgencyRequest,
+} from "@punyasitus/auth/agency/index";
+import { getAgencyBillingOverview } from "@punyasitus/db/agencies/index";
+import AgencyLayout from "@/layouts/AgencyLayout.astro";
+import {
+  formatAgencyClientDto,
+  formatAgencyReceiptDto,
+  formatAgencySummaryDto,
+  resolveAgencyRuntimeEnv,
+} from "../../api/agency/_shared";
+import { AgencyBillingPanel } from "./_AgencyBillingPanel";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const agencyEnv = resolveAgencyRuntimeEnv(env as unknown as Record<string, unknown>);
+const authz = await authorizeAgencyRequest(
+  Astro.request,
+  agencyEnv,
+  {
+    action: "agency.page.billing",
+    requireAgencyMembership: true,
+    requiredPermission: "agency:billing:read",
+    enforceCsrf: false,
+  },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email, name: Astro.locals.authUser.name }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  if (authz.response.status === 404) {
+    return agencyNeutralNotFoundResponse();
+  }
+  const msg =
+    authz.code === "TOTP_ENROLLMENT_REQUIRED"
+      ? "Autentikasi dua faktor (TOTP 2FA) wajib diaktifkan untuk mengakses tagihan agensi."
+      : authz.code === "TOTP_REQUIRED"
+        ? "Verifikasi 2FA diperlukan untuk membuka tagihan agensi."
+        : "Akses penagihan agensi memerlukan keanggotaan agensi aktif.";
+  return agencyGatePageErrorResponse(
+    authz.response.status === 401 ? 401 : 403,
+    authz.code,
+    msg,
+  );
+}
+
+const { actor, platformDb, nowMs } = authz.ctx;
+const activeAgency = actor.activeAgency!;
+const overview = await getAgencyBillingOverview(platformDb, activeAgency.id, { nowMs });
+if (!overview) {
+  return agencyNeutralNotFoundResponse();
+}
+
+const preselectedTenantId = Astro.url.searchParams.get("tenantId") ?? "";
+
+const navLinks = [
+  { href: "/agency", label: "Ringkasan", current: false },
+  { href: "/agency/clients", label: "Daftar Klien", current: false },
+  { href: "/agency/billing", label: "Tagihan & Kuitansi", current: true },
+];
+---
+
+<AgencyLayout
+  title={`Tagihan & Kuitansi — ${activeAgency.name}`}
+  workspaceName={activeAgency.name}
+  workspaceSubtitle={`Diskon ${activeAgency.effectiveDiscountPercent}%`}
+  activeNavId="billing"
+  basePath="/agency"
+  userDisplayName={actor.userName}
+  userRoleLabel="Admin Agensi (2FA Aktif)"
+>
+  <div class="space-y-5" data-testid="agency-billing-page">
+    <nav
+      aria-label="Navigasi Portal Agensi"
+      data-testid="agency-section-nav"
+      class="flex flex-wrap items-center gap-2 border-b border-border pb-3"
+    >
+      {navLinks.map((link) => (
+        <a
+          href={link.href}
+          aria-current={link.current ? "page" : undefined}
+          class:list={[
+            "inline-flex min-h-11 items-center rounded-md border px-3.5 text-sm font-medium transition-colors md:min-h-9",
+            link.current
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border bg-card text-foreground hover:bg-muted",
+          ]}
+        >
+          {link.label}
+        </a>
+      ))}
+    </nav>
+
+    <header class="space-y-1">
+      <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+        Tagihan &amp; Kuitansi Terpusat Agensi
+      </h1>
+      <p class="text-sm text-muted-foreground">
+        Kelola pembayaran langganan situs klien, pantau diskon agensi, dan unduh kuitansi PDF resmi.
+      </p>
+    </header>
+
+    <AgencyBillingPanel
+      client:load
+      agency={formatAgencySummaryDto(overview.agency)}
+      pricing={overview.pricing}
+      clients={overview.clients.map(formatAgencyClientDto)}
+      receipts={overview.receipts.map(formatAgencyReceiptDto)}
+      preselectedTenantId={preselectedTenantId}
+    />
+  </div>
+</AgencyLayout>
