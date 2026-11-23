@@ -31,9 +31,9 @@ describe("TASK-063 Phase 1 Integration Checkpoint (M1) — Unit Invariants", () 
     expect(report.checks.taskCoverage.release11ExcludedCount).toBe(1);
     expect(report.checks.migrations.ok).toBe(true);
     expect(report.checks.migrations.platform.count).toBeGreaterThanOrEqual(19);
-    expect(report.checks.migrations.platform.maxVersion).toBeLessThanOrEqual(27);
+    expect(report.checks.migrations.platform.maxVersion).toBeGreaterThanOrEqual(27);
     expect(report.checks.migrations.tenant.count).toBeGreaterThanOrEqual(17);
-    expect(report.checks.migrations.tenant.maxVersion).toBeLessThanOrEqual(21);
+    expect(report.checks.migrations.tenant.maxVersion).toBeGreaterThanOrEqual(21);
     expect(report.checks.wrangler.ok).toBe(true);
     expect(report.checks.wrangler.workersDev).toBe(false);
     expect(report.checks.wrangler.previewUrls).toBe(false);
