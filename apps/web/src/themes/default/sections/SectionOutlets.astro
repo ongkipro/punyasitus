@@ -1,0 +1,781 @@
+---
+import {
+  buildBranchTelHref,
+  buildBranchWhatsAppHref,
+  formatBranchFullAddress,
+  formatBranchPhoneDisplay,
+  formatBranchTimezoneLabel,
+  MAX_BRANCHES_PER_TENANT,
+  normalizeBranchMapsUrl,
+  validateBranchCoordinates,
+} from "@punyasitus/core/branches/index";
+import type {
+  OutletWeekdayKey,
+  SchemaOpeningHoursSpecInput,
+  SchemaSpecialOpeningHoursSpecInput,
+} from "@punyasitus/core/schema-generator";
+
+/**
+ * Pure HTML-First Multi-Outlet Directory & Consent-Gated Maps Section
+ * (`SectionOutlets.astro`; REQ-029, REQ-039, REQ-054, TASK-019).
+ *
+ * Hard Invariants:
+ * - Zero-JS safe: works cleanly with JavaScript disabled (static address card,
+ *   weekly & holiday hours, phone/WhatsApp CTA, and Google Maps directions link).
+ * - Renders ONLY published and active outlets (capped at 10) in canonical order
+ *   (`isPrimary DESC, sortOrder ASC, id ASC`).
+ * - BEFORE visitor consent (`maps: true`): renders ZERO map `<iframe>` elements and
+ *   makes ZERO third-party map requests; shows only static card + external directions link.
+ * - AFTER visitor consent (`maps: true`): mounts a sandboxed map iframe per outlet and
+ *   unmounts immediately upon consent withdrawal.
+ * - Exact visible-fact parity with LocalBusiness JSON-LD (zero fabricated ratings/reviews/hours).
+ */
+
+export interface PublicOutletSectionItem {
+  readonly id?: number | string | null;
+  readonly slug?: string | null;
+  readonly name: string;
+  readonly address: string;
+  readonly city?: string | null;
+  readonly province?: string | null;
+  readonly postalCode?: string | null;
+  readonly phone?: string | null;
+  readonly whatsappE164?: string | null;
+  readonly mapsUrl?: string | null;
+  readonly directionsUrl?: string | null;
+  readonly mapEmbedUrl?: string | null;
+  readonly latitude?: number | null;
+  readonly longitude?: number | null;
+  readonly weeklyHours?: readonly SchemaOpeningHoursSpecInput[] | null;
+  readonly holidayHours?: readonly SchemaSpecialOpeningHoursSpecInput[] | null;
+  readonly weekdayHoursText?: string | null;
+  readonly holidayHoursText?: string | null;
+  readonly timezone?: string | null;
+  readonly sortOrder?: number | null;
+  readonly isPrimary?: boolean | null;
+  readonly status?: "draft" | "published" | null;
+  readonly active?: boolean | null;
+}
+
+export interface Props {
+  readonly id?: string;
+  readonly eyebrow?: string | null;
+  readonly heading?: string;
+  readonly subheading?: string | null;
+  readonly businessName?: string | null;
+  readonly outlets: readonly PublicOutletSectionItem[];
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+  readonly callLabel?: string;
+  readonly whatsappLabel?: string;
+  readonly directionsLabel?: string;
+  readonly emptyMessage?: string;
+}
+
+const WEEKDAY_ORDER: readonly OutletWeekdayKey[] = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+];
+
+const WEEKDAY_LABELS_ID: Readonly<Record<OutletWeekdayKey, string>> = {
+  monday: "Senin",
+  tuesday: "Selasa",
+  wednesday: "Rabu",
+  thursday: "Kamis",
+  friday: "Jumat",
+  saturday: "Sabtu",
+  sunday: "Minggu",
+};
+
+const WEEKDAY_INDEX: ReadonlyMap<OutletWeekdayKey, number> = new Map(
+  WEEKDAY_ORDER.map((d, i) => [d, i]),
+);
+
+function hasControlChars(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+function isStrictGoogleMapsUrl(rawUrl: string): boolean {
+  if (!rawUrl || hasControlChars(rawUrl)) return false;
+  let u: URL;
+  try {
+    u = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== "https:" || u.port !== "" || u.username !== "" || u.password !== "") {
+    return false;
+  }
+  const host = u.hostname.toLowerCase();
+  const pathname = u.pathname.toLowerCase();
+  // Reject Google open redirectors
+  if (/^(?:www\.)?google\.[a-z]{2,}(?:\.[a-z]{2,})?$/.test(host) && (pathname === "/url" || pathname === "/maps/url")) {
+    return false;
+  }
+  if (host === "maps.app.goo.gl") return true;
+  if (host === "goo.gl") return pathname === "/maps" || pathname.startsWith("/maps/");
+  if (/^maps\.google\.[a-z]{2,}(?:\.[a-z]{2,})?$/.test(host)) return true;
+  if (/^(?:www\.)?google\.[a-z]{2,}(?:\.[a-z]{2,})?$/.test(host)) {
+    return pathname === "/maps" || pathname.startsWith("/maps/");
+  }
+  return false;
+}
+
+function resolveSafeDirectionsHref(outlet: PublicOutletSectionItem, fullAddress: string): string | null {
+  const candidates = [outlet.directionsUrl, outlet.mapsUrl];
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const checked = normalizeBranchMapsUrl(raw);
+    if (checked.ok && checked.value && isStrictGoogleMapsUrl(checked.value)) {
+      try {
+        const u = new URL(checked.value);
+        if (u.pathname.toLowerCase().startsWith("/maps/dir")) {
+          return checked.value;
+        }
+      } catch {
+        // continue
+      }
+    }
+  }
+  const coords = validateBranchCoordinates(outlet.latitude, outlet.longitude);
+  if (coords.ok && coords.latitude !== null && coords.longitude !== null) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${coords.latitude},${coords.longitude}`;
+  }
+  for (const raw of candidates) {
+    if (!raw) continue;
+    const checked = normalizeBranchMapsUrl(raw);
+    if (checked.ok && checked.value && isStrictGoogleMapsUrl(checked.value)) {
+      return checked.value;
+    }
+  }
+  if (fullAddress.trim().length > 0) {
+    return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(fullAddress)}`;
+  }
+  return null;
+}
+
+function isStrictGoogleMapsEmbedUrl(rawUrl: string): string | null {
+  if (!rawUrl || hasControlChars(rawUrl) || rawUrl.includes("..")) {
+    return null;
+  }
+  const checked = normalizeBranchMapsUrl(rawUrl);
+  if (!checked.ok || !checked.value) {
+    return null;
+  }
+  let u: URL;
+  try {
+    u = new URL(checked.value);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:" || u.port !== "" || u.username !== "" || u.password !== "") {
+    return null;
+  }
+  const host = u.hostname.toLowerCase();
+  const pathname = u.pathname.toLowerCase();
+  if (pathname.includes("..") || pathname === "/url" || pathname === "/maps/url") {
+    return null;
+  }
+  // Allow ONLY strict Google Maps embed endpoints (never root-relative or arbitrary origins)
+  if (host === "maps.google.com" && pathname === "/maps" && u.searchParams.get("output") === "embed") {
+    return checked.value;
+  }
+  if (
+    host === "www.google.com" &&
+    (pathname === "/maps/embed" || pathname.startsWith("/maps/embed/v1/"))
+  ) {
+    return checked.value;
+  }
+  return null;
+}
+
+function resolveSafeMapEmbedUrl(outlet: PublicOutletSectionItem): string | null {
+  if (typeof outlet.mapEmbedUrl === "string" && outlet.mapEmbedUrl.trim().length > 0) {
+    const strict = isStrictGoogleMapsEmbedUrl(outlet.mapEmbedUrl.trim());
+    if (strict) {
+      return strict;
+    }
+  }
+  const coords = validateBranchCoordinates(outlet.latitude, outlet.longitude);
+  if (coords.ok && coords.latitude !== null && coords.longitude !== null) {
+    return `https://maps.google.com/maps?q=${coords.latitude},${coords.longitude}&z=15&output=embed`;
+  }
+  return null;
+}
+
+function sortVisibleOutlets(items: readonly PublicOutletSectionItem[]): PublicOutletSectionItem[] {
+  return items
+    .filter(
+      (item) =>
+        item &&
+        item.active !== false &&
+        item.status !== "draft" &&
+        typeof item.name === "string" &&
+        item.name.trim().length > 0,
+    )
+    .sort((a, b) => {
+      const pDiff = Number(Boolean(b.isPrimary)) - Number(Boolean(a.isPrimary));
+      if (pDiff !== 0) return pDiff;
+      const sA = typeof a.sortOrder === "number" ? a.sortOrder : 0;
+      const sB = typeof b.sortOrder === "number" ? b.sortOrder : 0;
+      if (sA !== sB) return sA - sB;
+      return Number(a.id ?? 0) - Number(b.id ?? 0);
+    })
+    .slice(0, MAX_BRANCHES_PER_TENANT);
+}
+
+const {
+  id = "outlets",
+  eyebrow = "Direktori Gerai",
+  heading = "Lokasi & Jam Operasional Gerai",
+  subheading = "Temukan alamat lengkap, jadwal operasional mingguan, jadwal hari libur, serta petunjuk arah ke setiap gerai kami.",
+  businessName = null,
+  outlets = [],
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+  callLabel = "Telepon",
+  whatsappLabel = "WhatsApp Gerai",
+  directionsLabel = "Petunjuk Arah",
+  emptyMessage = "Belum ada gerai aktif yang dipublikasikan saat ini.",
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+const visibleOutlets = sortVisibleOutlets(outlets);
+---
+
+<section
+  id={id}
+  class:list={["ps-section", "ps-outlets-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type="outlets"
+  data-ps-outlets-root
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header">
+      {eyebrow && <p class="ps-eyebrow">{eyebrow}</p>}
+      {isFirstSection ? (
+        <h1 id={headingId} class="ps-section-title">
+          {heading}
+        </h1>
+      ) : (
+        <h2 id={headingId} class="ps-section-title">
+          {heading}
+        </h2>
+      )}
+      {subheading && <p class="ps-section-subtitle">{subheading}</p>}
+    </header>
+
+    {visibleOutlets.length > 0 ? (
+      <div
+        class:list={[
+          "ps-outlets-grid",
+          visibleOutlets.length === 1 && "ps-outlets-grid--single",
+        ]}
+        data-testid="outlets-card-grid"
+      >
+        {visibleOutlets.map((outlet, idx) => {
+          const fullAddress = formatBranchFullAddress({
+            address: outlet.address,
+            city: outlet.city,
+            province: outlet.province,
+            postalCode: outlet.postalCode,
+          });
+          const telHref = buildBranchTelHref(outlet.phone);
+          const phoneDisplay = formatBranchPhoneDisplay(outlet.phone);
+          const waHref = buildBranchWhatsAppHref(
+            { name: outlet.name, whatsappE164: outlet.whatsappE164 },
+            businessName,
+          );
+          const directionsHref = resolveSafeDirectionsHref(outlet, fullAddress);
+          const embedUrl = isPreview ? null : resolveSafeMapEmbedUrl(outlet);
+          const tzLabel = formatBranchTimezoneLabel(outlet.timezone);
+          const cardKey = outlet.slug || String(outlet.id ?? idx + 1);
+          const sortedWeekly = [...(outlet.weeklyHours ?? [])].sort(
+            (a, b) => (WEEKDAY_INDEX.get(a.day) ?? 0) - (WEEKDAY_INDEX.get(b.day) ?? 0),
+          );
+          const holidayEntries = [...(outlet.holidayHours ?? [])].sort((a, b) =>
+            a.date.localeCompare(b.date),
+          );
+
+          return (
+            <article
+              class:list={["ps-card", "ps-outlet-card", outlet.isPrimary && "ps-outlet-card--primary"]}
+              data-testid={`outlet-card-${cardKey}`}
+              data-outlet-slug={outlet.slug ?? undefined}
+              data-outlet-primary={outlet.isPrimary ? "true" : "false"}
+            >
+              <div class="ps-outlet-card__header">
+                <div class="ps-outlet-card__badges">
+                  {outlet.isPrimary ? (
+                    <span class="ps-badge ps-badge--brand">Gerai Utama</span>
+                  ) : (
+                    <span class="ps-badge">Gerai</span>
+                  )}
+                  <span class="ps-outlet-tz">{tzLabel}</span>
+                </div>
+                <h3 class="ps-card-title" data-outlet-field="name">
+                  {outlet.name}
+                </h3>
+              </div>
+
+              <dl class="ps-contact-dl ps-outlet-dl">
+                {fullAddress && (
+                  <div>
+                    <dt>Alamat</dt>
+                    <dd data-outlet-field="address">{fullAddress}</dd>
+                  </div>
+                )}
+
+                {phoneDisplay && (
+                  <div>
+                    <dt>Telepon</dt>
+                    <dd data-outlet-field="phone">
+                      {isPreview || !telHref ? (
+                        phoneDisplay
+                      ) : (
+                        <a href={telHref} class="ps-outlet-inline-link">
+                          {phoneDisplay}
+                        </a>
+                      )}
+                    </dd>
+                  </div>
+                )}
+
+                {sortedWeekly.length > 0 ? (
+                  <div>
+                    <dt>Jam Operasional Mingguan</dt>
+                    <dd data-outlet-field="weeklyHours">
+                      <ul class="ps-outlet-hours-list">
+                        {sortedWeekly.map((entry) => (
+                          <li class="ps-outlet-hours-row" data-weekday={entry.day}>
+                            <span class="ps-outlet-hours-day">{WEEKDAY_LABELS_ID[entry.day]}</span>
+                            <span class:list={["ps-outlet-hours-time", entry.closed && "ps-outlet-hours-closed"]}>
+                              {entry.closed ? "Tutup" : `${entry.open ?? ""}–${entry.close ?? ""}`}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                ) : outlet.weekdayHoursText ? (
+                  <div>
+                    <dt>Jam Operasional</dt>
+                    <dd data-outlet-field="weekdayHours">{outlet.weekdayHoursText}</dd>
+                  </div>
+                ) : null}
+
+                {holidayEntries.length > 0 ? (
+                  <div>
+                    <dt>Jam Operasional Hari Libur</dt>
+                    <dd data-outlet-field="holidayHours">
+                      <ul class="ps-outlet-hours-list">
+                        {holidayEntries.map((holiday) => (
+                          <li class="ps-outlet-hours-row" data-holiday-date={holiday.date}>
+                            <span class="ps-outlet-hours-day">
+                              {holiday.date} · {holiday.label}
+                            </span>
+                            <span class:list={["ps-outlet-hours-time", holiday.closed && "ps-outlet-hours-closed"]}>
+                              {holiday.closed ? "Tutup" : `${holiday.open ?? ""}–${holiday.close ?? ""}`}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </dd>
+                  </div>
+                ) : outlet.holidayHoursText ? (
+                  <div>
+                    <dt>Jam Hari Libur</dt>
+                    <dd data-outlet-field="holidayHours">{outlet.holidayHoursText}</dd>
+                  </div>
+                ) : null}
+              </dl>
+
+              {embedUrl && (
+                <div class="ps-outlet-map-region" data-testid={`outlet-map-region-${cardKey}`}>
+                  <div
+                    class="ps-outlet-map-placeholder"
+                    data-outlet-map-placeholder
+                    data-testid={`outlet-map-placeholder-${cardKey}`}
+                  >
+                    <p class="ps-outlet-map-notice">
+                      Peta interaktif belum dimuat untuk menjaga privasi Anda. Gunakan tombol
+                      Petunjuk Arah atau aktifkan izin Peta untuk memuat peta di sini.
+                    </p>
+                    <button
+                      type="button"
+                      class="ps-btn ps-btn--secondary ps-outlet-map-consent-btn"
+                      data-outlet-enable-maps
+                      data-testid={`outlet-enable-maps-${cardKey}`}
+                    >
+                      Izinkan &amp; muat peta interaktif
+                    </button>
+                    <p
+                      class="ps-outlet-map-status"
+                      role="status"
+                      aria-live="polite"
+                      data-outlet-map-status
+                      hidden
+                    />
+                  </div>
+                  <div
+                    class="ps-outlet-map-slot"
+                    data-outlet-map-slot
+                    data-map-embed-url={embedUrl}
+                    data-map-title={`Peta lokasi ${outlet.name}`}
+                    data-map-key={cardKey}
+                    data-testid={`outlet-map-slot-${cardKey}`}
+                    hidden
+                  />
+                </div>
+              )}
+
+              {(directionsHref || waHref || telHref) && (
+                <div class="ps-actions ps-outlet-card__actions">
+                  {directionsHref && (
+                    <a
+                      href={isPreview ? undefined : directionsHref}
+                      class:list={["ps-btn ps-btn--primary", isPreview && "ps-btn--inert"]}
+                      aria-disabled={isPreview ? "true" : undefined}
+                      target={isPreview ? undefined : "_blank"}
+                      rel={isPreview ? undefined : "noopener noreferrer"}
+                      data-outlet-action="directions"
+                      data-testid={`outlet-directions-${cardKey}`}
+                    >
+                      {directionsLabel}
+                    </a>
+                  )}
+                  {waHref && (
+                    <a
+                      href={isPreview ? undefined : waHref}
+                      class:list={["ps-btn ps-btn--whatsapp", isPreview && "ps-btn--inert"]}
+                      aria-disabled={isPreview ? "true" : undefined}
+                      target={isPreview ? undefined : "_blank"}
+                      rel={isPreview ? undefined : "noopener noreferrer"}
+                      data-outlet-action="whatsapp"
+                      data-testid={`outlet-whatsapp-${cardKey}`}
+                    >
+                      {whatsappLabel}
+                    </a>
+                  )}
+                  {telHref && (
+                    <a
+                      href={isPreview ? undefined : telHref}
+                      class:list={["ps-btn ps-btn--secondary", isPreview && "ps-btn--inert"]}
+                      aria-disabled={isPreview ? "true" : undefined}
+                      data-outlet-action="call"
+                      data-testid={`outlet-call-${cardKey}`}
+                    >
+                      {callLabel}
+                    </a>
+                  )}
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    ) : (
+      <p class="ps-empty-state" data-testid="outlets-empty-state">
+        {emptyMessage}
+      </p>
+    )}
+  </div>
+</section>
+
+<style>
+  .ps-outlets-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: clamp(1rem, 2.2vw, 1.5rem);
+  }
+
+  .ps-outlet-card {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 0;
+  }
+
+  .ps-outlet-card--primary {
+    border-color: var(--ps-brand-primary);
+  }
+
+  .ps-outlet-card__header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .ps-outlet-card__badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .ps-outlet-tz {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-outlet-dl {
+    gap: 0.75rem;
+  }
+
+  .ps-outlet-inline-link {
+    color: var(--ps-brand-primary);
+    font-weight: 600;
+    text-decoration: underline;
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  .ps-outlet-hours-list {
+    list-style: none;
+    margin: 0.25rem 0 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .ps-outlet-hours-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    padding: 0.25rem 0;
+    border-bottom: 1px dashed var(--ps-border);
+  }
+
+  .ps-outlet-hours-row:last-child {
+    border-bottom: 0;
+  }
+
+  .ps-outlet-hours-day {
+    font-weight: 500;
+    color: var(--ps-ink);
+  }
+
+  .ps-outlet-hours-time {
+    font-variant-numeric: tabular-nums;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-outlet-hours-closed {
+    color: #9a3412;
+    font-weight: 600;
+  }
+
+  .ps-outlet-map-region {
+    min-width: 0;
+  }
+
+  .ps-outlet-map-placeholder {
+    background: var(--ps-surface-muted);
+    border: 1px dashed var(--ps-border);
+    border-radius: var(--ps-radius, 8px);
+    padding: 0.875rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .ps-outlet-map-notice {
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-outlet-map-consent-btn {
+    align-self: flex-start;
+    min-height: 44px;
+  }
+
+  .ps-outlet-map-slot[hidden],
+  .ps-outlet-map-placeholder[hidden],
+  .ps-outlet-map-status[hidden] {
+    display: none !important;
+  }
+
+  .ps-outlet-map-status {
+    margin: 0;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--ps-ink);
+  }
+
+  .ps-outlet-map-slot :global(iframe) {
+    display: block;
+    width: 100%;
+    min-height: 240px;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius, 8px);
+  }
+
+  .ps-outlet-card__actions {
+    margin-top: auto;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--ps-border);
+  }
+
+  .ps-outlet-card__actions .ps-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 44px;
+    text-align: center;
+  }
+
+  @media (min-width: 48rem) {
+    .ps-outlets-grid:not(.ps-outlets-grid--single) {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+</style>
+
+<script is:inline>
+  (() => {
+    const roots = document.querySelectorAll("[data-ps-outlets-root]");
+    if (!roots.length) return;
+
+    function hasMapsConsentFromCookie() {
+      const raw = document.cookie || "";
+      if (!raw) return false;
+      const parts = raw.split(";");
+      for (const part of parts) {
+        const eq = part.indexOf("=");
+        if (eq <= 0) continue;
+        const name = part.slice(0, eq).trim();
+        if (name !== "__Host-ps_consent") continue;
+        try {
+          const parsed = JSON.parse(decodeURIComponent(part.slice(eq + 1).trim()));
+          return Boolean(parsed && parsed.maps === true);
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    }
+
+    function readCurrentMapsConsent() {
+      const winConsent = window.__punyasitusConsent;
+      if (winConsent && typeof winConsent.maps === "boolean") {
+        return Boolean(winConsent.maps);
+      }
+      return hasMapsConsentFromCookie();
+    }
+
+    function syncAllOutletMaps(allowed) {
+      for (const root of roots) {
+        const regions = root.querySelectorAll(".ps-outlet-map-region");
+        for (const region of regions) {
+          const placeholder = region.querySelector("[data-outlet-map-placeholder]");
+          const slot = region.querySelector("[data-outlet-map-slot]");
+          if (!(slot instanceof HTMLElement)) continue;
+
+          const embedUrl = slot.dataset.mapEmbedUrl || "";
+          const title = slot.dataset.mapTitle || "Peta Lokasi Gerai";
+          const key = slot.dataset.mapKey || "outlet";
+
+          if (allowed && embedUrl) {
+            if (placeholder instanceof HTMLElement) placeholder.hidden = true;
+            slot.hidden = false;
+            if (!slot.querySelector("iframe[data-outlet-map-iframe]")) {
+              const iframe = document.createElement("iframe");
+              iframe.src = embedUrl;
+              iframe.title = title;
+              iframe.loading = "lazy";
+              iframe.referrerPolicy = "no-referrer";
+              iframe.setAttribute("referrerpolicy", "no-referrer");
+              iframe.setAttribute("sandbox", "allow-scripts allow-same-origin allow-popups");
+              iframe.setAttribute("data-outlet-map-iframe", "true");
+              iframe.setAttribute("data-testid", `outlet-map-iframe-${key}`);
+              slot.appendChild(iframe);
+            }
+          } else {
+            slot.replaceChildren();
+            slot.hidden = true;
+            if (placeholder instanceof HTMLElement) placeholder.hidden = false;
+          }
+        }
+      }
+    }
+
+    function requestEnableMapsConsent(triggerBtn) {
+      const consentRoot = document.querySelector("[data-ps-consent-root]");
+      if (consentRoot instanceof HTMLElement) {
+        const directBtn = consentRoot.querySelector('[data-action="enable-maps"]');
+        if (directBtn instanceof HTMLButtonElement) {
+          directBtn.click();
+          return;
+        }
+        const form = consentRoot.querySelector("[data-consent-form]");
+        if (form instanceof HTMLFormElement) {
+          const mapsBox = form.querySelector('input[name="maps"]');
+          if (mapsBox instanceof HTMLInputElement) {
+            mapsBox.checked = true;
+          }
+          form.dispatchEvent(new Event("submit", { cancelable: true, bubbles: true }));
+          return;
+        }
+        const openPrefsBtn = consentRoot.querySelector('[data-action="open-preferences"]');
+        if (openPrefsBtn instanceof HTMLButtonElement) {
+          openPrefsBtn.focus();
+          openPrefsBtn.click();
+          return;
+        }
+      }
+      // Fail closed: NEVER synthesize consent or mount third-party iframes without persisted consent control
+      const placeholder = triggerBtn instanceof HTMLElement
+        ? triggerBtn.closest("[data-outlet-map-placeholder]")
+        : null;
+      const statusEl = placeholder ? placeholder.querySelector("[data-outlet-map-status]") : null;
+      if (statusEl instanceof HTMLElement) {
+        statusEl.textContent =
+          "Kontrol izin privasi tidak tersedia di halaman ini sehingga peta interaktif tetap dinonaktifkan. Gunakan tombol Petunjuk Arah untuk membuka lokasi secara langsung.";
+        statusEl.hidden = false;
+      }
+    }
+
+    for (const root of roots) {
+      if (!(root instanceof HTMLElement) || root.dataset.psOutletsInit === "1") continue;
+      root.dataset.psOutletsInit = "1";
+      root.addEventListener("click", (event) => {
+        const btn =
+          event.target instanceof Element
+            ? event.target.closest("[data-outlet-enable-maps]")
+            : null;
+        if (btn instanceof HTMLButtonElement) {
+          requestEnableMapsConsent(btn);
+        }
+      });
+    }
+
+    window.addEventListener("punyasitus:consent-change", (event) => {
+      const detail = event && "detail" in event ? event.detail : null;
+      const allowed = Boolean(detail && detail.preferences && detail.preferences.maps === true);
+      syncAllOutletMaps(allowed);
+    });
+
+    syncAllOutletMaps(readCurrentMapsConsent());
+  })();
+</script>

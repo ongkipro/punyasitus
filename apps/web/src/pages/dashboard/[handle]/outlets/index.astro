@@ -1,0 +1,81 @@
+---
+import { env } from "cloudflare:workers";
+import { listOutletsForAdmin } from "@punyasitus/db/outlets/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { OutletsManagerClient } from "./_OutletsManagerClient";
+import {
+  evaluateOutletsSsrGate,
+  OUTLETS_SSR_SECURITY_HEADERS,
+  serviceUnavailableOutletsSsrResponse,
+} from "./_ssr-gate";
+
+// Verify operator_hold fail-closed from PLATFORM_DB before any TenantStore read
+let operatorHold = false;
+const preAuthMember = Astro.locals.authorizedTenantMember;
+if (preAuthMember) {
+  if (!env.PLATFORM_DB) {
+    return serviceUnavailableOutletsSsrResponse();
+  }
+  try {
+    const holdRow = await env.PLATFORM_DB.prepare(
+      "SELECT operator_hold FROM tenants WHERE id = ? LIMIT 1",
+    )
+      .bind(preAuthMember.tenantId)
+      .first<{ readonly operator_hold: number | null }>();
+    operatorHold = Number(holdRow?.operator_hold ?? 0) === 1;
+  } catch {
+    return serviceUnavailableOutletsSsrResponse();
+  }
+}
+
+const gate = evaluateOutletsSsrGate({
+  rawHandle: Astro.params.handle,
+  surface: Astro.locals.surface,
+  isLocalLoopback: Astro.locals.isLocalLoopback,
+  isLocalEnv: env.APP_ENV === "local",
+  authUser: Astro.locals.authUser,
+  authorized: preAuthMember,
+  operatorHold,
+});
+
+if (!gate.ok) {
+  return gate.response;
+}
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+Astro.response.headers.set("Cache-Control", OUTLETS_SSR_SECURITY_HEADERS["Cache-Control"]);
+Astro.response.headers.set("X-Robots-Tag", OUTLETS_SSR_SECURITY_HEADERS["X-Robots-Tag"]);
+
+const { ctx } = resolved;
+const initialOutlets = await listOutletsForAdmin(ctx.tenantDb);
+---
+
+<DashboardLayout
+  title={`Direktori Gerai — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="settings"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <OutletsManagerClient
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    canManageOutlets={gate.canManageOutlets}
+    initialData={initialOutlets}
+  />
+</DashboardLayout>
