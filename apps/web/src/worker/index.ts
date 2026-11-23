@@ -20,6 +20,7 @@ import {
   createMediaJobRegistry,
   sweepAllTenantsExpiredQuarantine,
 } from "./queues/media/index.ts";
+import { createPluginJobRegistry } from "./queues/plugins/index.ts";
 import { createRetentionJobRegistry } from "./queues/retention/index.ts";
 import { createSeoJobRegistry } from "./queues/seo/index.ts";
 
@@ -35,6 +36,7 @@ const WORKER_JOB_REGISTRY: DurableJobRegistry = {
   ...createMediaJobRegistry(),
   ...createDomainJobRegistry(),
   ...createSeoJobRegistry(),
+  ...createPluginJobRegistry(),
   [EMAIL_DELIVERY_TOPIC]: createEmailQueueHandler({
     onOwnerSuppressionNotice(event) {
       console.warn(
