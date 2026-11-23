@@ -9,6 +9,10 @@ import {
   type ThemeTokens,
   type ThemeVariants,
 } from "@punyasitus/core/theme/index";
+import {
+  getStyleVariantsForTheme,
+  type ThemeStyleVariantDefinition,
+} from "@punyasitus/core/theme/variants";
 
 /**
  * Platform Theme Manifest: `resto` — F&B, Culinary & Multi-Branch Offline Outlets
@@ -88,6 +92,7 @@ export const RESTO_THEME_MANIFEST = Object.freeze({
   }),
   defaultTokens: DEFAULT_TOKENS,
   defaultVariants: DEFAULT_VARIANTS,
+  styleVariants: getStyleVariantsForTheme(RESTO_THEME_ID) as readonly ThemeStyleVariantDefinition[],
   palette: Object.freeze({
     surface: "#fffdf9",
     surfaceMuted: "#f7f2ea",

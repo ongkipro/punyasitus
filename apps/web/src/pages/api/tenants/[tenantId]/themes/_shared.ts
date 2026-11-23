@@ -8,6 +8,11 @@ import {
   type PermissionAction,
 } from "@punyasitus/auth";
 import {
+  BillingConflictError,
+  BillingNotFoundError,
+  BillingValidationError,
+} from "@punyasitus/core/billing/index";
+import {
   PublicationAtomicError,
   PublicationNotFoundError,
   PublicationValidationError,
@@ -43,6 +48,17 @@ import {
   type ThemeTokens,
 } from "@punyasitus/core/theme/index";
 import {
+  ThemeNotEntitledError,
+  ThemeStoreDomainError,
+  getDefaultStyleVariantForTheme,
+  getStyleVariantById,
+  getStyleVariantsForTheme,
+  renderStyleVariantCssVariables,
+  verifyStyleVariantContrast,
+  type ThemeStoreErrorCode,
+  type ThemeStyleVariantDefinition,
+} from "@punyasitus/core/theme/variants";
+import {
   createTenantDb,
   openTenantStoreStub,
   type TenantStoreNamespaceLike,
@@ -54,6 +70,13 @@ import {
   type TenantPlatformThemeContext,
   type TenantThemeLibraryDbState,
 } from "@punyasitus/db/themes/index";
+import {
+  activateStoreThemeOrVariantAtomically,
+  listTenantThemeStoreState,
+  loadTenantActiveStyleVariantId,
+  type ThemeStoreOrderRecord,
+  type ThemeStoreReceiptRecord,
+} from "@punyasitus/db/themes/store/index";
 import {
   renderSemanticPreviewShellFallback,
   renderTenantDraftPreview,
@@ -73,6 +96,11 @@ import {
   resolveSurfaceAuthSecret,
   type AuthRuntimeEnv,
 } from "../../../../../middleware/auth.ts";
+import {
+  CURATED_PREMIUM_THEMES,
+  getCuratedPremiumTheme,
+  type PremiumThemeManifestEntry,
+} from "../../../../../themes/premium/catalog.ts";
 
 /**
  * Shared authorization, strict DTO validation, grant filtering, compatibility evaluation,
@@ -100,10 +128,14 @@ export const THEMES_FORBIDDEN_SELECTOR_KEYS = [
 
 const FORBIDDEN_SELECTOR_KEY_SET: ReadonlySet<string> = new Set(THEMES_FORBIDDEN_SELECTOR_KEYS);
 
-export const THEMES_PREVIEW_ALLOWED_KEYS: ReadonlySet<string> = new Set(["themeId"]);
+export const THEMES_PREVIEW_ALLOWED_KEYS: ReadonlySet<string> = new Set([
+  "themeId",
+  "styleVariantId",
+]);
 
 export const THEMES_ACTIVATE_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   "themeId",
+  "styleVariantId",
   "expectedVersion",
   "version",
   "confirm",
@@ -116,10 +148,11 @@ export const THEMES_NO_STORE_HEADERS = {
   "X-Content-Type-Options": "nosniff",
 } as const;
 
-export type ThemesApiErrorCode = ApiErrorCode | ThemeLibraryErrorCode;
+export type ThemesApiErrorCode = ApiErrorCode | ThemeLibraryErrorCode | ThemeStoreErrorCode | string;
 
 export interface TenantThemesRuntimeEnv extends AuthRuntimeEnv {
   readonly TENANT_STORE?: TenantStoreNamespaceLike | null;
+  readonly MEDIA_BUCKET?: R2Bucket | null;
 }
 
 export interface ExtraRegisteredThemeSpec extends RegisteredThemeEntry {
@@ -145,6 +178,48 @@ export interface AuthorizedThemesRequestContext {
   readonly tenantDb: D1Database;
 }
 
+export interface StyleVariantDto {
+  readonly id: string;
+  readonly styleVariantKey: string;
+  readonly themeId: string;
+  readonly name: string;
+  readonly tagline: string;
+  readonly density: "airy" | "balanced" | "compact";
+  readonly mood: "light" | "warm" | "dark";
+  readonly isDefault: boolean;
+  readonly fontLabel: string;
+  readonly swatches: readonly [string, string, string, string];
+  readonly wcagAaPassed: boolean;
+  readonly minContrastRatio: number;
+  readonly customFontCount: number;
+}
+
+export interface PremiumThemeStoreItemDto {
+  readonly id: string;
+  readonly slug: string;
+  readonly name: string;
+  readonly tagline: string;
+  readonly description: string;
+  readonly version: string;
+  readonly schemaVersion: number;
+  readonly tier: "paid_once";
+  readonly priceIdr: number;
+  readonly basePlatformThemeId: string;
+  readonly entitled: boolean;
+  readonly entitledAt: string | null;
+  readonly isActive: boolean;
+  readonly palette: ThemeSurfacePalette;
+  readonly defaultTokens: ThemeTokens;
+  readonly styleVariants: readonly StyleVariantDto[];
+  readonly activeStyleVariantId: string;
+  readonly recommendedOfferingTypes: readonly string[];
+  readonly supportedRoutes: readonly string[];
+  readonly supportedSectionTypes: readonly string[];
+  readonly compatibility: ThemeCompatibilityReport;
+  readonly latestOrder: ThemeStoreOrderRecord | null;
+  readonly receipt: ThemeStoreReceiptRecord | null;
+}
+
 export interface ThemeLibraryItemDto {
   readonly id: string;
   readonly slug: string;
@@ -152,7 +227,7 @@ export interface ThemeLibraryItemDto {
   readonly description: string;
   readonly version: string;
   readonly schemaVersion: number;
-  readonly tier: "included" | "custom";
+  readonly tier: "included" | "paid_once" | "custom";
   readonly isCustom: boolean;
   readonly isActive: boolean;
   readonly isRecommended: boolean;
@@ -167,6 +242,8 @@ export interface ThemeLibraryItemDto {
   readonly supportedRoutes: readonly string[];
   readonly supportedSectionTypes: readonly string[];
   readonly compatibility: ThemeCompatibilityReport;
+  readonly styleVariants?: readonly StyleVariantDto[];
+  readonly activeStyleVariantId?: string;
 }
 
 export interface ThemeLibraryStateDto {
@@ -174,9 +251,12 @@ export interface ThemeLibraryStateDto {
   readonly handle: string;
   readonly vertical: string;
   readonly activeThemeId: string;
+  readonly activeStyleVariantId?: string;
   readonly version: number;
   readonly cacheVersion: number;
   readonly themes: readonly ThemeLibraryItemDto[];
+  readonly premiumThemes?: readonly PremiumThemeStoreItemDto[];
+  readonly receipts?: readonly ThemeStoreReceiptRecord[];
   readonly contentSummary: {
     readonly pages: number;
     readonly posts: number;
@@ -198,6 +278,9 @@ export interface ThemeLibraryPreviewResultDto {
   readonly html: string;
   readonly themeId: string;
   readonly themeName: string;
+  readonly styleVariantId?: string;
+  readonly tier?: "included" | "paid_once" | "custom";
+  readonly entitled?: boolean;
   readonly isCustom: boolean;
   readonly sandbox: typeof PREVIEW_IFRAME_SANDBOX;
   readonly compatibility: ThemeCompatibilityReport;
@@ -687,6 +770,27 @@ export function extractThemesExpectedVersion(
 }
 
 export function mapThemesDomainErrorToResponse(err: unknown, requestId: string): Response {
+  if (err instanceof ThemeNotEntitledError) {
+    return themesErrorResponse(403, "THEME_NOT_ENTITLED", err.message, requestId, {
+      fields: err.fields,
+    });
+  }
+  if (err instanceof ThemeStoreDomainError) {
+    return themesErrorResponse(err.httpStatus, err.code, err.message, requestId, {
+      fields: err.fields,
+    });
+  }
+  if (err instanceof BillingValidationError) {
+    return themesErrorResponse(422, err.code, err.message, requestId, {
+      fields: err.fields,
+    });
+  }
+  if (err instanceof BillingConflictError) {
+    return themesErrorResponse(409, err.code, err.message, requestId);
+  }
+  if (err instanceof BillingNotFoundError) {
+    return themesErrorResponse(404, err.code, err.message, requestId);
+  }
   if (err instanceof ThemeNotFoundError) {
     return themesErrorResponse(404, "THEME_NOT_FOUND", err.message, requestId, {
       fields: err.fields,
@@ -824,20 +928,71 @@ function collectGrantedEntriesForTenant(
   return baseGranted;
 }
 
+function formatStyleVariantDto(variant: ThemeStyleVariantDefinition): StyleVariantDto {
+  const report = verifyStyleVariantContrast(variant);
+  return {
+    id: variant.id,
+    styleVariantKey: variant.styleVariantKey,
+    themeId: variant.themeId,
+    name: variant.name,
+    tagline: variant.tagline,
+    density: variant.density,
+    mood: variant.mood,
+    isDefault: variant.isDefault,
+    fontLabel: variant.fontLabel,
+    swatches: variant.swatches,
+    wcagAaPassed: report.passed,
+    minContrastRatio: report.minRatio,
+    customFontCount: report.customFontCount,
+  };
+}
+
+function buildCompatibilityForPremiumEntry(
+  entry: PremiumThemeManifestEntry,
+  platformCtx: TenantPlatformThemeContext,
+  dbState: TenantThemeLibraryDbState,
+): ThemeCompatibilityReport {
+  return evaluateThemeCompatibility(
+    {
+      id: entry.id,
+      name: entry.name,
+      schemaVersion: entry.schemaVersion,
+      tier: "paid_once",
+      basePlatformThemeId: entry.basePlatformThemeId,
+      supportedSectionTypes: entry.supportedSectionTypes,
+      supportedRoutes: entry.supportedRoutes,
+      recommendedOfferingTypes: entry.recommendedOfferingTypes,
+    },
+    {
+      vertical: platformCtx.vertical,
+      blogEnabled: dbState.blogEnabled,
+      catalogEnabled: dbState.catalogEnabled,
+      sections: dbState.pageSections,
+      contentCounts: dbState.contentCounts,
+    },
+  );
+}
+
 export async function loadTenantThemeLibraryState(
   platformDb: D1Database,
   tenantDb: D1Database,
   member: ThemeLibraryMemberScope,
   options: { readonly extraRegisteredThemes?: readonly ExtraRegisteredThemeSpec[] } = {},
 ): Promise<ThemeLibraryStateDto> {
-  const [platformCtx, dbState] = await Promise.all([
+  const [platformCtx, dbState, storeState] = await Promise.all([
     loadTenantPlatformThemeContext(platformDb, member.tenantId),
     loadTenantThemeLibraryDbState(tenantDb),
+    listTenantThemeStoreState(platformDb, member.tenantId),
   ]);
 
   if (!platformCtx) {
     throw new AuthorizationError(404, "NOT_FOUND", "Tenant tidak ditemukan.");
   }
+
+  const activeStyleVariantId = await loadTenantActiveStyleVariantId(
+    tenantDb,
+    dbState.activeThemeId,
+  );
 
   const entitlement = buildEntitlementContext(platformCtx, member.tenantStatus);
   const grantedEntries = collectGrantedEntriesForTenant(
@@ -850,6 +1005,13 @@ export async function loadTenantThemeLibraryState(
     const grant = grantByThemeId.get(entry.id) ?? null;
     const saved = dbState.savedThemeConfigs.get(entry.id) ?? null;
     const compatibility = buildCompatibilityForEntry(entry, platformCtx, dbState);
+    const variantsForTheme = getStyleVariantsForTheme(entry.id).map(formatStyleVariantDto);
+    const savedVariantKey =
+      saved?.variants?.styleVariant && saved.variants.styleVariant !== "default"
+        ? saved.variants.styleVariant
+        : dbState.activeThemeId === entry.id
+          ? activeStyleVariantId
+          : (getDefaultStyleVariantForTheme(entry.id)?.styleVariantKey ?? "default");
 
     return {
       id: entry.id,
@@ -874,6 +1036,61 @@ export async function loadTenantThemeLibraryState(
       supportedRoutes: entry.supportedRoutes,
       supportedSectionTypes: entry.supportedSectionTypes,
       compatibility,
+      styleVariants: variantsForTheme,
+      activeStyleVariantId: savedVariantKey,
+    };
+  });
+
+  const catalogById = new Map(storeState.catalog.map((c) => [c.id, c]));
+  const entitlementByThemeId = new Map(storeState.entitlements.map((e) => [e.themeId, e]));
+  const latestOrderByThemeId = new Map<string, ThemeStoreOrderRecord>();
+  for (const order of storeState.orders) {
+    if (!latestOrderByThemeId.has(order.themeId)) {
+      latestOrderByThemeId.set(order.themeId, order);
+    }
+  }
+  const receiptByThemeId = new Map<string, ThemeStoreReceiptRecord>();
+  for (const receipt of storeState.receipts) {
+    if (!receiptByThemeId.has(receipt.themeId)) {
+      receiptByThemeId.set(receipt.themeId, receipt);
+    }
+  }
+
+  const premiumThemes: PremiumThemeStoreItemDto[] = CURATED_PREMIUM_THEMES.map((manifest) => {
+    const dbCatalog = catalogById.get(manifest.id);
+    const ent = entitlementByThemeId.get(manifest.id) ?? null;
+    const priceIdr = dbCatalog ? dbCatalog.priceIdr : manifest.priceIdr;
+    const compatibility = buildCompatibilityForPremiumEntry(manifest, platformCtx, dbState);
+    const styleVariants = manifest.styleVariants.map(formatStyleVariantDto);
+    const currentVariantKey =
+      dbState.activeThemeId === manifest.id
+        ? activeStyleVariantId
+        : (getDefaultStyleVariantForTheme(manifest.id)?.styleVariantKey ?? "default");
+
+    return {
+      id: manifest.id,
+      slug: manifest.slug,
+      name: dbCatalog?.name ?? manifest.name,
+      tagline: manifest.tagline,
+      description: manifest.description,
+      version: manifest.version,
+      schemaVersion: manifest.schemaVersion,
+      tier: "paid_once" as const,
+      priceIdr,
+      basePlatformThemeId: manifest.basePlatformThemeId,
+      entitled: ent !== null,
+      entitledAt: ent ? ent.grantedAtIso : null,
+      isActive: dbState.activeThemeId === manifest.id,
+      palette: manifest.palette,
+      defaultTokens: manifest.defaultTokens,
+      styleVariants,
+      activeStyleVariantId: currentVariantKey,
+      recommendedOfferingTypes: manifest.recommendedOfferingTypes,
+      supportedRoutes: manifest.supportedRoutes,
+      supportedSectionTypes: manifest.supportedSectionTypes,
+      compatibility,
+      latestOrder: latestOrderByThemeId.get(manifest.id) ?? null,
+      receipt: receiptByThemeId.get(manifest.id) ?? null,
     };
   });
 
@@ -886,9 +1103,12 @@ export async function loadTenantThemeLibraryState(
     handle: member.handle,
     vertical: platformCtx.vertical,
     activeThemeId: dbState.activeThemeId,
+    activeStyleVariantId,
     version: dbState.siteSettingsVersion,
     cacheVersion: platformCtx.cacheVersion,
     themes,
+    premiumThemes,
+    receipts: storeState.receipts,
     contentSummary: {
       pages: dbState.contentCounts.pages,
       posts: dbState.contentCounts.posts,
@@ -911,8 +1131,12 @@ export async function loadTenantThemeLibraryState(
 
 /**
  * Renders an in-process compatibility draft preview (`sandbox=""` iframe HTML)
- * of the tenant's real public content under a candidate granted theme WITHOUT
- * mutating `site_settings`, `theme_configs`, or `PLATFORM_DB.tenants.cache_version`.
+ * of the tenant's real public content under a candidate theme + optional Style Variant
+ * WITHOUT mutating `site_settings`, `theme_configs`, or `PLATFORM_DB.tenants.cache_version`.
+ *
+ * Explicitly supports SAFE PRE-PURCHASE DRAFT PREVIEW of `paid_once` premium themes
+ * (`Cache-Control: private, no-store`, `X-Robots-Tag: noindex, nofollow`,
+ * `<meta name="robots" content="noindex, nofollow">`) without modifying live published state!
  */
 export async function previewTenantThemeCompatibility(
   platformDb: D1Database,
@@ -920,6 +1144,7 @@ export async function previewTenantThemeCompatibility(
   member: ThemeLibraryMemberScope,
   themeId: unknown,
   options: {
+    readonly styleVariantId?: string | null;
     readonly renderShellDocument?: RenderPreviewShellDocumentFn;
     readonly extraRegisteredThemes?: readonly ExtraRegisteredThemeSpec[];
   } = {},
@@ -933,6 +1158,81 @@ export async function previewTenantThemeCompatibility(
     throw new AuthorizationError(404, "NOT_FOUND", "Tenant tidak ditemukan.");
   }
 
+  // 1. Curated `paid_once` premium theme pre-purchase / owned draft preview
+  const rawThemeId = typeof themeId === "string" ? themeId.trim() : "";
+  const premiumEntry = getCuratedPremiumTheme(rawThemeId);
+  if (premiumEntry) {
+    const compatibility = buildCompatibilityForPremiumEntry(premiumEntry, platformCtx, dbState);
+    if (!compatibility.compatible) {
+      throw new ThemeIncompatibleError(premiumEntry.id, compatibility);
+    }
+
+    const requestedVariant = options.styleVariantId
+      ? getStyleVariantById(premiumEntry.id, options.styleVariantId)
+      : getDefaultStyleVariantForTheme(premiumEntry.id);
+    if (options.styleVariantId && !requestedVariant) {
+      throw new ThemeStoreDomainError(
+        422,
+        "THEME_VARIANT_NOT_FOUND",
+        `Varian gaya "${options.styleVariantId}" tidak ditemukan untuk tema "${premiumEntry.id}".`,
+      );
+    }
+
+    const effectiveVariant = requestedVariant ?? getDefaultStyleVariantForTheme(premiumEntry.id)!;
+    const entitlementRow = await platformDb
+      .prepare(
+        "SELECT id FROM tenant_theme_entitlements WHERE tenant_id = ? AND theme_id = ? LIMIT 1",
+      )
+      .bind(member.tenantId, premiumEntry.id)
+      .first<{ readonly id: string }>();
+    const isEntitled = entitlementRow !== null;
+
+    // Render using base platform theme shell + exact premium variant tokens/CSS (zero live write!)
+    const rendered = await renderTenantDraftPreview(
+      {
+        platformDb,
+        tenantDb,
+        tenantId: member.tenantId,
+        tenantHandle: member.handle,
+        tenantName: member.tenantName,
+        input: {
+          resourceKind: "home",
+          themeId: premiumEntry.basePlatformThemeId,
+          draftOverride: {
+            themeConfig: {
+              themeId: premiumEntry.basePlatformThemeId,
+              tokens: effectiveVariant.tokens,
+              variants: effectiveVariant.variants,
+            },
+          },
+        },
+      },
+      options.renderShellDocument ?? renderSemanticPreviewShellFallback,
+    );
+
+    const variantCss = renderStyleVariantCssVariables(effectiveVariant);
+    const metaTag = `<meta name="robots" content="noindex, nofollow" /><style data-ps-preview-theme="${premiumEntry.id}" data-ps-style-variant="${effectiveVariant.styleVariantKey}">${variantCss}</style>`;
+    const htmlWithMeta = rendered.html.includes("</head>")
+      ? rendered.html.replace("</head>", `${metaTag}</head>`)
+      : `<!doctype html><html lang="id"><head><meta charset="utf-8"/>${metaTag}</head><body>${rendered.html}</body></html>`;
+
+    return {
+      html: htmlWithMeta,
+      themeId: premiumEntry.id,
+      themeName: premiumEntry.name,
+      styleVariantId: effectiveVariant.styleVariantKey,
+      tier: "paid_once",
+      entitled: isEntitled,
+      isCustom: false,
+      sandbox: PREVIEW_IFRAME_SANDBOX,
+      compatibility,
+      hasSavedConfig: dbState.savedThemeConfigs.has(premiumEntry.id),
+      isPreview: true,
+      version: dbState.siteSettingsVersion,
+    };
+  }
+
+  // 2. Included platform theme or granted custom theme preview
   const entitlement = buildEntitlementContext(platformCtx, member.tenantStatus);
   const { entry } = resolveGrantedThemeForActivation(
     {
@@ -950,11 +1250,23 @@ export async function previewTenantThemeCompatibility(
     throw new ThemeIncompatibleError(effectiveEntry.id, compatibility);
   }
 
+  let resolvedVariant: ThemeStyleVariantDefinition | null = null;
+  if (options.styleVariantId && options.styleVariantId.trim()) {
+    resolvedVariant = getStyleVariantById(effectiveEntry.id, options.styleVariantId);
+    if (!resolvedVariant) {
+      throw new ThemeStoreDomainError(
+        422,
+        "THEME_VARIANT_NOT_FOUND",
+        `Varian gaya "${options.styleVariantId}" tidak ditemukan untuk tema "${effectiveEntry.id}".`,
+      );
+    }
+  }
+
   const saved = dbState.savedThemeConfigs.get(effectiveEntry.id) ?? null;
   const previewThemeConfig: ThemeConfigSnapshot = {
     themeId: effectiveEntry.id,
-    tokens: saved?.tokens ?? effectiveEntry.defaultTokens,
-    variants: saved?.variants ?? effectiveEntry.defaultVariants,
+    tokens: resolvedVariant?.tokens ?? saved?.tokens ?? effectiveEntry.defaultTokens,
+    variants: resolvedVariant?.variants ?? saved?.variants ?? effectiveEntry.defaultVariants,
   };
 
   const rendered = await renderTenantDraftPreview(
@@ -979,6 +1291,12 @@ export async function previewTenantThemeCompatibility(
     html: rendered.html,
     themeId: effectiveEntry.id,
     themeName: effectiveEntry.name,
+    styleVariantId:
+      resolvedVariant?.styleVariantKey ??
+      previewThemeConfig.variants.styleVariant ??
+      "default",
+    tier: effectiveEntry.tier,
+    entitled: true,
     isCustom: effectiveEntry.isCustom,
     sandbox: PREVIEW_IFRAME_SANDBOX,
     compatibility,
@@ -989,8 +1307,11 @@ export async function previewTenantThemeCompatibility(
 }
 
 /**
- * Validates grant + compatibility + optimistic version and atomically switches
- * the tenant's active theme while preserving prior theme config and all content.
+ * Validates grant/entitlement + compatibility + optimistic version and atomically switches
+ * the tenant's active theme (and optional Style Variant) while preserving prior theme config
+ * and 100% of site content.
+ *
+ * Attempting to activate an unpurchased `paid_once` theme ALWAYS returns `403 THEME_NOT_ENTITLED`.
  */
 export async function activateTenantThemeFromLibrary(
   platformDb: D1Database,
@@ -998,6 +1319,7 @@ export async function activateTenantThemeFromLibrary(
   member: ThemeLibraryMemberScope,
   input: {
     readonly themeId: unknown;
+    readonly styleVariantId?: string | null;
     readonly expectedVersion: number;
     readonly nowMs?: number;
   },
@@ -1012,6 +1334,42 @@ export async function activateTenantThemeFromLibrary(
     throw new AuthorizationError(404, "NOT_FOUND", "Tenant tidak ditemukan.");
   }
 
+  // 1. Curated `paid_once` theme activation -> STRICT per-website entitlement guard!
+  const rawThemeId = typeof input.themeId === "string" ? input.themeId.trim() : "";
+  const premiumEntry = getCuratedPremiumTheme(rawThemeId);
+  if (premiumEntry) {
+    const compatibility = buildCompatibilityForPremiumEntry(premiumEntry, platformCtx, dbState);
+    if (!compatibility.compatible) {
+      throw new ThemeIncompatibleError(premiumEntry.id, compatibility);
+    }
+
+    const activated = await activateStoreThemeOrVariantAtomically({
+      platformDb,
+      tenantDb,
+      tenantId: member.tenantId,
+      tenantName: member.tenantName,
+      actorUserId: member.userId,
+      actorRole: member.role,
+      themeId: premiumEntry.id,
+      styleVariantId: input.styleVariantId ?? null,
+      fallbackTokens: premiumEntry.defaultTokens,
+      fallbackVariants: premiumEntry.defaultVariants,
+      expectedVersion: input.expectedVersion,
+      nowMs: input.nowMs,
+    });
+
+    const refreshedState = await loadTenantThemeLibraryState(platformDb, tenantDb, member, options);
+    return {
+      ...refreshedState,
+      activatedThemeId: activated.activatedThemeId,
+      previousThemeId: activated.previousThemeId,
+      recoveredExistingConfig: false,
+      cacheVersion: activated.cacheVersion,
+      activatedAt: activated.activatedAt,
+    };
+  }
+
+  // 2. Included platform theme or granted custom theme activation
   const entitlement = buildEntitlementContext(platformCtx, member.tenantStatus);
   const { entry } = resolveGrantedThemeForActivation(
     {
@@ -1027,6 +1385,33 @@ export async function activateTenantThemeFromLibrary(
 
   if (!compatibility.compatible) {
     throw new ThemeIncompatibleError(effectiveEntry.id, compatibility);
+  }
+
+  if (input.styleVariantId && input.styleVariantId.trim()) {
+    const activated = await activateStoreThemeOrVariantAtomically({
+      platformDb,
+      tenantDb,
+      tenantId: member.tenantId,
+      tenantName: member.tenantName,
+      actorUserId: member.userId,
+      actorRole: member.role,
+      themeId: effectiveEntry.id,
+      styleVariantId: input.styleVariantId.trim(),
+      fallbackTokens: effectiveEntry.defaultTokens,
+      fallbackVariants: effectiveEntry.defaultVariants,
+      expectedVersion: input.expectedVersion,
+      nowMs: input.nowMs,
+    });
+
+    const refreshedState = await loadTenantThemeLibraryState(platformDb, tenantDb, member, options);
+    return {
+      ...refreshedState,
+      activatedThemeId: activated.activatedThemeId,
+      previousThemeId: activated.previousThemeId,
+      recoveredExistingConfig: false,
+      cacheVersion: activated.cacheVersion,
+      activatedAt: activated.activatedAt,
+    };
   }
 
   const activated = await activateTenantThemeAtomically({
@@ -1130,12 +1515,18 @@ export async function handleTenantThemesPreviewRequest(
       );
     }
 
+    const rawStyleVariantId =
+      typeof parsedBody.body.styleVariantId === "string"
+        ? parsedBody.body.styleVariantId.trim()
+        : null;
+
     const result = await previewTenantThemeCompatibility(
       auth.ctx.platformDb,
       auth.ctx.tenantDb,
       auth.ctx.member,
       rawThemeId,
       {
+        styleVariantId: rawStyleVariantId || null,
         renderShellDocument: options.renderShellDocument,
         extraRegisteredThemes: options.extraRegisteredThemes,
       },

@@ -54,6 +54,7 @@ const activeDepartures = filterExpiredTourDeparturesAtRender(tourDepartures, ren
   <div
     class="tr-theme-root"
     data-ps-platform-theme="travel"
+    data-ps-style-variant={contract.shell.themeStyle.variants.styleVariant}
     data-ps-route-kind={contract.routeKind}
     data-active-departures-count={String(activeDepartures.length)}
     data-testid="platform-theme-travel"

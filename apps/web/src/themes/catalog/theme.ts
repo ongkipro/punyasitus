@@ -9,6 +9,10 @@ import {
   type ThemeTokens,
   type ThemeVariants,
 } from "@punyasitus/core/theme/index";
+import {
+  getStyleVariantsForTheme,
+  type ThemeStyleVariantDefinition,
+} from "@punyasitus/core/theme/variants";
 
 /**
  * Platform Theme Manifest: `catalog` — Product Showcase Catalog -> Closing via WhatsApp
@@ -88,6 +92,7 @@ export const CATALOG_THEME_MANIFEST = Object.freeze({
   }),
   defaultTokens: DEFAULT_TOKENS,
   defaultVariants: DEFAULT_VARIANTS,
+  styleVariants: getStyleVariantsForTheme(CATALOG_THEME_ID) as readonly ThemeStyleVariantDefinition[],
   palette: Object.freeze({
     surface: "#ffffff",
     surfaceMuted: "#f7f8fa",

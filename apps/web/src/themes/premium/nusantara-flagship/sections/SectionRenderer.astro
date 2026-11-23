@@ -1,0 +1,18 @@
+---
+import type { AnyValidatedPageSection } from "@punyasitus/core/theme/sections";
+import DefaultSectionRenderer from "../../default/sections/SectionRenderer.astro";
+
+export interface Props {
+  readonly sections: readonly AnyValidatedPageSection[];
+  readonly canonicalOrigin?: string;
+  readonly isHomepage?: boolean;
+}
+
+const { sections, canonicalOrigin, isHomepage = false } = Astro.props;
+---
+
+<DefaultSectionRenderer
+  sections={sections}
+  canonicalOrigin={canonicalOrigin}
+  isHomepage={isHomepage}
+/>
