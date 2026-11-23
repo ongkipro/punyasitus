@@ -1,0 +1,291 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  createMarketingHostRedirectResponse,
+  formatIdr,
+  listDemoTenants,
+  MARKETING_URLS,
+} from "@punyasitus/core/marketing/index";
+import { loadLiveMarketingPricing } from "@punyasitus/db/marketing/index";
+import MarketingLayout from "../../components/marketing/MarketingLayout.astro";
+import PricingCards from "../../components/marketing/PricingCards.astro";
+
+const redirectRes = createMarketingHostRedirectResponse(Astro.request, {
+  platformDomain: env.PLATFORM_DOMAIN,
+});
+if (redirectRes) {
+  return redirectRes;
+}
+
+Astro.response.headers.set("X-PunyaSitus-Surface", "marketing");
+Astro.response.headers.set("Cache-Control", "public, max-age=60");
+
+const pricing = await loadLiveMarketingPricing(env.PLATFORM_DB);
+const demos = listDemoTenants();
+const waHref = `https://wa.me/${encodeURIComponent(pricing.salesWhatsapp)}?text=${encodeURIComponent(
+  "Halo tim PunyaSitus, saya ingin konsultasi pembuatan website bisnis dengan PunyaSitus.",
+)}`;
+
+const capabilities = [
+  {
+    title: "Cepat di Jaringan 4G Seluler",
+    body: "Halaman publik dirender murni di server (HTML + CSS) dengan anggaran skrip sangat ringan sehingga terbuka instan bagi calon pembeli.",
+  },
+  {
+    title: "6 Tema Vertikal Siap Pakai",
+    body: "Bukan templat generik: tersedia struktur khusus perusahaan B2B, jasa & pembicara, biro perjalanan/Umrah, katalog produk, restoran multi-cabang, hingga showroom kendaraan.",
+  },
+  {
+    title: "SEO & AI Autopilot Tanpa Ribet",
+    body: "Sitemap XML, robots.txt ramah pencari & asisten AI, kartu pratinjau WhatsApp, serta Schema.org @graph aktif otomatis sejak situs diterbitkan.",
+  },
+  {
+    title: "Domain Kustom & SSL Otomatis",
+    body: "Hubungkan hingga 2 hostname domain sendiri (apex dan www) dengan panduan DNS langkah demi langkah dan pembaruan sertifikat TLS otomatis.",
+  },
+  {
+    title: "Fokus Konversi WhatsApp & Formulir",
+    body: "Pesan masuk tersimpan rapi di dashboard, formulir kustom per vertikal, dan tombol WhatsApp yang tetap bekerja meski tanpa JavaScript.",
+  },
+  {
+    title: "Transparan & Pembayaran Lokal",
+    body: "Bayar per bulan atau tahunan menggunakan QRIS dan Virtual Account bank Indonesia. Tidak ada kartu kredit dan tidak ada debit otomatis diam-diam.",
+  },
+];
+
+const faqs = [
+  {
+    question: `Bagaimana cara kerja uji coba gratis ${pricing.trialDays} hari?`,
+    answer: `Setelah mendaftar (via Google atau email terverifikasi), Anda langsung mendapatkan 1 situs uji coba selama ${pricing.trialDays} hari penuh di subdomain .situsku.click dengan kuota media 100 MB untuk menyusun halaman dan mencoba tema.`,
+  },
+  {
+    question: "Apakah harga bulanan dan tahunan sudah mencakup semua tema vertikal?",
+    answer:
+      "Ya. Seluruh 6 tema platform (Compro, Sales, Travel, Catalog, Resto, Dealer), variasi gaya, dan plugin gratis seperti SEO & AI Autopilot sudah termasuk dalam satu harga langganan per situs.",
+  },
+  {
+    question: "Apakah ada pemotongan saldo otomatis saat masa langganan habis?",
+    answer:
+      "Tidak. Semua perpanjangan dilakukan secara sadar oleh pemilik situs melalui QRIS atau Virtual Account. Sebelum jatuh tempo, sistem mengirim pengingat melalui email.",
+  },
+  {
+    question: "Apakah harga sudah termasuk PPN?",
+    answer: pricing.nonPkpDisclosure,
+  },
+];
+---
+
+<MarketingLayout
+  title="Platform Website Bisnis Cepat untuk UMKM & Perusahaan Indonesia"
+  description="Buat website bisnis cepat, siap SEO & AI, lengkap dengan 6 tema vertikal, domain kustom, dan pembayaran QRIS/VA lokal. Coba gratis 7 hari."
+  canonicalPath="/marketing"
+  currentNav="home"
+  funnelStage="visit"
+  salesWhatsapp={pricing.salesWhatsapp}
+  supportEmail={pricing.supportEmail}
+  supportHours={pricing.supportHours}
+>
+  <!-- Hero Section -->
+  <section class="mk-hero" data-testid="marketing-hero">
+    <div class="mk-container mk-hero-grid">
+      <div class="mk-hero-copy">
+        <span class="mk-tag">Platform Website Bisnis Indonesia</span>
+        <h1>Website bisnis cepat, siap jualan, tanpa urus server dan plugin rumit</h1>
+        <p class="mk-hero-lead">
+          PunyaSitus memberi perusahaan B2B, konsultan, biro perjalanan, katalog produk, restoran, dan showroom kendaraan satu platform terpadu — ringan di HP, rapi di Google &amp; asisten AI, dan terhubung langsung ke WhatsApp.
+        </p>
+
+        <div class="mk-hero-actions">
+          <a
+            class="mk-btn mk-btn-primary"
+            href={MARKETING_URLS.appSignup}
+            data-funnel-cta="signup_start"
+            data-testid="hero-signup-cta"
+          >
+            Coba Gratis {pricing.trialDays} Hari
+          </a>
+          <a class="mk-btn mk-btn-secondary" href="/marketing/demo">
+            Lihat 6 Situs Demo
+          </a>
+          <a
+            class="mk-btn mk-btn-wa"
+            href={waHref}
+            rel="noopener noreferrer"
+            target="_blank"
+            data-testid="hero-wa-cta"
+          >
+            Konsultasi WhatsApp
+          </a>
+        </div>
+
+        <p class="mk-hero-note">
+          Tanpa kartu kredit · Subdomain aktif instan · Pembayaran QRIS &amp; Virtual Account
+        </p>
+      </div>
+
+      <!-- Live Pricing Snapshot Panel (reads directly from PLATFORM_DB) -->
+      <aside class="mk-spec-panel" aria-label="Ringkasan paket dan kuota" data-testid="hero-live-pricing-panel">
+        <div class="mk-spec-panel-head">
+          <div>
+            <p class="mk-meta-label">Langganan Satu Harga per Situs</p>
+            <p class="mk-spec-price mk-tabular" data-testid="hero-monthly-price">
+              {formatIdr(pricing.monthlyPriceIdr)}
+              <span class="mk-price-period">/ bulan</span>
+            </p>
+          </div>
+          {pricing.yearlySavingsIdr > 0 && (
+            <span class="mk-tag mk-tabular">
+              Tahunan {formatIdr(pricing.yearlyPriceIdr)}
+            </span>
+          )}
+        </div>
+
+        <ul class="mk-spec-list">
+          <li>
+            <span>Uji coba gratis</span>
+            <strong class="mk-tabular">{pricing.trialDays} hari (100 MB)</strong>
+          </li>
+          <li>
+            <span>Hemat paket tahunan</span>
+            <strong class="mk-tabular">{formatIdr(pricing.yearlySavingsIdr)} / tahun</strong>
+          </li>
+          <li>
+            <span>Tema vertikal bawaan</span>
+            <strong>6 Tema + Variasi Gaya</strong>
+          </li>
+          <li>
+            <span>Domain kustom + SSL</span>
+            <strong>Hingga 2 hostname</strong>
+          </li>
+          <li>
+            <span>Penyimpanan &amp; Video</span>
+            <strong>1 GB WebP · 20 Video</strong>
+          </li>
+          <li>
+            <span>Anggota tim per situs</span>
+            <strong>Hingga 5 akun</strong>
+          </li>
+        </ul>
+      </aside>
+    </div>
+  </section>
+
+  <!-- 6-Theme Demo Showcase -->
+  <section class="mk-section mk-section-tinted" aria-labelledby="heading-tema">
+    <div class="mk-container">
+      <div class="mk-section-head">
+        <h2 id="heading-tema">6 Tema Vertikal dengan Contoh Situs Demo Langsung</h2>
+        <p>
+          Buka contoh tampilan untuk masing-masing jenis usaha. Seluruh situs demo menggunakan data simulasi sintetis dan dapat Anda coba tanpa perlu mendaftar terlebih dahulu.
+        </p>
+      </div>
+
+      <div class="mk-grid-3" data-testid="marketing-demo-grid">
+        {demos.map((demo) => (
+          <article class="mk-card" data-testid={`marketing-demo-card-${demo.slug}`}>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;">
+              <span class="mk-theme-swatch" style={`background:${demo.accentColor};`} aria-hidden="true" />
+              <span class="mk-meta-label">{demo.themeName}</span>
+            </div>
+            <h3>{demo.businessName}</h3>
+            <p class="mk-meta-label" style="color:var(--mk-accent);">{demo.verticalLabel}</p>
+            <p style="color:var(--mk-ink-muted);font-size:0.9375rem;">{demo.tagline}</p>
+            <div class="mk-card-footer">
+              <a
+                class="mk-btn mk-btn-secondary"
+                href={`/marketing/demo/${demo.slug}`}
+                data-testid={`open-demo-${demo.slug}`}
+              >
+                Buka Demo &rarr;
+              </a>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Core Capabilities -->
+  <section class="mk-section" aria-labelledby="heading-fitur">
+    <div class="mk-container">
+      <div class="mk-section-head">
+        <h2 id="heading-fitur">Dirancang untuk Kecepatan, Keamanan, dan Pencarian Lokal</h2>
+        <p>
+          Berbeda dari CMS tradisional yang menuntut perawatan plugin rutin, setiap situs di PunyaSitus berjalan di arsitektur terisolasi dengan performa stabil.
+        </p>
+      </div>
+
+      <div class="mk-grid-3">
+        {capabilities.map((cap) => (
+          <article class="mk-card">
+            <h3>{cap.title}</h3>
+            <p style="color:var(--mk-ink-muted);font-size:0.9375rem;">{cap.body}</p>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Live Pricing Section -->
+  <section id="harga" class="mk-section mk-section-tinted" aria-labelledby="heading-harga">
+    <div class="mk-container">
+      <div class="mk-section-head">
+        <h2 id="heading-harga">Harga Transparan, Tanpa Biaya Tersembunyi</h2>
+        <p>
+          Satu situs, satu harga untuk seluruh jenis penawaran (Layanan, Produk, Paket Tur, atau Kendaraan).
+        </p>
+      </div>
+
+      <PricingCards pricing={pricing} showDetailLink={true} />
+    </div>
+  </section>
+
+  <!-- FAQ Section -->
+  <section class="mk-section" aria-labelledby="heading-faq">
+    <div class="mk-container">
+      <div class="mk-section-head">
+        <h2 id="heading-faq">Pertanyaan yang Sering Diajukan</h2>
+      </div>
+
+      <div class="mk-faq-list">
+        {faqs.map((faq) => (
+          <details class="mk-faq-item">
+            <summary>{faq.question}</summary>
+            <div class="mk-faq-body">{faq.answer}</div>
+          </details>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <!-- Final CTA Band -->
+  <section class="mk-section mk-section-tinted">
+    <div class="mk-container">
+      <div class="mk-cta-band" style="background:var(--mk-bg);">
+        <div style="display:flex;flex-direction:column;gap:0.45rem;">
+          <h2>Siap menerbitkan website bisnis Anda hari ini?</h2>
+          <p style="color:var(--mk-ink-muted);max-width:56ch;">
+            Mulai uji coba gratis {pricing.trialDays} hari atau diskusikan kebutuhan website Anda langsung bersama tim kami via WhatsApp.
+          </p>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.75rem;">
+          <a
+            class="mk-btn mk-btn-primary"
+            href={MARKETING_URLS.appSignup}
+            data-funnel-cta="signup_start"
+          >
+            Buat Website Sekarang
+          </a>
+          <a
+            class="mk-btn mk-btn-wa"
+            href={waHref}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Tanya via WhatsApp
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+</MarketingLayout>

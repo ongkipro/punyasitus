@@ -1,0 +1,425 @@
+---
+import "./marketing.css";
+import {
+  DEMO_BANNER_TITLE,
+  formatIdr,
+  MARKETING_URLS,
+  type DemoTenantFixture,
+} from "@punyasitus/core/marketing/index";
+
+export interface Props {
+  demo: DemoTenantFixture;
+}
+
+const { demo } = Astro.props;
+const signupWithThemeHref = `${MARKETING_URLS.appSignup}?theme=${encodeURIComponent(demo.slug)}`;
+---
+
+<!doctype html>
+<html lang="id" data-demo-theme={demo.slug}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>{demo.businessName} — {DEMO_BANNER_TITLE}</title>
+    <meta name="description" content={demo.description} />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23176b51'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='700' fill='%23ffffff'%3EPS%3C/text%3E%3C/svg%3E"
+    />
+    <style
+      is:inline
+      set:html={`:root { --demo-accent: ${demo.accentColor}; --demo-secondary: ${demo.accentSecondary}; --demo-tint: ${demo.surfaceTint}; }`}
+    />
+  </head>
+  <body
+    data-funnel-stage="demo_view"
+    data-funnel-theme={demo.slug}
+    data-demo-readonly="true"
+  >
+    <a class="mk-skip-link" href="#konten-demo">Lompat ke konten demo</a>
+
+    <!-- Unmistakable Read-Only Demo Banner -->
+    <div class="mk-demo-banner" role="region" aria-label="Pemberitahuan situs demo" data-testid="demo-readonly-banner">
+      <div class="mk-container mk-demo-banner-inner">
+        <div>
+          <p class="mk-demo-banner-title">
+            {DEMO_BANNER_TITLE} ({demo.themeName} · {demo.verticalLabel})
+          </p>
+          <p class="mk-demo-banner-sub">
+            Mode hanya baca (read-only) — seluruh data bisnis, nomor telepon, dan harga adalah contoh simulasi sintetis.
+          </p>
+        </div>
+        <div class="mk-demo-banner-actions">
+          <a class="mk-demo-btn-light" href="/marketing/demo">&larr; Semua Demo</a>
+          <a
+            class="mk-demo-btn-dark"
+            href={signupWithThemeHref}
+            data-funnel-cta="signup_start"
+            data-funnel-theme={demo.slug}
+          >
+            Pakai {demo.themeName}
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Demo Site Header -->
+    <header class="mk-header" style="position:static;">
+      <div class="mk-container mk-header-inner">
+        <div style="display:flex;align-items:center;gap:0.625rem;">
+          <span
+            class="mk-brand-mark"
+            style="background:var(--demo-accent);"
+            aria-hidden="true"
+          >
+            {demo.businessName.slice(0, 2).toUpperCase()}
+          </span>
+          <div>
+            <p style="font-weight:700;font-size:1.05rem;line-height:1.2;">{demo.businessName}</p>
+            <p style="font-size:0.75rem;color:var(--mk-ink-muted);">{demo.verticalLabel}</p>
+          </div>
+        </div>
+        <nav aria-label="Navigasi situs demo" style="display:flex;flex-wrap:wrap;gap:0.35rem;">
+          <a class="mk-nav-link" href="#katalog-demo">Penawaran</a>
+          {demo.creditSimulation && <a class="mk-nav-link" href="#simulasi-cicilan">Estimasi Cicilan</a>}
+          {demo.itinerary && <a class="mk-nav-link" href="#itinerary-demo">Itinerary</a>}
+          {demo.branches && <a class="mk-nav-link" href="#cabang-demo">Cabang</a>}
+          <a class="mk-nav-link" href="#faq-demo">FAQ</a>
+        </nav>
+      </div>
+    </header>
+
+    <main id="konten-demo" class="mk-main">
+      <!-- Demo Hero -->
+      <section class="mk-hero" style="background:var(--demo-tint);">
+        <div class="mk-container mk-hero-grid">
+          <div class="mk-hero-copy">
+            <span
+              class="mk-tag"
+              style="background:#ffffff;color:var(--demo-accent);border:1px solid var(--mk-border);"
+            >
+              CONTOH TAMPILAN · {demo.themeName.toUpperCase()}
+            </span>
+            <h1>{demo.tagline}</h1>
+            <p class="mk-hero-lead">{demo.description}</p>
+            <div class="mk-hero-actions">
+              <a
+                class="mk-btn"
+                style="background:var(--demo-accent);color:#ffffff;"
+                href={signupWithThemeHref}
+                data-funnel-cta="signup_start"
+                data-funnel-theme={demo.slug}
+              >
+                {demo.heroCtaLabel}
+              </a>
+              <a class="mk-btn mk-btn-secondary" href="#katalog-demo">
+                Lihat Daftar Penawaran
+              </a>
+            </div>
+            <p class="mk-hero-note">
+              Kontak simulasi: +{demo.syntheticWhatsapp} · {demo.syntheticEmail} (nomor &amp; email contoh, bukan pelanggan nyata).
+            </p>
+          </div>
+
+          <aside class="mk-spec-panel" style="background:#ffffff;" aria-label="Fakta utama bisnis demo">
+            <div class="mk-spec-panel-head">
+              <div>
+                <p class="mk-meta-label">Ringkasan Profil Bisnis (Contoh)</p>
+                <p style="font-weight:700;font-size:1.125rem;">{demo.businessName}</p>
+              </div>
+              <span class="mk-meta-label">{demo.city}</span>
+            </div>
+            <ul class="mk-spec-list">
+              {demo.credentials.map((cred) => (
+                <li>
+                  <span>{cred.label}</span>
+                  <strong>{cred.value}</strong>
+                </li>
+              ))}
+              {demo.highlights.map((item) => (
+                <li>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                </li>
+              ))}
+            </ul>
+          </aside>
+        </div>
+      </section>
+
+      <!-- Offerings / Showcase -->
+      <section id="katalog-demo" class="mk-section">
+        <div class="mk-container">
+          <div class="mk-section-head">
+            <h2>Daftar Penawaran &amp; Katalog Contoh</h2>
+            <p>
+              Struktur data yang rapi (judul, kategori, harga Rupiah, spesifikasi) memudahkan pengunjung sekaligus mesin pencari dan asisten AI memahami penawaran usaha Anda.
+            </p>
+          </div>
+
+          <div class="mk-grid-3">
+            {demo.items.map((item) => (
+              <article class="mk-card" data-testid={`demo-item-${item.id}`}>
+                <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:0.5rem;">
+                  <span class="mk-meta-label">{item.category}</span>
+                  {item.badge && (
+                    <span
+                      class="mk-tag"
+                      style={
+                        item.status === "sold"
+                          ? "background:#fef2f2;color:#b42318;border:1px solid #fecdca;"
+                          : "background:var(--demo-tint);color:var(--demo-accent);"
+                      }
+                    >
+                      {item.badge}
+                    </span>
+                  )}
+                </div>
+                <h3>{item.title}</h3>
+                <p class="mk-tabular" style="font-size:1.15rem;font-weight:700;color:var(--demo-accent);">
+                  {item.priceLabel}
+                </p>
+                <p style="color:var(--mk-ink-muted);font-size:0.9375rem;">{item.summary}</p>
+                <dl
+                  style="margin:0.5rem 0 0;padding-top:0.75rem;border-top:1px solid var(--mk-border);display:grid;gap:0.4rem;font-size:0.875rem;"
+                >
+                  {item.specs.map((spec) => (
+                    <div style="display:flex;justify-content:space-between;gap:0.75rem;">
+                      <dt style="color:var(--mk-ink-muted);">{spec.label}</dt>
+                      <dd style="margin:0;font-weight:600;text-align:right;">{spec.value}</dd>
+                    </div>
+                  ))}
+                </dl>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <!-- Optional Process Steps (compro / sales) -->
+      {demo.processSteps && demo.processSteps.length > 0 && (
+        <section class="mk-section mk-section-tinted">
+          <div class="mk-container">
+            <div class="mk-section-head">
+              <h2>Alur Kerja</h2>
+              <p>Tahapan terstruktur agar calon klien memahami langkah dari diskusi awal hingga selesai.</p>
+            </div>
+            <div class="mk-grid-2">
+              {demo.processSteps.map((step) => (
+                <article class="mk-card">
+                  <span class="mk-meta-label mk-tabular" style="color:var(--demo-accent);">
+                    Tahap {step.step}
+                  </span>
+                  <h3>{step.title}</h3>
+                  <p style="color:var(--mk-ink-muted);font-size:0.9375rem;">{step.detail}</p>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      <!-- Optional Travel Itinerary -->
+      {demo.itinerary && demo.itinerary.length > 0 && (
+        <section id="itinerary-demo" class="mk-section mk-section-tinted">
+          <div class="mk-container">
+            <div class="mk-section-head">
+              <h2>Contoh Rencana Perjalanan Harian (Itinerary)</h2>
+              <p>Disusun ringkas dan transparan tanpa klaim kuota palsu atau penghitung urgensi buatan.</p>
+            </div>
+            <div class="mk-table-wrap">
+              <table class="mk-table">
+                <thead>
+                  <tr>
+                    <th scope="col" style="width:140px;">Hari</th>
+                    <th scope="col">Agenda Utama</th>
+                    <th scope="col">Rincian Kegiatan</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {demo.itinerary.map((row) => (
+                    <tr>
+                      <td class="mk-tabular" style="font-weight:600;">{row.day}</td>
+                      <td style="font-weight:600;">{row.title}</td>
+                      <td style="color:var(--mk-ink-muted);">{row.detail}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
+
+      <!-- Optional Static Server-Rendered Credit Table (dealer) -->
+      {demo.creditSimulation && (
+        <section id="simulasi-cicilan" class="mk-section mk-section-tinted" data-testid="demo-dealer-credit-table">
+          <div class="mk-container">
+            <div class="mk-section-head">
+              <h2>Tabel Estimasi Cicilan Statis (Tanpa JavaScript)</h2>
+              <p class="mk-tabular">
+                Unit contoh: <strong>{demo.creditSimulation.vehicleTitle}</strong> — Harga OTR {formatIdr(demo.creditSimulation.otrPriceIdr)} (hanya tampil untuk unit berstatus Tersedia dengan harga tetap).
+              </p>
+            </div>
+
+            <div class="mk-table-wrap">
+              <table class="mk-table mk-tabular">
+                <thead>
+                  <tr>
+                    <th scope="col">Uang Muka (DP)</th>
+                    <th scope="col">Pokok Pembiayaan</th>
+                    {demo.creditSimulation.tenorsMonths.map((tenor) => (
+                      <th scope="col">Tenor {tenor} bln</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {demo.creditSimulation.rows.map((row) => (
+                    <tr>
+                      <td>
+                        <strong>{row.dpPercent}%</strong> ({formatIdr(row.dpAmountIdr)})
+                      </td>
+                      <td>{formatIdr(row.principalIdr)}</td>
+                      {row.installmentsByTenor.map((inst) => (
+                        <td><strong>{formatIdr(inst.monthlyInstallmentIdr)}</strong>/bln</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p style="margin-top:0.85rem;font-size:0.875rem;color:var(--mk-ink-muted);">
+              {demo.creditSimulation.disclaimer}
+            </p>
+          </div>
+        </section>
+      )}
+
+      <!-- Optional Multi-Branch Cards (compro / resto) -->
+      {demo.branches && demo.branches.length > 0 && (
+        <section id="cabang-demo" class="mk-section">
+          <div class="mk-container">
+            <div class="mk-section-head">
+              <h2>Lokasi Cabang (Contoh Multi-Cabang)</h2>
+              <p>Jam operasional dan tautan peta statis yang langsung bekerja di ponsel tanpa skrip peta berat.</p>
+            </div>
+            <div class="mk-grid-3">
+              {demo.branches.map((branch) => (
+                <article class="mk-card">
+                  <span class="mk-meta-label">{branch.city}</span>
+                  <h3>{branch.name}</h3>
+                  <p style="color:var(--mk-ink-muted);font-size:0.9375rem;">{branch.address}</p>
+                  <p style="font-size:0.875rem;color:var(--mk-ink-muted);">
+                    Hari kerja: {branch.hoursWeekday}<br />
+                    Akhir pekan: {branch.hoursWeekend}
+                  </p>
+                  <div class="mk-card-footer">
+                    <a
+                      class="mk-btn mk-btn-secondary"
+                      href={`https://www.google.com/maps/search/?api=1&query=${branch.mapsQuery}`}
+                      rel="noopener noreferrer nofollow"
+                      target="_blank"
+                    >
+                      Buka Peta Statis
+                    </a>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        </section>
+      )}
+
+      <!-- FAQ -->
+      <section id="faq-demo" class="mk-section mk-section-tinted">
+        <div class="mk-container">
+          <div class="mk-section-head">
+            <h2>Pertanyaan Umum (Demo {demo.themeName})</h2>
+          </div>
+          <div class="mk-faq-list">
+            {demo.faq.map((entry) => (
+              <details class="mk-faq-item">
+                <summary>{entry.question}</summary>
+                <div class="mk-faq-body">{entry.answer}</div>
+              </details>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <!-- CTA back to signup -->
+      <section class="mk-section">
+        <div class="mk-container">
+          <div class="mk-cta-band">
+            <div style="display:flex;flex-direction:column;gap:0.45rem;">
+              <h2>Ingin website bisnis Anda tampil seperti {demo.themeName}?</h2>
+              <p style="color:var(--mk-ink-muted);max-width:56ch;">
+                Semua 6 tema vertikal termasuk dalam langganan PunyaSitus. Coba gratis 7 hari dan ganti konten dengan informasi bisnis Anda sendiri.
+              </p>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:0.65rem;">
+              <a
+                class="mk-btn mk-btn-primary"
+                href={signupWithThemeHref}
+                data-funnel-cta="signup_start"
+                data-funnel-theme={demo.slug}
+              >
+                Coba Gratis 7 Hari
+              </a>
+              <a class="mk-btn mk-btn-secondary" href="/marketing/harga">Lihat Harga</a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="mk-footer">
+      <div class="mk-container">
+        <div class="mk-footer-bottom" style="margin-top:0;padding-top:0;border-top:0;">
+          <span>{demo.businessName} — {demo.syntheticAddress}</span>
+          <span>Situs demo hanya baca · Dibuat dengan <a href="/marketing">PunyaSitus</a></span>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      const body = document.body;
+      const stage = body?.dataset?.funnelStage;
+      const themeSlug = body?.dataset?.funnelTheme || "";
+
+      function sendFunnel(targetStage: string, targetTheme: string) {
+        try {
+          void fetch("/marketing/api/funnel", {
+            method: "POST",
+            credentials: "omit",
+            keepalive: true,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              stage: targetStage,
+              sourceChannel: "direct",
+              themeSlug: targetTheme,
+            }),
+          });
+        } catch {
+          // non-blocking
+        }
+      }
+
+      if (stage) {
+        sendFunnel(stage, themeSlug);
+      }
+
+      document.addEventListener("click", (ev) => {
+        const target = ev.target instanceof Element ? ev.target.closest("[data-funnel-cta]") : null;
+        if (!target) return;
+        const ctaStage = target.getAttribute("data-funnel-cta");
+        const ctaTheme = target.getAttribute("data-funnel-theme") || themeSlug;
+        if (ctaStage) {
+          sendFunnel(ctaStage, ctaTheme);
+        }
+      });
+    </script>
+  </body>
+</html>

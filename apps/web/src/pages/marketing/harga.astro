@@ -1,0 +1,180 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  createMarketingHostRedirectResponse,
+  formatIdr,
+  MARKETING_URLS,
+} from "@punyasitus/core/marketing/index";
+import { loadLiveMarketingPricing } from "@punyasitus/db/marketing/index";
+import MarketingLayout from "../../components/marketing/MarketingLayout.astro";
+import PricingCards from "../../components/marketing/PricingCards.astro";
+
+const redirectRes = createMarketingHostRedirectResponse(Astro.request, {
+  platformDomain: env.PLATFORM_DOMAIN,
+});
+if (redirectRes) {
+  return redirectRes;
+}
+
+Astro.response.headers.set("X-PunyaSitus-Surface", "marketing");
+Astro.response.headers.set("Cache-Control", "public, max-age=60");
+
+const pricing = await loadLiveMarketingPricing(env.PLATFORM_DB);
+const waHref = `https://wa.me/${encodeURIComponent(pricing.salesWhatsapp)}?text=${encodeURIComponent(
+  "Halo tim PunyaSitus, saya ingin menanyakan detail paket bulanan/tahunan PunyaSitus.",
+)}`;
+
+const comparisonRows = [
+  {
+    feature: "Masa Berlaku",
+    trial: `${pricing.trialDays} hari kalender gratis`,
+    paid: "Per bulan kalender atau 12 bulan kalender",
+  },
+  {
+    feature: "Alamat Website",
+    trial: "Subdomain gratis (.situsku.click)",
+    paid: "Subdomain + hingga 2 hostname domain kustom (SSL otomatis)",
+  },
+  {
+    feature: "Indeksasi Mesin Pencari",
+    trial: "noindex selama uji coba",
+    paid: "Indeksasi penuh + SEO & AI Autopilot (sitemap, Schema.org, IndexNow)",
+  },
+  {
+    feature: "Kuota Penyimpanan Media",
+    trial: "100 MB (WebP otomatis)",
+    paid: "1 GB (WebP otomatis) + hingga 20 video pendek (maks 10 MB/video)",
+  },
+  {
+    feature: "Tema Vertikal & Variasi Gaya",
+    trial: "Semua 6 tema vertikal",
+    paid: "Semua 6 tema vertikal + akses toko tema/plugin",
+  },
+  {
+    feature: "Anggota Tim",
+    trial: "Hingga 5 anggota",
+    paid: "Hingga 5 anggota (Pemilik, Admin, Editor)",
+  },
+  {
+    feature: "Bukti Bayar",
+    trial: "Tidak ada tagihan",
+    paid: "Kuitansi layanan PDF bernomor urut (non-PKP, bukan faktur pajak)",
+  },
+];
+
+const pricingFaqs = [
+  {
+    question: "Apa yang terjadi jika saya terlambat memperpanjang langganan?",
+    answer:
+      "Setelah periode bayar berakhir, situs mendapat masa tenggang H+1 s/d H+3 (CMS dan situs tetap normal), lalu H+4 s/d H+7 situs publik tetap aktif agar SEO terjaga sementara CMS hanya-baca (tetap bisa ekspor data pesan masuk & membayar). Mulai H+8 situs ditangguhkan sementara hingga pembayaran selesai.",
+  },
+  {
+    question: "Apakah harga dapat berubah sewaktu-waktu?",
+    answer:
+      "Harga tampil langsung dari pengaturan platform. Jika ada penyesuaian harga bagi pelanggan aktif, pemberitahuan email dikirim minimal 30 hari sebelum tanggal perpanjangan berikutnya.",
+  },
+  {
+    question: "Bagaimana kebijakan pengembalian dana?",
+    answer: pricing.noRefundDisclosure,
+  },
+];
+---
+
+<MarketingLayout
+  title="Harga & Paket Langganan"
+  description={`Harga transparan PunyaSitus: ${formatIdr(pricing.monthlyPriceIdr)}/bulan atau ${formatIdr(pricing.yearlyPriceIdr)}/tahun. Semua 6 tema vertikal, domain kustom, dan SEO/AI Autopilot.`}
+  canonicalPath="/marketing/harga"
+  currentNav="pricing"
+  funnelStage="visit"
+  salesWhatsapp={pricing.salesWhatsapp}
+  supportEmail={pricing.supportEmail}
+  supportHours={pricing.supportHours}
+>
+  <section class="mk-section" data-testid="marketing-pricing-page">
+    <div class="mk-container">
+      <div class="mk-section-head">
+        <span class="mk-tag">Harga Langsung dari Pengaturan Platform</span>
+        <h1>Satu harga jelas untuk seluruh fitur website bisnis</h1>
+        <p>
+          Tanpa biaya tersembunyi dan tanpa batasan jumlah halaman atau jenis penawaran. Coba gratis {pricing.trialDays} hari terlebih dahulu, lalu pilih paket bulanan atau tahunan.
+        </p>
+      </div>
+
+      <PricingCards pricing={pricing} />
+    </div>
+  </section>
+
+  <!-- Trial vs Paid Comparison Table -->
+  <section class="mk-section mk-section-tinted" aria-labelledby="heading-perbandingan">
+    <div class="mk-container">
+      <div class="mk-section-head">
+        <h2 id="heading-perbandingan">Perbandingan Uji Coba Gratis vs Paket Berbayar</h2>
+        <p>Semua konten yang Anda susun selama masa uji coba langsung terbawa saat beralih ke paket berbayar.</p>
+      </div>
+
+      <div class="mk-table-wrap">
+        <table class="mk-table">
+          <thead>
+            <tr>
+              <th scope="col">Aspek</th>
+              <th scope="col">Uji Coba ({pricing.trialDays} Hari)</th>
+              <th scope="col">Paket Berbayar</th>
+            </tr>
+          </thead>
+          <tbody>
+            {comparisonRows.map((row) => (
+              <tr>
+                <td style="font-weight:600;">{row.feature}</td>
+                <td style="color:var(--mk-ink-muted);">{row.trial}</td>
+                <td>{row.paid}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section class="mk-section" aria-labelledby="heading-faq-harga">
+    <div class="mk-container">
+      <div class="mk-section-head">
+        <h2 id="heading-faq-harga">Pertanyaan Umum Seputar Tagihan &amp; Perpanjangan</h2>
+      </div>
+      <div class="mk-faq-list">
+        {pricingFaqs.map((item) => (
+          <details class="mk-faq-item">
+            <summary>{item.question}</summary>
+            <div class="mk-faq-body">{item.answer}</div>
+          </details>
+        ))}
+      </div>
+
+      <div class="mk-cta-band" style="margin-top:2.25rem;">
+        <div style="display:flex;flex-direction:column;gap:0.4rem;">
+          <h3>Butuh bantuan memilih paket atau layanan Terima Beres?</h3>
+          <p style="color:var(--mk-ink-muted);">
+            Tim kami siap menjawab pertanyaan Anda pada jam operasional {pricing.supportHours}.
+          </p>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.75rem;">
+          <a
+            class="mk-btn mk-btn-primary"
+            href={MARKETING_URLS.appSignup}
+            data-funnel-cta="signup_start"
+          >
+            Mulai Uji Coba Gratis
+          </a>
+          <a
+            class="mk-btn mk-btn-wa"
+            href={waHref}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            Hubungi via WhatsApp
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+</MarketingLayout>

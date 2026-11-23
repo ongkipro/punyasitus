@@ -1,0 +1,73 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  createMarketingHostRedirectResponse,
+  listDemoTenants,
+  MARKETING_URLS,
+} from "@punyasitus/core/marketing/index";
+import { loadLiveMarketingPricing } from "@punyasitus/db/marketing/index";
+import MarketingLayout from "../../../components/marketing/MarketingLayout.astro";
+
+const redirectRes = createMarketingHostRedirectResponse(Astro.request, {
+  platformDomain: env.PLATFORM_DOMAIN,
+});
+if (redirectRes) {
+  return redirectRes;
+}
+
+Astro.response.headers.set("X-PunyaSitus-Surface", "marketing");
+Astro.response.headers.set("Cache-Control", "public, max-age=60");
+
+const pricing = await loadLiveMarketingPricing(env.PLATFORM_DB);
+const demos = listDemoTenants();
+---
+
+<MarketingLayout
+  title="Galeri 6 Situs Demo Tema Vertikal"
+  description="Jelajahi 6 situs demo hanya baca untuk seluruh tema vertikal PunyaSitus: Compro, Sales, Travel, Catalog, Resto, dan Dealer."
+  canonicalPath="/marketing/demo"
+  currentNav="demo"
+  funnelStage="visit"
+  salesWhatsapp={pricing.salesWhatsapp}
+  supportEmail={pricing.supportEmail}
+  supportHours={pricing.supportHours}
+>
+  <section class="mk-section" data-testid="marketing-demo-gallery">
+    <div class="mk-container">
+      <div class="mk-section-head">
+        <span class="mk-tag">6 Situs Demo Sintetis (Hanya Baca)</span>
+        <h1>Jelajahi seluruh 6 tema vertikal PunyaSitus</h1>
+        <p>
+          Setiap contoh di bawah ini menggunakan data bisnis fiktif untuk menunjukkan tata letak, hierarki penawaran, dan struktur informasi tiap tema. Halaman demo bersifat hanya baca (<code style="font-family:monospace;">noindex</code>) dan tidak menerima pengiriman formulir.
+        </p>
+      </div>
+
+      <div class="mk-grid-3">
+        {demos.map((demo) => (
+          <article class="mk-card" data-testid={`demo-gallery-card-${demo.slug}`}>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;">
+              <span class="mk-theme-swatch" style={`background:${demo.accentColor};`} aria-hidden="true" />
+              <span class="mk-meta-label">{demo.themeName}</span>
+            </div>
+            <h2>{demo.businessName}</h2>
+            <p class="mk-meta-label" style="color:var(--mk-accent);">{demo.verticalLabel}</p>
+            <p style="color:var(--mk-ink-muted);font-size:0.9375rem;">{demo.description}</p>
+            <div class="mk-card-footer">
+              <a class="mk-btn mk-btn-primary" href={`/marketing/demo/${demo.slug}`}>
+                Buka Situs Demo
+              </a>
+              <a
+                class="mk-btn mk-btn-secondary"
+                href={`${MARKETING_URLS.appSignup}?theme=${demo.slug}`}
+                data-funnel-cta="signup_start"
+                data-funnel-theme={demo.slug}
+              >
+                Pakai Tema
+              </a>
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+</MarketingLayout>

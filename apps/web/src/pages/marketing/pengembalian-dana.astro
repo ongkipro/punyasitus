@@ -1,0 +1,68 @@
+---
+import { env } from "cloudflare:workers";
+import { createMarketingHostRedirectResponse } from "@punyasitus/core/marketing/index";
+import { loadLiveMarketingPricing } from "@punyasitus/db/marketing/index";
+import MarketingLayout from "../../components/marketing/MarketingLayout.astro";
+
+const redirectRes = createMarketingHostRedirectResponse(Astro.request, {
+  platformDomain: env.PLATFORM_DOMAIN,
+});
+if (redirectRes) {
+  return redirectRes;
+}
+
+Astro.response.headers.set("X-PunyaSitus-Surface", "marketing");
+const pricing = await loadLiveMarketingPricing(env.PLATFORM_DB);
+---
+
+<MarketingLayout
+  title="Kebijakan Pengembalian Dana"
+  description="Kebijakan pengembalian dana langganan PunyaSitus sesuai ketentuan layanan (DEC-035 C6)."
+  canonicalPath="/marketing/pengembalian-dana"
+  currentNav="legal"
+  salesWhatsapp={pricing.salesWhatsapp}
+  supportEmail={pricing.supportEmail}
+  supportHours={pricing.supportHours}
+>
+  <section class="mk-section" data-testid="legal-refund-page">
+    <div class="mk-container">
+      <article class="mk-prose">
+        <span class="mk-tag">Ketentuan Komersial</span>
+        <h1>Kebijakan Pengembalian Dana</h1>
+        <p>
+          PunyaSitus menyediakan masa uji coba gratis selama <strong>{pricing.trialDays} hari</strong> agar Anda dapat mencoba fitur, tema, dan kecocokan platform sepenuhnya sebelum melakukan pembayaran.
+        </p>
+
+        <h2>1. Pembatalan Sepihak / Berubah Pikiran</h2>
+        <p>
+          {pricing.noRefundDisclosure}
+        </p>
+        <p>
+          Karena perpanjangan tidak pernah menggunakan debit otomatis, Anda bebas berhenti menggunakan layanan pada akhir periode berjalan tanpa biaya penalti.
+        </p>
+
+        <h2>2. Kondisi yang Berhak Atas Pengembalian Dana Manual</h2>
+        <ul>
+          <li><strong>Pembayaran ganda (duplicate settlement):</strong> Terjadi pelunasan lebih dari satu kali untuk tagihan atau periode yang sama.</li>
+          <li><strong>Salah bayar (mistaken payment):</strong> Nominal atau transfer terkonfirmasi tidak sesuai tagihan akibat kesalahan teknis pembayaran.</li>
+          <li><strong>Settlement terlambat pasca pembatalan/penghapusan:</strong> Dana baru terkonfirmasi oleh penyedia pembayaran setelah situs sudah dibatalkan atau melewati batas retensi penghapusan.</li>
+        </ul>
+
+        <h2>3. Prosedur Verifikasi &amp; Dokumen Kredit</h2>
+        <p>
+          Setiap pengajuan pengembalian dana pada kondisi poin 2 diverifikasi secara manual oleh superadmin melalui antrean tinjauan teraudit, diproses ke rekening pengirim asal, dan disertai penerbitan dokumen koreksi/nota kredit terpisah tanpa menghapus kuitansi layanan asli.
+        </p>
+
+        <h2>4. Status Pajak &amp; Biaya Kanal</h2>
+        <p>
+          {pricing.nonPkpDisclosure} Biaya administrasi kanal pembayaran pihak ketiga (QRIS/Virtual Account) mengikuti ketentuan penyedia pembayaran terkait.
+        </p>
+
+        <h2>5. Cara Mengajukan Verifikasi</h2>
+        <p>
+          Kirimkan nomor kuitansi atau referensi transaksi beserta bukti transfer ke <a href={`mailto:${pricing.supportEmail}`}>{pricing.supportEmail}</a> pada jam layanan {pricing.supportHours}.
+        </p>
+      </article>
+    </div>
+  </section>
+</MarketingLayout>
