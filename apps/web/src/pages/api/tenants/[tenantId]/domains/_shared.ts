@@ -18,10 +18,12 @@ import {
   DomainValidationError,
   FORBIDDEN_DOMAIN_BODY_KEYS,
   buildConnectInstructions,
+  buildPostActivationCleanupGuidance,
   createCloudflareDohDnsResolver,
   createCloudflareSaasClient,
   createFetchHttpsProbe,
   doesCnameMatchTarget,
+  isCloudflareNameserver,
   resolveDomainMarkerSecret,
   type CloudflareCustomHostname,
   type CloudflareSaasClient,
@@ -68,6 +70,7 @@ export interface TenantDomainsRuntimeEnv extends AuthRuntimeEnv {
   readonly CF_SAAS_ZONE_ID?: string;
   readonly CF_SAAS_API_TOKEN?: string;
   readonly CF_API_BASE_URL?: string;
+  readonly CF_APEX_CAPABILITY_SUPPORTED?: string;
   readonly DOMAIN_MARKER_SECRET?: string;
 }
 
@@ -85,6 +88,8 @@ export interface TenantDomainsHandlerOptions {
   readonly httpsProbeFetch?: typeof fetch;
   readonly recheckRateLimitPolicy?: Partial<DomainRecheckRateLimitPolicy>;
   readonly allowTestTlds?: boolean;
+  /** Optional provider apex capability override for tests or gated plans. */
+  readonly apexCapabilitySupported?: boolean;
   /** Test-only marker secret injection (strictly ignored outside APP_ENV=local|test). */
   readonly testMarkerSecret?: string;
 }
@@ -198,13 +203,16 @@ export async function observeDnsForHostname(
 ): Promise<DnsObservationSnapshot | undefined> {
   if (!dnsResolver) return undefined;
   const acmeName = `_acme-challenge.${hostname}`;
+  const labels = hostname.trim().toLowerCase().replace(/\.$/, "").split(".");
+  const nsLookupHost = labels[0] === "www" && labels.length >= 3 ? labels.slice(1).join(".") : hostname;
 
-  const [cnameTargets, acmeChallengeTxtRecords, acmeChallengeCnameTargets, caaRecords] =
+  const [cnameTargets, acmeChallengeTxtRecords, acmeChallengeCnameTargets, caaRecords, nameservers] =
     await Promise.all([
       dnsResolver.resolveCname(hostname).catch(() => []),
       dnsResolver.resolveTxt(acmeName).catch(() => []),
       dnsResolver.resolveCname(acmeName).catch(() => []),
       dnsResolver.resolveCaa ? dnsResolver.resolveCaa(hostname).catch(() => []) : Promise.resolve([]),
+      dnsResolver.resolveNs ? dnsResolver.resolveNs(nsLookupHost).catch(() => []) : Promise.resolve([]),
     ]);
 
   return {
@@ -212,6 +220,7 @@ export async function observeDnsForHostname(
     acmeChallengeTxtRecords,
     acmeChallengeCnameTargets,
     caaRecords,
+    nameservers,
   };
 }
 
@@ -284,6 +293,28 @@ function mapDomainApiSslStatus(record: TenantDomainRecord): string {
   return "pending_validation";
 }
 
+function deriveOwnershipStatus(record: TenantDomainRecord): "active" | "pending" | "error" {
+  if (record.kind === "subdomain") {
+    return record.status === "active" ? "active" : "error";
+  }
+  const raw = (record.providerStatus ?? record.status).trim().toLowerCase();
+  if (raw === "active") return "active";
+  if (raw === "blocked" || raw === "moved" || raw === "failed") return "error";
+  return "pending";
+}
+
+function deriveTlsStatus(record: TenantDomainRecord): "active" | "pending" | "error" {
+  if (record.kind === "subdomain") {
+    return record.status === "active" ? "active" : "error";
+  }
+  const raw = (record.providerSslStatus ?? record.sslStatus).trim().toLowerCase();
+  if (raw === "active") return "active";
+  if (raw === "validation_timed_out" || raw === "failed" || raw === "expired" || raw === "deleted") {
+    return "error";
+  }
+  return "pending";
+}
+
 export function formatDomainRecordResponse(
   record: TenantDomainRecord,
   options: {
@@ -309,6 +340,32 @@ export function formatDomainRecordResponse(
     });
   }
 
+  const apiStatus = mapDomainApiStatus(record);
+  const ownershipStatus = deriveOwnershipStatus(record);
+  const tlsStatus = deriveTlsStatus(record);
+
+  const cloudflareNameserverHint =
+    record.kind === "custom" &&
+    (mode === "cloudflare_o2o" || isCloudflareNameserver(options.dnsObservation?.nameservers));
+
+  // Do NOT expose routing CNAME inside postActivationCleanup until the domain is fully active
+  // (ownership + TLS active AND two-step migration cutover unlocked)!
+  const postActivationCleanup =
+    record.kind === "custom" &&
+    mode &&
+    instructionPlan &&
+    apiStatus === "active" &&
+    ownershipStatus === "active" &&
+    tlsStatus === "active" &&
+    !instructionPlan.cnameCutoverLocked
+      ? buildPostActivationCleanupGuidance({
+          hostname: record.hostname,
+          mode,
+          validationRecords: instructionPlan.validationRecords,
+          cnameTarget: options.cnameTarget,
+        })
+      : null;
+
   return {
     id: record.id,
     hostname: record.hostname,
@@ -316,9 +373,11 @@ export function formatDomainRecordResponse(
     mode,
     sslMethod: record.kind === "custom" ? sslMethod : null,
     cfCustomHostnameId: record.cfCustomHostnameId,
-    status: mapDomainApiStatus(record),
+    status: apiStatus,
     hostStatus: record.status,
     sslStatus: mapDomainApiSslStatus(record),
+    ownershipStatus,
+    tlsStatus,
     providerStatus: record.providerStatus,
     providerSslStatus: record.providerSslStatus,
     certificateAuthority: record.certificateAuthority,
@@ -332,6 +391,8 @@ export function formatDomainRecordResponse(
     tokenExpiresAt: instructionPlan?.tokenAge?.expiresAtIso ?? (record.tokenExpiresAt ? new Date(record.tokenExpiresAt).toISOString() : null),
     tokenAge: instructionPlan?.tokenAge ?? null,
     validationRecords: instructionPlan?.validationRecords ?? [],
+    cloudflareNameserverHint,
+    postActivationCleanup,
     instructions: instructionPlan
       ? {
           mode: instructionPlan.mode,

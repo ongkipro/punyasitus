@@ -61,6 +61,22 @@ export interface DnsObservationSnapshot {
   readonly acmeChallengeTxtRecords?: readonly string[];
   readonly acmeChallengeCnameTargets?: readonly string[];
   readonly caaRecords?: readonly string[];
+  readonly nameservers?: readonly string[];
+}
+
+export interface PostActivationCleanupItem {
+  readonly recordType: "CNAME" | "TXT";
+  readonly name: string;
+  readonly value: string;
+  readonly purpose: "ownership" | "ssl_dcv" | "routing";
+  readonly action: "removable" | "must_keep";
+  readonly guidanceId: string;
+}
+
+export interface PostActivationCleanupGuidance {
+  readonly summaryId: string;
+  readonly removable: readonly PostActivationCleanupItem[];
+  readonly mustKeep: readonly PostActivationCleanupItem[];
 }
 
 export type DomainRemedyCode =
@@ -733,5 +749,86 @@ export function buildConnectInstructions(input: {
     ],
     tokenAge,
     remedies,
+  };
+}
+
+/**
+ * Produces explicit post-activation DNS cleanup guidance (PLAN §3.2 & TASK-039):
+ * - Ownership TXT (`_cf-custom-hostname.<host>`) MAY be safely removed once active.
+ * - Delegated DCV CNAME (`_acme-challenge.<host>`) and Routing CNAME (`<host> -> cnameTarget`)
+ *   MUST STAY so automatic SSL renewals and site traffic remain uninterrupted.
+ */
+export function buildPostActivationCleanupGuidance(input: {
+  readonly hostname: string;
+  readonly mode: DomainConnectMode;
+  readonly validationRecords: readonly DomainValidationInstructionRecord[];
+  readonly cnameTarget?: string;
+}): PostActivationCleanupGuidance {
+  const cnameTarget = normalizeDnsTarget(input.cnameTarget ?? DEFAULT_SAAS_CNAME_TARGET);
+  const removable: PostActivationCleanupItem[] = [];
+  const mustKeep: PostActivationCleanupItem[] = [];
+
+  for (const rec of input.validationRecords) {
+    if (rec.removableAfterActive) {
+      removable.push({
+        recordType: rec.recordType,
+        name: rec.name,
+        value: rec.value,
+        purpose: rec.purpose,
+        action: "removable",
+        guidanceId:
+          rec.purpose === "ownership"
+            ? "Record TXT kepemilikan boleh dihapus dengan aman setelah domain berstatus aktif."
+            : "Record TXT validasi sekali pakai boleh dihapus setelah sertifikat SSL aktif.",
+      });
+    } else {
+      mustKeep.push({
+        recordType: rec.recordType,
+        name: rec.name,
+        value: rec.value,
+        purpose: rec.purpose,
+        action: "must_keep",
+        guidanceId:
+          rec.purpose === "ssl_dcv"
+            ? "Record CNAME delegasi SSL (Delegated DCV) WAJIB dipertahankan agar perpanjangan sertifikat otomatis tidak gagal."
+            : `Record CNAME routing (${rec.name} -> ${rec.value}) WAJIB dipertahankan agar situs tetap dapat diakses.`,
+      });
+    }
+  }
+
+  // Always include the routing CNAME in mustKeep even if not yet listed in validationRecords
+  if (!mustKeep.some((item) => item.purpose === "routing")) {
+    mustKeep.push({
+      recordType: "CNAME",
+      name: input.hostname,
+      value: cnameTarget,
+      purpose: "routing",
+      action: "must_keep",
+      guidanceId: `Record CNAME routing (${input.hostname} -> ${cnameTarget}) WAJIB dipertahankan agar situs tetap aktif.`,
+    });
+  }
+
+  // If mode is zero_downtime_migration and ownership TXT was already removed from provider response
+  // after activation, still explicitly clarify the ownership TXT cleanup rule
+  if (
+    input.mode === "zero_downtime_migration" &&
+    !removable.some((item) => item.purpose === "ownership")
+  ) {
+    removable.push({
+      recordType: "TXT",
+      name: `_cf-custom-hostname.${input.hostname}`,
+      value: "(token kepemilikan Cloudflare)",
+      purpose: "ownership",
+      action: "removable",
+      guidanceId:
+        "Record TXT kepemilikan (_cf-custom-hostname) boleh dihapus dengan aman setelah domain berstatus aktif.",
+    });
+  }
+
+  return {
+    summaryId:
+      "Setelah domain aktif: record TXT kepemilikan boleh dihapus dengan aman, sedangkan record CNAME delegasi SSL dan CNAME routing WAJIB tetap dipertahankan.",
+    removable,
+    mustKeep,
   };
 }
