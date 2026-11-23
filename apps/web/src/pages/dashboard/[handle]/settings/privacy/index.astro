@@ -1,0 +1,40 @@
+---
+import { getGroupedSettingsForAdmin } from "@punyasitus/db/settings/index";
+import { resolveGroupedSettingsServerContext } from "@/core/settings";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { GroupedSettingsWorkspace } from "../_GroupedSettingsWorkspace";
+
+const resolved = await resolveGroupedSettingsServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const initialState = await getGroupedSettingsForAdmin(ctx.tenantDb);
+---
+
+<DashboardLayout
+  title={`Pengaturan Privasi — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="settings"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <GroupedSettingsWorkspace
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    publicSiteHref={ctx.publicSiteHref}
+    initialTab="privacy"
+    permissions={ctx.permissions}
+    initialState={initialState}
+  />
+</DashboardLayout>
