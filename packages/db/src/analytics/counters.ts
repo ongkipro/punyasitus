@@ -1,5 +1,16 @@
+import {
+  classifyInsightSource,
+  formatUtcDayAndHour,
+  inferInsightContentKind,
+  isLikelyIdentifierOrHashToken,
+  sanitizeBareReferrerHost,
+  sanitizeInsightUtmToken,
+  type InsightContentKind,
+  type InsightSourceBucket,
+} from "@punyasitus/core/analytics/insights";
+
 /**
- * First-party cookieless click counters and dashboard metrics repository (TASK-030, REQ-017).
+ * First-party cookieless click counters and dashboard metrics repository (TASK-030, TASK-065, TASK-072, REQ-017, REQ-073).
  *
  * Operates exclusively against a tenant's physically isolated `TenantStore` SQLite Durable Object
  * (`analytics_daily`, `pages`, `posts`, `offerings`).
@@ -55,11 +66,28 @@ export const DEFAULT_EVENT_DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
 export const DEFAULT_EVENT_DEDUP_PRUNE_BATCH_SIZE = 50;
 export const MAX_EVENT_DEDUP_PRUNE_BATCH_SIZE = 200;
 export const MAX_EVENT_ID_LENGTH = 64;
+export const MAX_DAILY_CONTENT_PATHS = 200;
+export const MAX_DAILY_UTM_SOURCES = 50;
+export const INSIGHTS_RETENTION_DAYS = 90;
+export const DEFAULT_INSIGHTS_PRUNE_BATCH_SIZE = 100;
+export const OVERFLOW_CONTENT_PATH = "/_other";
+export const OVERFLOW_UTM_SOURCE = "_other";
+
+export const ALLOWED_ROUTE_KINDS = [
+  "page",
+  "post",
+  "catalog",
+  "offering",
+  "taxonomy",
+  "other",
+] as const;
+export type AnalyticsRouteKind = (typeof ALLOWED_ROUTE_KINDS)[number];
 
 const ALLOWED_EVENT_SET: ReadonlySet<string> = new Set(ALLOWED_FIRST_PARTY_EVENTS);
 const ALLOWED_RESOURCE_TYPE_SET: ReadonlySet<string> = new Set(ALLOWED_RESOURCE_TYPES);
 const ALLOWED_TARGET_KIND_SET: ReadonlySet<string> = new Set(ALLOWED_TARGET_KINDS);
 const ALLOWED_SOURCE_CATEGORY_SET: ReadonlySet<string> = new Set(ALLOWED_SOURCE_CATEGORIES);
+const ALLOWED_ROUTE_KIND_SET: ReadonlySet<string> = new Set(ALLOWED_ROUTE_KINDS);
 
 const ALLOWED_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
   "eventType",
@@ -70,7 +98,11 @@ const ALLOWED_PAYLOAD_KEYS: ReadonlySet<string> = new Set([
   "resourceId",
   "targetKind",
   "targetSlug",
+  "routeKind",
   "sourceCategory",
+  "referrerHost",
+  "utmSource",
+  "utmMedium",
   "consentVersion",
   "honeypot",
 ]);
@@ -139,7 +171,10 @@ export type EventValidationErrorCode =
   | "INVALID_PATH"
   | "INVALID_RESOURCE_REFERENCE"
   | "INVALID_TARGET_REFERENCE"
+  | "INVALID_ROUTE_KIND"
   | "INVALID_SOURCE_CATEGORY"
+  | "INVALID_REFERRER_HOST"
+  | "INVALID_UTM_TOKEN"
   | "INVALID_CONSENT_VERSION";
 
 export interface EventValidationFieldError {
@@ -156,7 +191,11 @@ export interface NormalizedFirstPartyEvent {
   readonly resourceId?: number;
   readonly targetKind?: AnalyticsTargetKind;
   readonly targetSlug?: string;
+  readonly routeKind?: AnalyticsRouteKind;
   readonly sourceCategory?: AnalyticsSourceCategory;
+  readonly referrerHost?: string;
+  readonly utmSource?: string;
+  readonly utmMedium?: string;
   readonly consentVersion?: string;
 }
 
@@ -208,6 +247,10 @@ export type RecordFirstPartyEventResult =
 export interface RecordFirstPartyEventOptions {
   readonly nowMs?: number;
   readonly timeZone?: string;
+  /** Current verified tenant host so same-site `referrerHost` is stripped server-side (TASK-072). */
+  readonly siteHost?: string;
+  /** Optional list of all hostnames owned by this tenant (subdomain + custom domain + `www.`). */
+  readonly siteHosts?: readonly string[];
   /** Per-event dedup TTL in milliseconds (defaults to 24h per PLAN §5 / TASK-065). */
   readonly dedupTtlMs?: number;
   /**
@@ -215,6 +258,14 @@ export interface RecordFirstPartyEventOptions {
    * at the end of each deduplicated event batch (defaults to 50; 0 disables opportunistic prune).
    */
   readonly pruneBatchSize?: number;
+  /** Max distinct content paths tracked per UTC day before folding overflow into `/_other` (default 200). */
+  readonly maxDailyContentPaths?: number;
+  /** Max distinct `utm_source` tokens tracked per UTC day before folding overflow into `_other` (default 50). */
+  readonly maxDailyUtmSources?: number;
+  /** Retention window in days for insights aggregate tables before bounded pruning (default 90). */
+  readonly insightsRetentionDays?: number;
+  /** Max rows pruned per insights aggregate table per event batch (default 100; 0 disables). */
+  readonly insightsPruneBatchSize?: number;
 }
 
 export type PruneAnalyticsEventDedupResult =
@@ -548,7 +599,22 @@ export function validateFirstPartyEventPayload(rawPayload: unknown): ValidateEve
     );
   }
 
-  // 8. Optional sourceCategory & consentVersion.
+  // 8. Optional routeKind, sourceCategory, referrerHost, utmSource, utmMedium & consentVersion.
+  let routeKind: AnalyticsRouteKind | undefined;
+  if (record.routeKind !== undefined) {
+    if (
+      typeof record.routeKind !== "string" ||
+      !ALLOWED_ROUTE_KIND_SET.has(record.routeKind)
+    ) {
+      return validationFailure(
+        "INVALID_ROUTE_KIND",
+        "routeKind",
+        "routeKind tidak valid.",
+      );
+    }
+    routeKind = record.routeKind as AnalyticsRouteKind;
+  }
+
   let sourceCategory: AnalyticsSourceCategory | undefined;
   if (record.sourceCategory !== undefined) {
     if (
@@ -562,6 +628,80 @@ export function validateFirstPartyEventPayload(rawPayload: unknown): ValidateEve
       );
     }
     sourceCategory = record.sourceCategory as AnalyticsSourceCategory;
+  }
+
+  let referrerHost: string | undefined;
+  if (record.referrerHost !== undefined && record.referrerHost !== null && record.referrerHost !== "") {
+    const cleanHost = sanitizeBareReferrerHost(record.referrerHost);
+    if (!cleanHost) {
+      return validationFailure(
+        "INVALID_REFERRER_HOST",
+        "referrerHost",
+        "referrerHost harus berupa nama host saja tanpa protokol, path, query, atau PII.",
+      );
+    }
+    referrerHost = cleanHost;
+  }
+
+  const SAFE_UTM_SYNTAX_RE = /^[a-z0-9][a-z0-9._-]{0,49}$/;
+  const EMAIL_QUERY_OR_ID_PHONE_UTM_RE =
+    /(@|[?&#=/:\\\s<>"';(){}]|(?:^|[^0-9])(?:\+?62|0)8[0-9]{7,12}(?:$|[^0-9]))/;
+
+  let utmSource: string | undefined;
+  if (record.utmSource !== undefined && record.utmSource !== null && record.utmSource !== "") {
+    if (typeof record.utmSource !== "string") {
+      return validationFailure(
+        "INVALID_UTM_TOKEN",
+        "utmSource",
+        "utmSource harus berupa token huruf kecil 1-50 karakter tanpa query atau PII.",
+      );
+    }
+    const trimmedUtm = record.utmSource.trim().toLowerCase();
+    const cleanUtm = sanitizeInsightUtmToken(trimmedUtm);
+    if (cleanUtm) {
+      utmSource = cleanUtm;
+    } else if (
+      !EMAIL_QUERY_OR_ID_PHONE_UTM_RE.test(trimmedUtm) &&
+      SAFE_UTM_SYNTAX_RE.test(trimmedUtm) &&
+      isLikelyIdentifierOrHashToken(trimmedUtm)
+    ) {
+      // Strip personalized/hash/UUID identifier tokens to "" while preserving the coarse campaign bucket (TASK-072).
+      sourceCategory = sourceCategory ?? "campaign";
+    } else {
+      return validationFailure(
+        "INVALID_UTM_TOKEN",
+        "utmSource",
+        "utmSource harus berupa token huruf kecil 1-50 karakter tanpa query atau PII.",
+      );
+    }
+  }
+
+  let utmMedium: string | undefined;
+  if (record.utmMedium !== undefined && record.utmMedium !== null && record.utmMedium !== "") {
+    if (typeof record.utmMedium !== "string") {
+      return validationFailure(
+        "INVALID_UTM_TOKEN",
+        "utmMedium",
+        "utmMedium harus berupa token huruf kecil 1-50 karakter tanpa query atau PII.",
+      );
+    }
+    const trimmedMed = record.utmMedium.trim().toLowerCase();
+    const cleanMedium = sanitizeInsightUtmToken(trimmedMed);
+    if (cleanMedium) {
+      utmMedium = cleanMedium;
+    } else if (
+      !EMAIL_QUERY_OR_ID_PHONE_UTM_RE.test(trimmedMed) &&
+      SAFE_UTM_SYNTAX_RE.test(trimmedMed) &&
+      isLikelyIdentifierOrHashToken(trimmedMed)
+    ) {
+      sourceCategory = sourceCategory ?? "campaign";
+    } else {
+      return validationFailure(
+        "INVALID_UTM_TOKEN",
+        "utmMedium",
+        "utmMedium harus berupa token huruf kecil 1-50 karakter tanpa query atau PII.",
+      );
+    }
   }
 
   let consentVersion: string | undefined;
@@ -597,7 +737,11 @@ export function validateFirstPartyEventPayload(rawPayload: unknown): ValidateEve
       ...(resourceType && resourceId !== undefined ? { resourceType, resourceId } : {}),
       ...(targetKind ? { targetKind } : {}),
       ...(targetSlug ? { targetSlug } : {}),
+      ...(routeKind ? { routeKind } : {}),
       ...(sourceCategory ? { sourceCategory } : {}),
+      ...(referrerHost ? { referrerHost } : {}),
+      ...(utmSource ? { utmSource } : {}),
+      ...(utmMedium ? { utmMedium } : {}),
       ...(consentVersion ? { consentVersion } : {}),
     },
   };
@@ -666,7 +810,9 @@ export async function verifyPublishedResourceExists(
     readonly targetKind?: AnalyticsTargetKind;
     readonly targetSlug?: string;
   },
-): Promise<{ readonly exists: boolean }> {
+): Promise<{ readonly exists: boolean; readonly resolvedId?: number }> {
+  let resolvedId: number | undefined;
+
   if (ref.resourceType && ref.resourceId !== undefined) {
     let sqlQuery: string;
     if (ref.resourceType === "page") {
@@ -681,6 +827,7 @@ export async function verifyPublishedResourceExists(
     if (!row) {
       return { exists: false };
     }
+    resolvedId = row.id;
   }
 
   if (ref.targetKind && ref.targetSlug) {
@@ -690,12 +837,14 @@ export async function verifyPublishedResourceExists(
         .bind(ref.targetSlug)
         .first<{ id: number }>();
       if (!row) return { exists: false };
+      resolvedId = resolvedId ?? row.id;
     } else if (ref.targetKind === "post") {
       const row = await tenantDb
         .prepare("SELECT id FROM posts WHERE slug = ? AND status = 'published' AND deleted_at IS NULL LIMIT 1")
         .bind(ref.targetSlug)
         .first<{ id: number }>();
       if (!row) return { exists: false };
+      resolvedId = resolvedId ?? row.id;
     } else if (
       ref.targetKind === "service" ||
       ref.targetKind === "product" ||
@@ -709,10 +858,11 @@ export async function verifyPublishedResourceExists(
         .bind(ref.targetKind, ref.targetSlug)
         .first<{ id: number }>();
       if (!row) return { exists: false };
+      resolvedId = resolvedId ?? row.id;
     }
   }
 
-  return { exists: true };
+  return resolvedId !== undefined ? { exists: true, resolvedId } : { exists: true };
 }
 
 /**
@@ -828,6 +978,7 @@ export async function recordFirstPartyEvent(
   }
 
   try {
+    let resolvedResourceId: number | undefined = event.resourceId;
     if (
       (event.resourceType && event.resourceId !== undefined) ||
       (event.targetKind && event.targetSlug)
@@ -853,12 +1004,147 @@ export async function recordFirstPartyEvent(
           ],
         };
       }
+      resolvedResourceId = check.resolvedId ?? resolvedResourceId;
     }
 
     const pageviewsInc = event.eventType === "page_view" ? 1 : 0;
     const waClicksInc = event.eventType === "wa_click" ? 1 : 0;
     const externalClicksInc = event.eventType === "external_click" ? 1 : 0;
     const leadSubmitsInc = event.eventType === "lead_submitted" ? 1 : 0;
+
+    // Classify coarse source & compute UTC date/hour buckets (TASK-072, REQ-073)
+    const classifiedSource = classifyInsightSource({
+      referrerHost: event.referrerHost,
+      utmSource: event.utmSource,
+      utmMedium: event.utmMedium,
+      sourceCategory: event.sourceCategory as InsightSourceBucket | undefined,
+      siteHost: options?.siteHost,
+      siteHosts: options?.siteHosts,
+    });
+    const utc = formatUtcDayAndHour(nowMs);
+    let effectiveContentKind: InsightContentKind = inferInsightContentKind({
+      resourceType: event.resourceType,
+      routeKind: event.routeKind,
+      targetKind: event.targetKind,
+      path: event.path,
+    });
+    // Only attribute numeric content_id when backed by a verified published resource
+    let effectiveContentId = resolvedResourceId ?? 0;
+    let effectiveContentPath = event.path;
+    let effectiveUtmSource = classifiedSource.utmSource;
+
+    const insightsTbl = await tenantDb
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'analytics_content_daily' LIMIT 1",
+      )
+      .first<{ name: string }>();
+    const hasInsightsTables = insightsTbl?.name === "analytics_content_daily";
+
+    const maxPaths = Math.max(
+      1,
+      Math.floor(options?.maxDailyContentPaths ?? MAX_DAILY_CONTENT_PATHS),
+    );
+    const maxUtmSources = Math.max(
+      1,
+      Math.floor(options?.maxDailyUtmSources ?? MAX_DAILY_UTM_SOURCES),
+    );
+    const retentionDays = Math.max(
+      1,
+      Math.floor(options?.insightsRetentionDays ?? INSIGHTS_RETENTION_DAYS),
+    );
+    const insightsPruneBatchSize = Math.max(
+      0,
+      Math.min(500, Math.floor(options?.insightsPruneBatchSize ?? DEFAULT_INSIGHTS_PRUNE_BATCH_SIZE)),
+    );
+    const retentionCutoffDayUtc = formatUtcDayAndHour(nowMs - retentionDays * 86_400_000).dayUtc;
+
+    if (hasInsightsTables) {
+      // Bound anonymous daily path cardinality (default 200 distinct paths/day -> fold overflow into `/_other`)
+      if (effectiveContentPath !== OVERFLOW_CONTENT_PATH) {
+        const existingPath = await tenantDb
+          .prepare(
+            "SELECT 1 AS hit FROM analytics_content_daily WHERE day_utc = ? AND path = ? LIMIT 1",
+          )
+          .bind(utc.dayUtc, effectiveContentPath)
+          .first<{ hit: number }>();
+        if (!existingPath) {
+          const pathCountRow = await tenantDb
+            .prepare(
+              "SELECT COUNT(DISTINCT path) AS cnt FROM analytics_content_daily WHERE day_utc = ? AND path != ?",
+            )
+            .bind(utc.dayUtc, OVERFLOW_CONTENT_PATH)
+            .first<{ cnt: number }>();
+          if (Number(pathCountRow?.cnt ?? 0) >= maxPaths) {
+            effectiveContentPath = OVERFLOW_CONTENT_PATH;
+            effectiveContentKind = "other";
+            effectiveContentId = 0;
+          }
+        }
+      }
+
+      // Bound anonymous daily utm_source cardinality (default 50 distinct tokens/day -> fold overflow into `_other`)
+      if (effectiveUtmSource !== "" && effectiveUtmSource !== OVERFLOW_UTM_SOURCE) {
+        const existingUtm = await tenantDb
+          .prepare(
+            "SELECT 1 AS hit FROM analytics_sources_daily WHERE day_utc = ? AND utm_source = ? LIMIT 1",
+          )
+          .bind(utc.dayUtc, effectiveUtmSource)
+          .first<{ hit: number }>();
+        if (!existingUtm) {
+          const utmCountRow = await tenantDb
+            .prepare(
+              "SELECT COUNT(DISTINCT utm_source) AS cnt FROM analytics_sources_daily WHERE day_utc = ? AND utm_source != '' AND utm_source != ?",
+            )
+            .bind(utc.dayUtc, OVERFLOW_UTM_SOURCE)
+            .first<{ cnt: number }>();
+          if (Number(utmCountRow?.cnt ?? 0) >= maxUtmSources) {
+            effectiveUtmSource = OVERFLOW_UTM_SOURCE;
+          }
+        }
+      }
+    }
+
+    const pushBoundedInsightsRetentionPrunes = (stmts: D1PreparedStatement[]) => {
+      if (!hasInsightsTables || insightsPruneBatchSize <= 0) return;
+      stmts.push(
+        tenantDb
+          .prepare(
+            `DELETE FROM analytics_content_daily
+             WHERE rowid IN (
+               SELECT rowid
+               FROM analytics_content_daily
+               WHERE day_utc < ?
+               ORDER BY day_utc ASC
+               LIMIT ?
+             )`,
+          )
+          .bind(retentionCutoffDayUtc, insightsPruneBatchSize),
+        tenantDb
+          .prepare(
+            `DELETE FROM analytics_hourly_utc
+             WHERE rowid IN (
+               SELECT rowid
+               FROM analytics_hourly_utc
+               WHERE day_utc < ?
+               ORDER BY day_utc ASC
+               LIMIT ?
+             )`,
+          )
+          .bind(retentionCutoffDayUtc, insightsPruneBatchSize),
+        tenantDb
+          .prepare(
+            `DELETE FROM analytics_sources_daily
+             WHERE rowid IN (
+               SELECT rowid
+               FROM analytics_sources_daily
+               WHERE day_utc < ?
+               ORDER BY day_utc ASC
+               LIMIT ?
+             )`,
+          )
+          .bind(retentionCutoffDayUtc, insightsPruneBatchSize),
+      );
+    };
 
     if (event.eventId) {
       const dedupKey = buildAnalyticsEventDedupKey(event.eventId);
@@ -871,6 +1157,9 @@ export async function recordFirstPartyEvent(
         ),
       );
 
+      // Every aggregate statement is gated on `WHERE changes() = 1` chained directly from
+      // `INSERT OR IGNORE INTO analytics_event_dedup` so fresh claims update all aggregate tables
+      // (keeping changes() = 1) while duplicate claims skip every aggregate table (keeping changes() = 0).
       const statements: D1PreparedStatement[] = [
         tenantDb
           .prepare("DELETE FROM analytics_event_dedup WHERE dedup_key = ? AND expires_at <= ?")
@@ -913,7 +1202,134 @@ export async function recordFirstPartyEvent(
           ),
       ];
 
+      if (pageviewsInc > 0) {
+        statements.push(
+          tenantDb
+            .prepare(
+              `INSERT INTO analytics_hourly_sources (
+                 hour_bucket,
+                 source_bucket,
+                 utm_source,
+                 visits,
+                 updated_at
+               )
+               SELECT ?, ?, ?, ?, ?
+               WHERE changes() = 1
+               ON CONFLICT(hour_bucket, source_bucket, utm_source) DO UPDATE SET
+                 visits = analytics_hourly_sources.visits + excluded.visits,
+                 updated_at = excluded.updated_at`,
+            )
+            .bind(
+              utc.hourBucketUtc,
+              classifiedSource.hourlySourceBucket,
+              effectiveUtmSource,
+              pageviewsInc,
+              nowMs,
+            ),
+        );
+      }
+
+      if (hasInsightsTables) {
+        statements.push(
+          tenantDb
+            .prepare(
+              `INSERT INTO analytics_content_daily (
+                 day_utc,
+                 content_kind,
+                 content_id,
+                 path,
+                 page_views,
+                 wa_clicks,
+                 external_clicks,
+                 lead_submits,
+                 updated_at
+               )
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
+               WHERE changes() = 1
+               ON CONFLICT(day_utc, content_kind, content_id, path) DO UPDATE SET
+                 page_views = analytics_content_daily.page_views + excluded.page_views,
+                 wa_clicks = analytics_content_daily.wa_clicks + excluded.wa_clicks,
+                 external_clicks = analytics_content_daily.external_clicks + excluded.external_clicks,
+                 lead_submits = analytics_content_daily.lead_submits + excluded.lead_submits,
+                 updated_at = excluded.updated_at`,
+            )
+            .bind(
+              utc.dayUtc,
+              effectiveContentKind,
+              effectiveContentId,
+              effectiveContentPath,
+              pageviewsInc,
+              waClicksInc,
+              externalClicksInc,
+              leadSubmitsInc,
+              nowMs,
+            ),
+          tenantDb
+            .prepare(
+              `INSERT INTO analytics_hourly_utc (
+                 day_utc,
+                 utc_hour,
+                 page_views,
+                 wa_clicks,
+                 external_clicks,
+                 lead_submits,
+                 updated_at
+               )
+               SELECT ?, ?, ?, ?, ?, ?, ?
+               WHERE changes() = 1
+               ON CONFLICT(day_utc, utc_hour) DO UPDATE SET
+                 page_views = analytics_hourly_utc.page_views + excluded.page_views,
+                 wa_clicks = analytics_hourly_utc.wa_clicks + excluded.wa_clicks,
+                 external_clicks = analytics_hourly_utc.external_clicks + excluded.external_clicks,
+                 lead_submits = analytics_hourly_utc.lead_submits + excluded.lead_submits,
+                 updated_at = excluded.updated_at`,
+            )
+            .bind(
+              utc.dayUtc,
+              utc.utcHour,
+              pageviewsInc,
+              waClicksInc,
+              externalClicksInc,
+              leadSubmitsInc,
+              nowMs,
+            ),
+          tenantDb
+            .prepare(
+              `INSERT INTO analytics_sources_daily (
+                 day_utc,
+                 source_bucket,
+                 utm_source,
+                 page_views,
+                 wa_clicks,
+                 external_clicks,
+                 lead_submits,
+                 updated_at
+               )
+               SELECT ?, ?, ?, ?, ?, ?, ?, ?
+               WHERE changes() = 1
+               ON CONFLICT(day_utc, source_bucket, utm_source) DO UPDATE SET
+                 page_views = analytics_sources_daily.page_views + excluded.page_views,
+                 wa_clicks = analytics_sources_daily.wa_clicks + excluded.wa_clicks,
+                 external_clicks = analytics_sources_daily.external_clicks + excluded.external_clicks,
+                 lead_submits = analytics_sources_daily.lead_submits + excluded.lead_submits,
+                 updated_at = excluded.updated_at`,
+            )
+            .bind(
+              utc.dayUtc,
+              classifiedSource.sourceBucket,
+              effectiveUtmSource,
+              pageviewsInc,
+              waClicksInc,
+              externalClicksInc,
+              leadSubmitsInc,
+              nowMs,
+            ),
+        );
+      }
+
+      let dedupPruneIndex = -1;
       if (pruneBatchSize > 0) {
+        dedupPruneIndex = statements.length;
         statements.push(
           tenantDb
             .prepare(
@@ -930,10 +1346,12 @@ export async function recordFirstPartyEvent(
         );
       }
 
+      pushBoundedInsightsRetentionPrunes(statements);
+
       const batchResults = await tenantDb.batch(statements);
       const claimed = (batchResults[1]?.meta?.changes ?? 0) === 1;
       const prunedExpiredCount =
-        pruneBatchSize > 0 ? (batchResults[3]?.meta?.changes ?? 0) : 0;
+        dedupPruneIndex >= 0 ? (batchResults[dedupPruneIndex]?.meta?.changes ?? 0) : 0;
 
       if (!claimed) {
         return {
@@ -960,36 +1378,161 @@ export async function recordFirstPartyEvent(
       };
     }
 
-    await tenantDb
-      .prepare(
-        `INSERT INTO analytics_daily (
-           day,
-           path,
-           pageviews,
-           unique_visitors,
-           wa_clicks,
-           external_clicks,
-           lead_submits,
-           updated_at
-         )
-         VALUES (?, ?, ?, 0, ?, ?, ?, ?)
-         ON CONFLICT(day, path) DO UPDATE SET
-           pageviews = analytics_daily.pageviews + excluded.pageviews,
-           wa_clicks = analytics_daily.wa_clicks + excluded.wa_clicks,
-           external_clicks = analytics_daily.external_clicks + excluded.external_clicks,
-           lead_submits = analytics_daily.lead_submits + excluded.lead_submits,
-           updated_at = excluded.updated_at`,
-      )
-      .bind(
-        day,
-        event.path,
-        pageviewsInc,
-        waClicksInc,
-        externalClicksInc,
-        leadSubmitsInc,
-        nowMs,
-      )
-      .run();
+    const statements: D1PreparedStatement[] = [
+      tenantDb
+        .prepare(
+          `INSERT INTO analytics_daily (
+             day,
+             path,
+             pageviews,
+             unique_visitors,
+             wa_clicks,
+             external_clicks,
+             lead_submits,
+             updated_at
+           )
+           VALUES (?, ?, ?, 0, ?, ?, ?, ?)
+           ON CONFLICT(day, path) DO UPDATE SET
+             pageviews = analytics_daily.pageviews + excluded.pageviews,
+             wa_clicks = analytics_daily.wa_clicks + excluded.wa_clicks,
+             external_clicks = analytics_daily.external_clicks + excluded.external_clicks,
+             lead_submits = analytics_daily.lead_submits + excluded.lead_submits,
+             updated_at = excluded.updated_at`,
+        )
+        .bind(
+          day,
+          event.path,
+          pageviewsInc,
+          waClicksInc,
+          externalClicksInc,
+          leadSubmitsInc,
+          nowMs,
+        ),
+    ];
+
+    if (pageviewsInc > 0) {
+      statements.push(
+        tenantDb
+          .prepare(
+            `INSERT INTO analytics_hourly_sources (
+               hour_bucket,
+               source_bucket,
+               utm_source,
+               visits,
+               updated_at
+             )
+             VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(hour_bucket, source_bucket, utm_source) DO UPDATE SET
+               visits = analytics_hourly_sources.visits + excluded.visits,
+               updated_at = excluded.updated_at`,
+          )
+          .bind(
+            utc.hourBucketUtc,
+            classifiedSource.hourlySourceBucket,
+            effectiveUtmSource,
+            pageviewsInc,
+            nowMs,
+          ),
+      );
+    }
+
+    if (hasInsightsTables) {
+      statements.push(
+        tenantDb
+          .prepare(
+            `INSERT INTO analytics_content_daily (
+               day_utc,
+               content_kind,
+               content_id,
+               path,
+               page_views,
+               wa_clicks,
+               external_clicks,
+               lead_submits,
+               updated_at
+             )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(day_utc, content_kind, content_id, path) DO UPDATE SET
+               page_views = analytics_content_daily.page_views + excluded.page_views,
+               wa_clicks = analytics_content_daily.wa_clicks + excluded.wa_clicks,
+               external_clicks = analytics_content_daily.external_clicks + excluded.external_clicks,
+               lead_submits = analytics_content_daily.lead_submits + excluded.lead_submits,
+               updated_at = excluded.updated_at`,
+          )
+          .bind(
+            utc.dayUtc,
+            effectiveContentKind,
+            effectiveContentId,
+            effectiveContentPath,
+            pageviewsInc,
+            waClicksInc,
+            externalClicksInc,
+            leadSubmitsInc,
+            nowMs,
+          ),
+        tenantDb
+          .prepare(
+            `INSERT INTO analytics_hourly_utc (
+               day_utc,
+               utc_hour,
+               page_views,
+               wa_clicks,
+               external_clicks,
+               lead_submits,
+               updated_at
+             )
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(day_utc, utc_hour) DO UPDATE SET
+               page_views = analytics_hourly_utc.page_views + excluded.page_views,
+               wa_clicks = analytics_hourly_utc.wa_clicks + excluded.wa_clicks,
+               external_clicks = analytics_hourly_utc.external_clicks + excluded.external_clicks,
+               lead_submits = analytics_hourly_utc.lead_submits + excluded.lead_submits,
+               updated_at = excluded.updated_at`,
+          )
+          .bind(
+            utc.dayUtc,
+            utc.utcHour,
+            pageviewsInc,
+            waClicksInc,
+            externalClicksInc,
+            leadSubmitsInc,
+            nowMs,
+          ),
+        tenantDb
+          .prepare(
+            `INSERT INTO analytics_sources_daily (
+               day_utc,
+               source_bucket,
+               utm_source,
+               page_views,
+               wa_clicks,
+               external_clicks,
+               lead_submits,
+               updated_at
+             )
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(day_utc, source_bucket, utm_source) DO UPDATE SET
+               page_views = analytics_sources_daily.page_views + excluded.page_views,
+               wa_clicks = analytics_sources_daily.wa_clicks + excluded.wa_clicks,
+               external_clicks = analytics_sources_daily.external_clicks + excluded.external_clicks,
+               lead_submits = analytics_sources_daily.lead_submits + excluded.lead_submits,
+               updated_at = excluded.updated_at`,
+          )
+          .bind(
+            utc.dayUtc,
+            classifiedSource.sourceBucket,
+            effectiveUtmSource,
+            pageviewsInc,
+            waClicksInc,
+            externalClicksInc,
+            leadSubmitsInc,
+            nowMs,
+          ),
+      );
+    }
+
+    pushBoundedInsightsRetentionPrunes(statements);
+    await tenantDb.batch(statements);
 
     return {
       ok: true,

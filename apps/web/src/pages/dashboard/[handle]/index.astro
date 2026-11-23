@@ -1,18 +1,26 @@
 ---
 import { env } from "cloudflare:workers";
+import { INSIGHTS_ESTIMATE_LABEL_ID } from "@punyasitus/core/analytics/insights";
 import {
   createEmptyDashboardMetrics,
+  createEmptyInsightsSummary,
   getTenantDashboardMetrics,
+  getTenantInsightsSummary,
   type TenantDashboardMetrics,
+  type TenantInsightsSummary,
 } from "@punyasitus/db/analytics/index";
 import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
 import { computeEffectiveTenantStatus } from "@punyasitus/db/routing/index";
 import type { TenantStatus, TenantVertical } from "@punyasitus/db/platform";
 import {
   AlertCircleIcon,
+  ArrowRightIcon,
+  BarChart3Icon,
   CalendarIcon,
+  ClockIcon,
   ExternalLinkIcon,
   EyeIcon,
+  GlobeIcon,
   InboxIcon,
   InfoIcon,
   MessageCircleIcon,
@@ -261,6 +269,7 @@ if (Astro.locals.tenant && Astro.locals.tenant.handle === rawHandle) {
 }
 
 let metrics: TenantDashboardMetrics = createEmptyDashboardMetrics({ days: selectedDays });
+let insights: TenantInsightsSummary = createEmptyInsightsSummary({ days: selectedDays });
 
 if (resolvedTenant) {
   const activeTenantDb =
@@ -272,11 +281,17 @@ if (resolvedTenant) {
 
   if (activeTenantDb) {
     try {
-      metrics = await getTenantDashboardMetrics(activeTenantDb, { days: selectedDays });
+      const [loadedMetrics, loadedInsights] = await Promise.all([
+        getTenantDashboardMetrics(activeTenantDb, { days: selectedDays }),
+        getTenantInsightsSummary(activeTenantDb, { days: selectedDays, popularItemsLimit: 5 }),
+      ]);
+      metrics = loadedMetrics;
+      insights = loadedInsights;
     } catch {
       if (isLocalLoopback) {
         // Local loopback dev DO may not yet have tenant migrations applied; render clean empty state.
         metrics = createEmptyDashboardMetrics({ days: selectedDays });
+        insights = createEmptyInsightsSummary({ days: selectedDays });
       } else {
         Astro.response.status = 503;
         loadError =
@@ -299,6 +314,13 @@ const offeringLabel = resolvedTenant ? mapVerticalToOfferingLabel(resolvedTenant
 const lifecycleStatus: LifecycleStatus = resolvedTenant?.lifecycleStatus ?? "active";
 const publicSiteHref = `https://${workspaceSubtitle}`;
 const dailyRecentFirst = [...metrics.daily].reverse();
+const overviewSources = insights.sources.filter(
+  (s) => s.bucket !== "ai_assistant" || s.totalActivity > 0,
+);
+const overviewPeakHours = [...insights.peakHours.hours]
+  .filter((h) => h.totalActivity > 0)
+  .sort((a, b) => b.totalActivity - a.totalActivity || a.hour - b.hour)
+  .slice(0, 4);
 
 const kpiCards = [
   {
@@ -456,6 +478,131 @@ const kpiCards = [
         </Card>
       ))}
     </section>
+
+    {/* Cookieless First-Party Insights Overview Card (TASK-072, REQ-073) */}
+    <Card data-testid="insights-overview-card">
+      <CardHeader className="border-b border-border">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="min-w-0 space-y-1">
+            <CardTitle className="flex items-center gap-2">
+              <BarChart3Icon className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              <span>Paling diminati, sumber &amp; jam ramai</span>
+            </CardTitle>
+            <CardDescription data-testid="insights-estimate-label">
+              {INSIGHTS_ESTIMATE_LABEL_ID}. Zona waktu:{" "}
+              <span class="font-medium text-foreground">{insights.timeZoneLabel}</span>.
+            </CardDescription>
+          </div>
+          <a
+            href={`${basePath}/insights?range=${selectedDays}`}
+            data-testid="open-insights-link"
+            class="inline-flex min-h-11 w-fit shrink-0 items-center gap-1.5 rounded-md border border-border bg-card px-3.5 text-sm font-medium text-foreground transition-colors hover:bg-muted md:min-h-9"
+          >
+            <span>Lihat detail wawasan</span>
+            <ArrowRightIcon className="size-4" aria-hidden="true" />
+          </a>
+        </div>
+      </CardHeader>
+      <CardContent className="pt-4">
+        {!insights.hasAnyData ? (
+          <div
+            data-state-panel="empty-insights"
+            class="flex flex-col items-start gap-2 py-2 text-sm text-muted-foreground"
+          >
+            <p class="font-medium text-foreground">
+              Belum ada wawasan pengunjung dalam {selectedDays} hari terakhir
+            </p>
+            <p class="max-w-2xl">
+              Ringkasan item paling diminati, sumber kunjungan (Pencarian, Media Sosial, Kampanye,
+              Langsung, Rujukan), dan jam ramai ({insights.timeZoneLabel}) akan tampil di sini
+              secara agregat tanpa pelacakan individu.
+            </p>
+          </div>
+        ) : (
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <div class="space-y-2.5" data-testid="overview-popular-items">
+              <h2 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Paling diminati
+              </h2>
+              <ul class="divide-y divide-border rounded-md border border-border">
+                {insights.popularItems.slice(0, 4).map((item) => (
+                  <li class="flex items-center justify-between gap-2 px-3 py-2 text-xs">
+                    <div class="min-w-0">
+                      <p class="truncate font-medium text-foreground">{item.title}</p>
+                      <p class="truncate font-mono text-[11px] text-muted-foreground">
+                        {item.contentKindLabel} · {item.path}
+                      </p>
+                    </div>
+                    <Badge variant="secondary" className="shrink-0 tabular-nums">
+                      {formatNumberId(item.totalActivity)}
+                    </Badge>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div class="space-y-2.5" data-testid="overview-traffic-sources">
+              <h2 class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                <GlobeIcon className="size-3.5" aria-hidden="true" />
+                <span>Sumber kunjungan</span>
+              </h2>
+              <ul class="space-y-2">
+                {overviewSources.map((src) => (
+                  <li class="space-y-1 text-xs">
+                    <div class="flex items-center justify-between gap-2">
+                      <span class="truncate text-foreground">{src.label}</span>
+                      <span class="shrink-0 text-muted-foreground tabular-nums">
+                        {formatNumberId(src.totalActivity)} ({src.sharePercent}%)
+                      </span>
+                    </div>
+                    <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                      <div
+                        class="h-full rounded-full bg-primary"
+                        style={`width: ${Math.max(0, Math.min(100, src.sharePercent))}%`}
+                      />
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div class="space-y-2.5" data-testid="overview-peak-hours">
+              <div class="flex items-center justify-between gap-2">
+                <h2 class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <ClockIcon className="size-3.5" aria-hidden="true" />
+                  <span>Jam ramai ({insights.timeZoneLabel})</span>
+                </h2>
+              </div>
+              {insights.peakHours.peakHour ? (
+                <div class="space-y-2">
+                  <div class="rounded-md border border-border bg-muted/30 px-3 py-2">
+                    <p class="text-[11px] text-muted-foreground">Jam puncak</p>
+                    <p class="text-lg font-bold text-foreground tabular-nums">
+                      {insights.peakHours.peakHour.label}{" "}
+                      <span class="text-xs font-normal text-muted-foreground">
+                        ({formatNumberId(insights.peakHours.peakHour.totalActivity)} aktivitas)
+                      </span>
+                    </p>
+                  </div>
+                  <ul class="grid grid-cols-2 gap-1.5 text-xs">
+                    {overviewPeakHours.map((h) => (
+                      <li class="flex items-center justify-between rounded-sm border border-border px-2.5 py-1.5">
+                        <span class="font-medium text-foreground tabular-nums">{h.label}</span>
+                        <span class="text-muted-foreground tabular-nums">
+                          {formatNumberId(h.totalActivity)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <p class="text-xs text-muted-foreground">Belum ada aktivitas per jam.</p>
+              )}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
 
     {!metrics.hasAnyData ? (
       <Card data-state-panel="empty-metrics">

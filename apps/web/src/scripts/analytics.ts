@@ -1,9 +1,12 @@
 import {
   ANALYTICS_EVENT_DEDUP_TTL_MS,
   createCtaClickActionGuard,
+  inferInsightContentKind,
   normalizeTenantDedupScope,
+  resolveTabArrivalSource,
   type AnalyticsHeadBootstrapPayload,
   type ClientDedupStorageLike,
+  type PersistedArrivalSource,
 } from "@punyasitus/core/analytics/config";
 import {
   type GoogleConsentModeV2DefaultParams,
@@ -76,6 +79,7 @@ export interface PunyaSitusAnalyticsGlobal {
   readonly trackLeadSubmitted: (input: LeadSignalInput) => LeadSignalResult;
   readonly updateConsent: (next: Partial<AnalyticsConsentState>) => void;
   readonly getState: AnalyticsSignalDispatcher["getState"];
+  readonly getArrivalSource: () => PersistedArrivalSource;
 }
 
 export interface MetaFbqFunction {
@@ -880,6 +884,29 @@ export function initAnalyticsDispatcher(): PunyaSitusAnalyticsGlobal | null {
     bootstrap.tenantScope ?? window.location.host ?? "default",
   );
 
+  // Resolve and persist tab-scoped coarse arrival source in `sessionStorage` (ZERO cookies; TASK-072).
+  // Plain direct visits write ZERO sessionStorage keys (preserving REQ-039 pre-consent zero-storage).
+  let tabSessionStorage: Storage | null;
+  try {
+    tabSessionStorage = window.sessionStorage ?? null;
+  } catch {
+    tabSessionStorage = null;
+  }
+  const knownSiteHosts = [window.location.hostname, bootstrap.tenantScope].filter(
+    (h): h is string => typeof h === "string" && h.trim().length > 0,
+  );
+  const resolvedArrivalSource = resolveTabArrivalSource({
+    locationHref: window.location.href,
+    documentReferrer: document.referrer || null,
+    siteHost: window.location.hostname || bootstrap.tenantScope || null,
+    siteHosts: knownSiteHosts,
+    storage: tabSessionStorage,
+  });
+  const defaultRouteKind = inferInsightContentKind({
+    targetKind: bootstrap.gtm?.pageType ?? null,
+    path: window.location.pathname || "/",
+  });
+
   const dispatcher = createAnalyticsSignalDispatcher({
     config: bootstrap.providers,
     adapter: createBrowserProviderAdapter(win),
@@ -889,6 +916,8 @@ export function initAnalyticsDispatcher(): PunyaSitusAnalyticsGlobal | null {
     tenantScope,
     dedupTtlMs: bootstrap.dedupTtlMs ?? ANALYTICS_EVENT_DEDUP_TTL_MS,
     dedupStorage: resolveBrowserDedupStorage(),
+    getArrivalSource: () => resolvedArrivalSource,
+    defaultRouteKind,
     gtm: bootstrap.gtm
       ? {
           enabled: bootstrap.gtm.enabled,
@@ -989,6 +1018,7 @@ export function initAnalyticsDispatcher(): PunyaSitusAnalyticsGlobal | null {
       dispatcher.updateConsent(next);
     },
     getState: () => dispatcher.getState(),
+    getArrivalSource: () => ({ ...resolvedArrivalSource }),
   };
 
   win.__punyasitusAnalytics = api;

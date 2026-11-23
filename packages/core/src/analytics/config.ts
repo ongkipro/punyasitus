@@ -251,5 +251,6 @@ export * from "./csp.ts";
 export * from "./dedup.ts";
 export * from "./gtm-template.ts";
 export * from "./gtm.ts";
+export * from "./insights.ts";
 export * from "./providers.ts";
 export * from "./signals.ts";

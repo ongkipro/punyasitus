@@ -1,0 +1,623 @@
+---
+import { env } from "cloudflare:workers";
+import { canPerform } from "@punyasitus/auth";
+import { isActionAllowedForTenantStatus } from "@punyasitus/auth/permissions";
+import { INSIGHTS_ESTIMATE_LABEL_ID } from "@punyasitus/core/analytics/insights";
+import {
+  createEmptyInsightsSummary,
+  type TenantInsightsSummary,
+} from "@punyasitus/db/analytics/index";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import type { TenantVertical } from "@punyasitus/db/platform";
+import {
+  AlertCircleIcon,
+  ArrowLeftIcon,
+  BarChart3Icon,
+  ClockIcon,
+  ExternalLinkIcon,
+  EyeIcon,
+  GlobeIcon,
+  InboxIcon,
+  InfoIcon,
+  MessageCircleIcon,
+  ShieldAlertIcon,
+} from "lucide-react";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  createNeutralNotFoundHtmlResponse,
+  formatDayLabelId,
+  formatNumberId,
+  formatPercentId,
+  HANDLE_RE,
+  loadTenantInsightsSafe,
+  mapLifecycleStatus,
+  mapVerticalToOfferingLabel,
+  parseInsightsRangeDays,
+} from "./_loader";
+
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return createNeutralNotFoundHtmlResponse();
+}
+
+const authorized = Astro.locals.authorizedTenantMember;
+const authUser = Astro.locals.authUser;
+if (!authorized || !authUser || !env.PLATFORM_DB) {
+  return createNeutralNotFoundHtmlResponse();
+}
+
+const selectedDays = parseInsightsRangeDays(Astro.url.searchParams.get("range"));
+const saasZone = env.SAAS_ZONE || "situsku.click";
+
+const tenantMeta = await env.PLATFORM_DB.prepare(
+  `SELECT
+     t.name AS name,
+     t.vertical AS vertical,
+     t.trial_ends_at AS trial_ends_at,
+     ph.host AS primary_host
+   FROM tenants t
+   LEFT JOIN tenant_hosts ph
+     ON ph.tenant_id = t.id
+     AND ph.is_primary = 1
+     AND ph.status = 'active'
+     AND ph.ssl_status = 'active'
+   WHERE t.id = ?
+   LIMIT 1`,
+)
+  .bind(authorized.tenantId)
+  .first<{
+    readonly name: string;
+    readonly vertical: TenantVertical;
+    readonly trial_ends_at: number | null;
+    readonly primary_host: string | null;
+  }>();
+
+const workspaceName = tenantMeta?.name ?? authorized.handle;
+const primaryHost = tenantMeta?.primary_host ?? `${authorized.handle}.${saasZone}`;
+const basePath = `/dashboard/${rawHandle}`;
+const offeringLabel = mapVerticalToOfferingLabel(tenantMeta?.vertical);
+const lifecycleStatus: LifecycleStatus = mapLifecycleStatus(authorized.tenantStatus);
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof tenantMeta?.trial_ends_at === "number"
+    ? Math.max(0, Math.ceil((tenantMeta.trial_ends_at - Date.now()) / 86_400_000))
+    : undefined;
+const publicSiteHref = `https://${primaryHost}`;
+
+const lifecycleGate = isActionAllowedForTenantStatus(authorized.tenantStatus, "analytics:read");
+if (!lifecycleGate.allowed && lifecycleGate.status === 404) {
+  return createNeutralNotFoundHtmlResponse();
+}
+
+// REQ-073: editors, admins, owners, and agency_admins can view first-party insights.
+const canReadInsights =
+  canPerform(authorized.role, "analytics:read") ||
+  canPerform(authorized.role, "content:read");
+
+let insights: TenantInsightsSummary = createEmptyInsightsSummary({ days: selectedDays });
+let loadError: string | null = null;
+const isLifecycleBlocked = !lifecycleGate.allowed;
+
+if (isLifecycleBlocked || !canReadInsights) {
+  Astro.response.status = 403;
+} else {
+  const loaded = await loadTenantInsightsSafe({
+    tenantId: authorized.tenantId,
+    tenantDb: Astro.locals.tenantDb,
+    tenantStoreNamespace: env.TENANT_STORE as unknown as TenantStoreNamespaceLike,
+    days: selectedDays,
+    isLocalLoopback,
+    popularItemsLimit: 15,
+  });
+  insights = loaded.insights;
+  loadError = loaded.error;
+  if (loadError) {
+    Astro.response.status = 503;
+  }
+}
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const visibleSources = insights.sources.filter(
+  (s) => s.bucket !== "ai_assistant" || s.totalActivity > 0,
+);
+const topPeakHours = [...insights.peakHours.hours]
+  .filter((h) => h.totalActivity > 0)
+  .sort((a, b) => b.totalActivity - a.totalActivity || a.hour - b.hour)
+  .slice(0, 5);
+---
+
+<DashboardLayout
+  title={`Wawasan Pengunjung — ${workspaceName}`}
+  surface="dashboard"
+  workspaceName={workspaceName}
+  workspaceSubtitle={primaryHost}
+  activeNavId="home"
+  basePath={basePath}
+  offeringLabel={offeringLabel}
+  unreadLeadsCount={0}
+  lifecycleStatus={lifecycleStatus}
+  lifecycleDaysRemaining={lifecycleDaysRemaining}
+  publicSiteHref={publicSiteHref}
+>
+  <div class="space-y-6" data-testid="insights-page" data-handle={rawHandle}>
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div class="min-w-0 space-y-1.5">
+        <a
+          href={`${basePath}?range=${selectedDays}`}
+          class="inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground md:min-h-0"
+        >
+          <ArrowLeftIcon className="size-4 shrink-0" aria-hidden="true" />
+          <span>Kembali ke Ringkasan Situs</span>
+        </a>
+        <h1 class="text-2xl font-bold tracking-[-0.02em] text-foreground">
+          Wawasan Pengunjung
+        </h1>
+        <p class="text-sm text-muted-foreground">
+          Agregat harian pihak pertama untuk periode{" "}
+          <span class="font-medium text-foreground tabular-nums">
+            {formatDayLabelId(insights.startDay)} – {formatDayLabelId(insights.endDay)}
+          </span>
+          {" · "}
+          Zona waktu{" "}
+          <span class="font-medium text-foreground" data-testid="insights-timezone-label">
+            {insights.timeZoneLabel}
+          </span>
+          .
+        </p>
+      </div>
+
+      <nav
+        aria-label="Pilih rentang waktu wawasan"
+        class="inline-flex w-fit items-center gap-1 rounded-md border border-border bg-card p-1"
+      >
+        <a
+          href={`${basePath}/insights?range=7`}
+          aria-current={selectedDays === 7 ? "page" : undefined}
+          data-testid="insights-range-7d"
+          class:list={[
+            "inline-flex min-h-11 items-center rounded-sm px-3 text-sm font-medium transition-colors md:min-h-8",
+            selectedDays === 7
+              ? "bg-primary text-primary-foreground"
+              : "text-foreground hover:bg-muted",
+          ]}
+        >
+          7 hari terakhir
+        </a>
+        <a
+          href={`${basePath}/insights?range=30`}
+          aria-current={selectedDays === 30 ? "page" : undefined}
+          data-testid="insights-range-30d"
+          class:list={[
+            "inline-flex min-h-11 items-center rounded-sm px-3 text-sm font-medium transition-colors md:min-h-8",
+            selectedDays === 30
+              ? "bg-primary text-primary-foreground"
+              : "text-foreground hover:bg-muted",
+          ]}
+        >
+          30 hari terakhir
+        </a>
+      </nav>
+    </div>
+
+    <Alert variant="info" data-testid="insights-estimate-label">
+      <InfoIcon className="size-4" aria-hidden="true" />
+      <AlertTitle>Label Estimasi &amp; Privasi</AlertTitle>
+      <AlertDescription>
+        <strong>{INSIGHTS_ESTIMATE_LABEL_ID}</strong>. Tanpa cookie, tanpa menyimpan IP atau
+        identitas pengunjung, dan lalu lintas bot otomatis disaring.
+      </AlertDescription>
+    </Alert>
+
+    {isLifecycleBlocked ? (
+      <Alert variant="destructive" data-state-panel="subscription-locked">
+        <ShieldAlertIcon className="size-4" aria-hidden="true" />
+        <AlertTitle>Wawasan tidak tersedia saat situs ditangguhkan</AlertTitle>
+        <AlertDescription>
+          Layanan situs sedang dalam status ditangguhkan. Selesaikan perpanjangan langganan untuk
+          kembali mengakses wawasan pengunjung.
+        </AlertDescription>
+      </Alert>
+    ) : !canReadInsights ? (
+      <Alert variant="destructive" data-state-panel="forbidden">
+        <ShieldAlertIcon className="size-4" aria-hidden="true" />
+        <AlertTitle>Akses ditolak</AlertTitle>
+        <AlertDescription>
+          Peran akun Anda tidak memiliki izin untuk melihat wawasan pengunjung situs ini.
+        </AlertDescription>
+      </Alert>
+    ) : (
+      <>
+        {loadError && (
+          <Alert variant="destructive" data-state-panel="error">
+            <AlertCircleIcon className="size-4" aria-hidden="true" />
+            <AlertTitle>Gagal memuat wawasan pengunjung</AlertTitle>
+            <AlertDescription>
+              <span>{loadError}</span>{" "}
+              <a
+                href={`${basePath}/insights?range=${selectedDays}`}
+                class="inline-flex min-h-11 items-center font-medium underline underline-offset-4 md:min-h-0"
+              >
+                Muat ulang halaman
+              </a>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        <section
+          aria-label="Ringkasan total wawasan"
+          class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4"
+        >
+          <Card size="sm">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+              <CardDescription className="text-xs font-medium text-muted-foreground">
+                Kunjungan halaman
+              </CardDescription>
+              <EyeIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            </CardHeader>
+            <CardContent className="space-y-1">
+              <p class="text-2xl font-bold tracking-[-0.02em] text-foreground tabular-nums">
+                {formatNumberId(insights.totals.pageViews)}
+              </p>
+              <p class="text-xs text-muted-foreground">Estimasi agregat harian</p>
+            </CardContent>
+          </Card>
+
+          <Card size="sm">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+              <CardDescription className="text-xs font-medium text-muted-foreground">
+                Klik WhatsApp
+              </CardDescription>
+              <MessageCircleIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            </CardHeader>
+            <CardContent className="space-y-1">
+              <p class="text-2xl font-bold tracking-[-0.02em] text-foreground tabular-nums">
+                {formatNumberId(insights.totals.waClicks)}
+              </p>
+              <p class="text-xs text-muted-foreground">Sinyal minat tombol WhatsApp</p>
+            </CardContent>
+          </Card>
+
+          <Card size="sm">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+              <CardDescription className="text-xs font-medium text-muted-foreground">
+                Klik eksternal
+              </CardDescription>
+              <ExternalLinkIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            </CardHeader>
+            <CardContent className="space-y-1">
+              <p class="text-2xl font-bold tracking-[-0.02em] text-foreground tabular-nums">
+                {formatNumberId(insights.totals.externalClicks)}
+              </p>
+              <p class="text-xs text-muted-foreground">Sinyal minat tautan keluar</p>
+            </CardContent>
+          </Card>
+
+          <Card size="sm">
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0">
+              <CardDescription className="text-xs font-medium text-muted-foreground">
+                Pesan masuk (lead)
+              </CardDescription>
+              <InboxIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />
+            </CardHeader>
+            <CardContent className="space-y-1">
+              <p class="text-2xl font-bold tracking-[-0.02em] text-foreground tabular-nums">
+                {formatNumberId(insights.totals.leadSubmits)}
+              </p>
+              <p class="text-xs text-muted-foreground">Formulir tersimpan</p>
+            </CardContent>
+          </Card>
+        </section>
+
+        {!insights.hasAnyData ? (
+          <Card data-state-panel="empty-insights">
+            <CardContent className="flex flex-col items-start gap-3 py-8 sm:py-10">
+              <div class="flex items-center gap-2 text-muted-foreground">
+                <BarChart3Icon className="size-5 shrink-0" aria-hidden="true" />
+                <h2 class="text-base font-semibold text-foreground">
+                  Belum ada data wawasan dalam {selectedDays} hari terakhir
+                </h2>
+              </div>
+              <p class="max-w-xl text-sm text-muted-foreground">
+                Konten paling diminati, rincian sumber kunjungan (Pencarian, Media Sosial,
+                Kampanye, Langsung, Rujukan), dan jam ramai sesuai zona waktu{" "}
+                <span class="font-medium text-foreground">{insights.timeZoneLabel}</span> akan
+                muncul otomatis begitu pengunjung mulai membuka situs Anda.
+              </p>
+              <div class="flex flex-wrap items-center gap-2 pt-1">
+                <a
+                  href={publicSiteHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex min-h-11 items-center gap-1.5 rounded-md border border-border bg-card px-3.5 text-sm font-medium text-foreground transition-colors hover:bg-muted md:min-h-9"
+                >
+                  <span>Buka situs publik</span>
+                  <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
+                </a>
+              </div>
+            </CardContent>
+          </Card>
+        ) : (
+          <div class="space-y-6">
+            {/* 1. Popular Items */}
+            <Card data-testid="insights-popular-items">
+              <CardHeader className="border-b border-border">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="space-y-0.5">
+                    <CardTitle>Konten paling diminati</CardTitle>
+                    <CardDescription>
+                      Halaman, artikel, dan katalog/penawaran teratas berdasarkan kunjungan dan
+                      sinyal minat (estimasi).
+                    </CardDescription>
+                  </div>
+                  <Badge variant="outline" className="tabular-nums">
+                    {formatNumberId(insights.popularItems.length)} item teratas
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div class="hidden md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Konten</TableHead>
+                        <TableHead>Jenis</TableHead>
+                        <TableHead className="text-right">Kunjungan</TableHead>
+                        <TableHead className="text-right">Klik WA</TableHead>
+                        <TableHead className="text-right">Eksternal</TableHead>
+                        <TableHead className="text-right">Pesan</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {insights.popularItems.map((item) => (
+                        <TableRow>
+                          <TableCell className="max-w-xs">
+                            <p class="truncate font-medium text-foreground">{item.title}</p>
+                            <p class="truncate font-mono text-xs text-muted-foreground">
+                              {item.path}
+                            </p>
+                          </TableCell>
+                          <TableCell>
+                            <Badge variant="secondary">{item.contentKindLabel}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumberId(item.pageViews)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumberId(item.waClicks)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumberId(item.externalClicks)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums">
+                            {formatNumberId(item.leadSubmits)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+
+                <ul class="divide-y divide-border md:hidden">
+                  {insights.popularItems.map((item) => (
+                    <li class="space-y-2 px-4 py-3">
+                      <div class="flex items-start justify-between gap-2">
+                        <div class="min-w-0">
+                          <p class="truncate text-sm font-medium text-foreground">{item.title}</p>
+                          <p class="truncate font-mono text-xs text-muted-foreground">
+                            {item.path}
+                          </p>
+                        </div>
+                        <Badge variant="secondary" className="shrink-0">
+                          {item.contentKindLabel}
+                        </Badge>
+                      </div>
+                      <div class="grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                        <div class="flex justify-between gap-2">
+                          <span>Kunjungan</span>
+                          <span class="font-medium text-foreground tabular-nums">
+                            {formatNumberId(item.pageViews)}
+                          </span>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                          <span>Klik WA</span>
+                          <span class="font-medium text-foreground tabular-nums">
+                            {formatNumberId(item.waClicks)}
+                          </span>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                          <span>Eksternal</span>
+                          <span class="font-medium text-foreground tabular-nums">
+                            {formatNumberId(item.externalClicks)}
+                          </span>
+                        </div>
+                        <div class="flex justify-between gap-2">
+                          <span>Pesan</span>
+                          <span class="font-medium text-foreground tabular-nums">
+                            {formatNumberId(item.leadSubmits)}
+                          </span>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+            </Card>
+
+            {/* 2. Traffic Sources & Peak Hours */}
+            <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <Card data-testid="insights-sources-card">
+                <CardHeader className="border-b border-border">
+                  <div class="flex items-center justify-between gap-2">
+                    <div class="space-y-0.5">
+                      <CardTitle className="flex items-center gap-2">
+                        <GlobeIcon className="size-4 text-primary" aria-hidden="true" />
+                        <span>Sumber kunjungan</span>
+                      </CardTitle>
+                      <CardDescription>
+                        Kategori kasar kedatangan awal pengunjung (tanpa query mentah atau
+                        pelacakan individu).
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-4">
+                  <ul class="space-y-3">
+                    {visibleSources.map((src) => (
+                      <li class="space-y-1.5" data-source-bucket={src.bucket}>
+                        <div class="flex items-center justify-between gap-2 text-sm">
+                          <span class="font-medium text-foreground">{src.label}</span>
+                          <span class="text-xs text-muted-foreground tabular-nums">
+                            <strong class="font-semibold text-foreground">
+                              {formatNumberId(src.totalActivity)}
+                            </strong>{" "}
+                            ({formatPercentId(src.sharePercent)})
+                          </span>
+                        </div>
+                        <div class="h-2 w-full overflow-hidden rounded-full bg-muted">
+                          <div
+                            class="h-full rounded-full bg-primary"
+                            style={`width: ${Math.max(0, Math.min(100, src.sharePercent))}%`}
+                          />
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {insights.utmCampaigns.length > 0 && (
+                    <div class="space-y-2 border-t border-border pt-4" data-testid="insights-utm-list">
+                      <h3 class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        Rincian kampanye (utm_source)
+                      </h3>
+                      <ul class="divide-y divide-border rounded-md border border-border">
+                        {insights.utmCampaigns.map((camp) => (
+                          <li class="flex items-center justify-between gap-2 px-3 py-2 text-xs">
+                            <span class="truncate font-mono font-medium text-foreground">
+                              {camp.utmSource}
+                            </span>
+                            <span class="shrink-0 text-muted-foreground tabular-nums">
+                              {formatNumberId(camp.pageViews)} kunj. ·{" "}
+                              {formatNumberId(camp.waClicks + camp.externalClicks + camp.leadSubmits)}{" "}
+                              sinyal
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card data-testid="insights-peak-hours-card">
+                <CardHeader className="border-b border-border">
+                  <div class="flex flex-wrap items-center justify-between gap-2">
+                    <div class="space-y-0.5">
+                      <CardTitle className="flex items-center gap-2">
+                        <ClockIcon className="size-4 text-primary" aria-hidden="true" />
+                        <span>Jam ramai</span>
+                      </CardTitle>
+                      <CardDescription>
+                        Diproyeksikan dinamis ke zona waktu{" "}
+                        <strong class="font-medium text-foreground">
+                          {insights.timeZoneLabel}
+                        </strong>
+                        .
+                      </CardDescription>
+                    </div>
+                    {insights.peakHours.peakHour && (
+                      <Badge variant="outline" className="tabular-nums" data-testid="peak-hour-badge">
+                        Puncak: {insights.peakHours.peakHour.label} (
+                        {formatNumberId(insights.peakHours.peakHour.totalActivity)})
+                      </Badge>
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-4">
+                  <div
+                    role="img"
+                    aria-label={`Distribusi aktivitas 24 jam dalam zona waktu ${insights.timeZoneLabel}`}
+                    class="grid grid-cols-12 gap-1.5 sm:grid-cols-[repeat(24,minmax(0,1fr))]"
+                  >
+                    {insights.peakHours.hours.map((bucket) => {
+                      const pct =
+                        insights.peakHours.maxHourlyActivity > 0
+                          ? Math.round(
+                              (bucket.totalActivity / insights.peakHours.maxHourlyActivity) * 100,
+                            )
+                          : 0;
+                      const heightPct = bucket.totalActivity > 0 ? Math.max(12, pct) : 4;
+                      const isPeak = insights.peakHours.peakHour?.hour === bucket.hour;
+                      return (
+                        <div
+                          class="flex flex-col items-center gap-1"
+                          data-hour-bucket={bucket.hour}
+                          title={`${bucket.label}: ${formatNumberId(bucket.totalActivity)} aktivitas`}
+                        >
+                          <div class="flex h-20 w-full items-end rounded-xs bg-muted/60 p-0.5">
+                            <div
+                              class:list={[
+                                "w-full rounded-xs transition-all",
+                                isPeak
+                                  ? "bg-primary"
+                                  : bucket.totalActivity > 0
+                                    ? "bg-primary/65"
+                                    : "bg-border",
+                              ]}
+                              style={`height: ${heightPct}%`}
+                            />
+                          </div>
+                          <span class="text-[10px] leading-none text-muted-foreground tabular-nums">
+                            {String(bucket.hour).padStart(2, "0")}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {topPeakHours.length > 0 && (
+                    <div class="space-y-1.5 border-t border-border pt-3">
+                      <p class="text-xs font-semibold text-muted-foreground">
+                        Jam paling aktif ({insights.timeZoneLabel})
+                      </p>
+                      <ul class="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                        {topPeakHours.map((h) => (
+                          <li class="flex items-center justify-between rounded-sm border border-border bg-muted/30 px-2.5 py-1.5 text-xs">
+                            <span class="font-medium text-foreground tabular-nums">{h.label}</span>
+                            <span class="text-muted-foreground tabular-nums">
+                              {formatNumberId(h.totalActivity)} aktivitas
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        )}
+      </>
+    )}
+  </div>
+</DashboardLayout>
