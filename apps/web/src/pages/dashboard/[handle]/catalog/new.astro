@@ -1,0 +1,76 @@
+---
+import type { CatalogOfferingType } from "@punyasitus/core/catalog/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { OfferingEditorClient } from "./_OfferingEditorClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+
+function defaultOfferingType(): CatalogOfferingType {
+  switch (ctx.vertical) {
+    case "catalog":
+    case "resto":
+      return "product";
+    case "travel":
+      return "tour";
+    case "dealer":
+      return "vehicle";
+    default:
+      return "service";
+  }
+}
+---
+
+<DashboardLayout
+  title={`Tambah Penawaran — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="offering"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <OfferingEditorClient
+    client:only="react"
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialOffering={{
+      id: null,
+      offeringType: defaultOfferingType(),
+      title: "",
+      slug: "",
+      summary: "",
+      description: { schemaVersion: 1, blocks: [] },
+      coverMediaId: null,
+      galleryMediaIds: [],
+      youtubeVideoId: "",
+      priceMode: "fixed",
+      price: null,
+      priceMax: null,
+      negotiable: false,
+      originalAmount: null,
+      badge: "",
+      ctaMode: "inquiry",
+      ctaLabel: "",
+      externalUrl: "",
+      whatsappOverride: "",
+      whatsappTemplate: "",
+      unitStatus: "available",
+      attributes: {},
+      status: "draft",
+      version: 0,
+    }}
+  />
+</DashboardLayout>

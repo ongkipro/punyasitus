@@ -1,0 +1,82 @@
+---
+import { htmlToRestrictedRichTextDoc } from "@punyasitus/core/content/index";
+import { getCatalogOfferingById } from "@punyasitus/db/catalog/index";
+import {
+  neutralAdminNotFoundResponse,
+  resolveCmsAdminServerContext,
+} from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { OfferingEditorClient } from "./_OfferingEditorClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const rawId = (Astro.params.offeringId ?? "").trim();
+if (!/^[1-9]\d{0,9}$/.test(rawId)) {
+  return neutralAdminNotFoundResponse();
+}
+
+const { ctx } = resolved;
+const offering = await getCatalogOfferingById(ctx.tenantDb, Number(rawId));
+if (!offering) {
+  return neutralAdminNotFoundResponse();
+}
+
+const descriptionDoc =
+  offering.description && typeof offering.description === "object"
+    ? offering.description
+    : typeof offering.description === "string" && offering.description.trim()
+      ? htmlToRestrictedRichTextDoc(offering.description)
+      : { schemaVersion: 1 as const, blocks: [] };
+---
+
+<DashboardLayout
+  title={`Edit ${offering.title} — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="offering"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <OfferingEditorClient
+    client:only="react"
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialOffering={{
+      id: offering.id,
+      offeringType: offering.offeringType,
+      title: offering.title,
+      slug: offering.slug,
+      summary: offering.summary ?? "",
+      description: descriptionDoc,
+      coverMediaId: offering.coverMediaId,
+      galleryMediaIds: offering.galleryMediaIds,
+      youtubeVideoId: offering.youtubeVideoId ?? "",
+      priceMode: offering.priceMode,
+      price: offering.price,
+      priceMax: offering.priceMax,
+      negotiable: offering.negotiable,
+      originalAmount: offering.originalAmount,
+      badge: offering.badge ?? "",
+      ctaMode: offering.ctaMode,
+      ctaLabel: offering.ctaLabel ?? "",
+      externalUrl: offering.externalUrl ?? "",
+      whatsappOverride: offering.whatsappOverride ?? "",
+      whatsappTemplate: offering.whatsappTemplate ?? "",
+      unitStatus: offering.unitStatus,
+      attributes: (offering.attributes as Record<string, unknown>) ?? {},
+      status: offering.status,
+      version: offering.version,
+    }}
+  />
+</DashboardLayout>

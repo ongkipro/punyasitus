@@ -1,0 +1,53 @@
+---
+import { listPages } from "@punyasitus/db/pages/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { PagesListClient, type PageListItemDto } from "./_PagesListClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const list = await listPages(ctx.tenantDb, { status: "all", limit: 20, sortOrder: "desc" });
+
+const initialItems: PageListItemDto[] = list.items.map((p) => ({
+  id: p.id,
+  slug: p.slug,
+  title: p.title,
+  status: p.status,
+  isHomepage: p.isHomepage,
+  layoutMode: p.layoutMode,
+  hasUnpublishedChanges: p.hasUnpublishedChanges,
+  version: p.version,
+  updatedAt: p.updatedAt,
+  publishedAt: p.publishedAt,
+}));
+---
+
+<DashboardLayout
+  title={`Halaman — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="pages"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <PagesListClient
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialItems={initialItems}
+    initialNextCursor={list.page.nextCursor}
+    initialHasMore={list.page.hasMore}
+  />
+</DashboardLayout>

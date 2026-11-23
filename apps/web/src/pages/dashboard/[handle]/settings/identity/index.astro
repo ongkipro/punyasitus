@@ -1,0 +1,63 @@
+---
+import { getSiteIdentityForAdmin } from "@punyasitus/db/identity/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { IdentitySettingsClient } from "./_IdentitySettingsClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const identity = await getSiteIdentityForAdmin(ctx.tenantDb);
+
+const site = identity.siteSettings;
+const biz = identity.businessProfile;
+---
+
+<DashboardLayout
+  title={`Identitas Situs — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="settings"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <IdentitySettingsClient
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialIdentity={{
+      siteTitle: site?.siteTitle ?? ctx.workspaceName,
+      tagline: site?.tagline ?? "",
+      timezone: site?.timezone ?? "Asia/Jakarta",
+      locale: site?.locale ?? "id-ID",
+      logoMediaId: site?.logoMediaId ?? null,
+      faviconMediaId: site?.faviconMediaId ?? null,
+      businessName: biz?.businessName ?? ctx.workspaceName,
+      businessCategory: biz?.businessCategory ?? "LocalBusiness",
+      description: biz?.description ?? "",
+      email: biz?.email ?? "",
+      phone: biz?.phone ?? "",
+      whatsappE164: biz?.whatsappE164 ?? "",
+      address: biz?.address ?? "",
+      city: biz?.city ?? "",
+      province: biz?.province ?? "",
+      postalCode: biz?.postalCode ?? "",
+      mapsUrl: biz?.mapsUrl ?? "",
+      weekdayHours: biz?.weekdayHours ?? "",
+      holidayHours: biz?.holidayHours ?? "",
+      hasUnpublishedChanges: identity.hasUnpublishedChanges,
+      version: identity.version,
+    }}
+  />
+</DashboardLayout>

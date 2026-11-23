@@ -1,0 +1,57 @@
+---
+import { listBlogTaxonomies } from "@punyasitus/db/posts/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { PostEditorClient } from "./_PostEditorClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const [catsRes, tagsRes] = await Promise.all([
+  listBlogTaxonomies(ctx.tenantDb, { kind: "post_category", limit: 100 }),
+  listBlogTaxonomies(ctx.tenantDb, { kind: "post_tag", limit: 100 }),
+]);
+---
+
+<DashboardLayout
+  title={`Artikel Baru — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="articles"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <PostEditorClient
+    client:only="react"
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialPost={{
+      id: null,
+      title: "",
+      slug: "",
+      excerpt: "",
+      body: { schemaVersion: 1, blocks: [] },
+      status: "draft",
+      featuredMediaId: null,
+      primaryCategoryId: null,
+      categoryIds: [],
+      tagIds: [],
+      enableToc: true,
+      hasUnpublishedChanges: true,
+      version: 0,
+    }}
+    categories={catsRes.items.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
+    tags={tagsRes.items.map((t) => ({ id: t.id, name: t.name, slug: t.slug }))}
+  />
+</DashboardLayout>
