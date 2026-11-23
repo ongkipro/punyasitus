@@ -1,12 +1,19 @@
 ---
+import {
+  MAX_YOUTUBE_VIDEOS_PER_GALLERY,
+  sanitizeYouTubePosterUrl,
+} from "@punyasitus/core/media/youtube";
 import type { GallerySectionConfig } from "@punyasitus/core/theme/index";
+import YouTubeFacade from "../components/YouTubeFacade.astro";
 
 /**
  * Semantic Gallery Section (`apps/web/src/themes/default/sections/SectionGallery.astro`).
  *
- * Renders responsive image cards with reserved aspect ratio and privacy-safe
- * zero-network-request YouTube video placeholders ready for downstream `TASK-089`
- * click-to-load `YouTubeFacade.astro` integration (zero raw `<iframe>` embeds).
+ * Renders responsive image cards with reserved aspect ratio and privacy-preserving
+ * click-to-load `<YouTubeFacade>` video cards (REQ-089, TASK-089):
+ * - Zero `<iframe>` in initial SSR HTML
+ * - Zero external `ytimg.com` / YouTube network requests before explicit visitor click
+ * - Enforces at most 3 YouTube video items per gallery section
  */
 
 export interface Props {
@@ -27,6 +34,15 @@ const {
 
 const headingId = `section-${id}-heading`;
 const gridClass = `ps-gallery-grid ps-gallery-grid--${config.columns}`;
+
+let youtubeCount = 0;
+const renderableItems = config.items.filter((item) => {
+  if (item.kind !== "youtube") return true;
+  youtubeCount += 1;
+  return youtubeCount <= MAX_YOUTUBE_VIDEOS_PER_GALLERY;
+});
+
+let youtubeRenderIndex = 0;
 ---
 
 <section
@@ -52,50 +68,33 @@ const gridClass = `ps-gallery-grid ps-gallery-grid--${config.columns}`;
       {config.subheading && <p class="ps-section-subtitle">{config.subheading}</p>}
     </header>
 
-    {config.items.length > 0 ? (
+    {renderableItems.length > 0 ? (
       <div class={gridClass}>
-        {config.items.map((item) =>
-          item.kind === "youtube" ? (
-            <figure
-              class="ps-gallery-item"
-              data-gallery-item-kind="youtube"
-              data-youtube-video-id={item.videoId}
-            >
-              <div class="ps-gallery-video-facade">
-                {item.posterUrl && (
-                  <div class="ps-gallery-frame">
-                    <img
-                      src={item.posterUrl}
-                      alt={item.title}
-                      width="1200"
-                      height="800"
-                      loading="lazy"
-                      decoding="async"
-                    />
-                  </div>
-                )}
-                <div>
-                  <span class="ps-badge">Video YouTube</span>
-                  <h3 class="ps-card-title" style="margin-top: 0.5rem;">
-                    {item.title}
-                  </h3>
-                  <p class="ps-card-desc" style="margin-top: 0.25rem;">
-                    Video eksternal tidak dimuat otomatis demi privasi pengunjung.
-                  </p>
-                </div>
-                <a
-                  href={isPreview ? undefined : `https://www.youtube.com/watch?v=${item.videoId}`}
-                  class:list={["ps-btn ps-btn--secondary", isPreview && "ps-btn--inert"]}
-                  aria-disabled={isPreview ? "true" : undefined}
-                  target={isPreview ? undefined : "_blank"}
-                  rel={isPreview ? undefined : "noopener noreferrer"}
-                >
-                  Tonton di YouTube
-                </a>
-              </div>
-              {item.caption && <figcaption class="ps-gallery-caption">{item.caption}</figcaption>}
-            </figure>
-          ) : (
+        {renderableItems.map((item) => {
+          if (item.kind === "youtube") {
+            const currentYtIdx = youtubeRenderIndex;
+            youtubeRenderIndex += 1;
+            const safePoster = sanitizeYouTubePosterUrl(item.posterUrl);
+            return (
+              <figure
+                class="ps-gallery-item"
+                data-gallery-item-kind="youtube"
+                data-youtube-video-id={item.videoId}
+              >
+                <YouTubeFacade
+                  videoId={item.videoId}
+                  title={item.title}
+                  posterUrl={safePoster}
+                  mode={isPreview ? "preview" : "published"}
+                  context="gallery"
+                  testId={`section-${id}-youtube-${currentYtIdx}`}
+                />
+                {item.caption && <figcaption class="ps-gallery-caption">{item.caption}</figcaption>}
+              </figure>
+            );
+          }
+
+          return (
             <figure class="ps-gallery-item" data-gallery-item-kind="image">
               <div class="ps-gallery-frame">
                 <img
@@ -109,8 +108,8 @@ const gridClass = `ps-gallery-grid ps-gallery-grid--${config.columns}`;
               </div>
               {item.caption && <figcaption class="ps-gallery-caption">{item.caption}</figcaption>}
             </figure>
-          ),
-        )}
+          );
+        })}
       </div>
     ) : (
       <p class="ps-empty-state">Belum ada dokumentasi galeri yang ditambahkan.</p>
