@@ -39,6 +39,7 @@ import {
 } from "@/components/admin/editor";
 import type { CmsAdminPermissions } from "@/components/admin/editor/cms-server-context";
 import { MediaPickerSheet, type MediaLibraryItemDto } from "@/components/admin/media";
+import { RevisionHistoryPanel } from "@/components/admin/revisions";
 import { SeoOverrideDrawer } from "@/components/admin/seo";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -1039,6 +1040,56 @@ export function PostEditorClient({
         readOnly={readOnly}
         fieldErrors={fieldErrors}
       />
+
+      {postId !== null && (
+        <RevisionHistoryPanel
+          handle={handle}
+          resourceType="post"
+          resourceId={postId}
+          currentVersion={version}
+          readOnly={readOnly}
+          onStaleConflict={(msg) => setConflictMessage(msg)}
+          onReloadLatest={handleReloadLatest}
+          onRestored={async (result) => {
+            const restoredPost = result.resource as Partial<
+              PostEditorInitialData & { readonly excerpt: string | null }
+            >;
+            if (typeof restoredPost.title === "string") setTitle(restoredPost.title);
+            if (typeof restoredPost.slug === "string") setSlug(restoredPost.slug);
+            if (restoredPost.excerpt !== undefined) setExcerpt(restoredPost.excerpt ?? "");
+            if (restoredPost.body && typeof restoredPost.body === "object") {
+              setBody(restoredPost.body);
+            }
+            if (restoredPost.featuredMediaId !== undefined) {
+              setFeaturedMediaId(restoredPost.featuredMediaId);
+            }
+            if (restoredPost.authorId !== undefined) setAuthorId(restoredPost.authorId ?? null);
+            if (restoredPost.primaryCategoryId !== undefined) {
+              setPrimaryCategoryId(restoredPost.primaryCategoryId);
+            }
+            if (Array.isArray(restoredPost.categoryIds)) setCategoryIds(restoredPost.categoryIds);
+            if (Array.isArray(restoredPost.tagIds)) setTagIds(restoredPost.tagIds);
+            if (typeof restoredPost.enableToc === "boolean") setEnableToc(restoredPost.enableToc);
+            if (restoredPost.seo !== undefined) setSeo(restoredPost.seo ?? {});
+            setStatus(result.status);
+            setVersion(result.version);
+            setHasUnpublishedChanges(result.hasUnpublishedChanges);
+            setIsDirty(false);
+            setSeoDirty(false);
+            setConflictMessage(null);
+            setFieldErrors({});
+            const warnSuffix =
+              result.warnings.length > 0
+                ? ` Catatan: ${result.warnings.map((w) => w.message).join(" ")}`
+                : "";
+            setBanner({
+              tone: "success",
+              title: `Revisi #${result.restoredFromRevisionNumber} dipulihkan sebagai draf`,
+              message: `Draf artikel diperbarui ke versi v${result.version}. Artikel publik tidak berubah sampai Anda klik Terbitkan.${warnSuffix}`,
+            });
+          }}
+        />
+      )}
 
       <MediaPickerSheet
         open={mediaPickerMode !== null}

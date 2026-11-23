@@ -38,6 +38,9 @@ import {
   publishResourceAtomically,
   unpublishResourceAtomically,
 } from "../publication/index.ts";
+import { buildAppendRevisionStatements } from "../revisions/append.ts";
+import { hasContentRevisionHistoryColumns } from "../revisions/migrations.ts";
+import { buildRevisionSummaryText } from "../revisions/validation.ts";
 import { ensurePagesLayoutModeColumn } from "./migrations.ts";
 
 export {
@@ -98,6 +101,7 @@ export interface CreatePageInput {
   readonly layoutMode?: PageLayoutMode;
   readonly sections?: unknown;
   readonly seo?: unknown;
+  readonly actorUserId?: string | null;
   readonly nowMs?: number;
 }
 
@@ -111,6 +115,7 @@ export interface UpdatePageInput {
   readonly layoutMode?: PageLayoutMode;
   readonly sections?: unknown;
   readonly seo?: unknown;
+  readonly actorUserId?: string | null;
   readonly nowMs?: number;
 }
 
@@ -435,7 +440,10 @@ export async function createPage(
   }
 
   // Allocate monotonic per-tenant sequential ID atomically
-  const pageId = await allocateNextSequenceId(tenantDb, "page");
+  const [pageId, hasRevisionHistory] = await Promise.all([
+    allocateNextSequenceId(tenantDb, "page"),
+    hasContentRevisionHistoryColumns(tenantDb),
+  ]);
 
   if (manualSlug !== null) {
     const serialized = serializeDraftStoragePayload("page", {
@@ -447,35 +455,51 @@ export async function createPage(
       seo,
     });
 
+    const createManualStmts: D1PreparedStatement[] = [
+      tenantDb
+        .prepare(
+          `INSERT INTO resource_slugs (namespace, slug, resource_id, is_current, redirect_target_slug, updated_at)
+           VALUES ('pages', ?, ?, 1, NULL, ?)`,
+        )
+        .bind(manualSlug, pageId, nowMs),
+      tenantDb
+        .prepare(
+          `INSERT INTO pages (
+             id, slug, title, is_homepage, layout_mode,
+             draft_sections_json, published_sections_json, seo_json,
+             status, published_at, content_modified_at, deleted_at,
+             version, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'draft', NULL, NULL, NULL, 1, ?, ?)`,
+        )
+        .bind(
+          pageId,
+          manualSlug,
+          serialized.data.title,
+          isHomepage ? 1 : 0,
+          layoutMode,
+          serialized.json,
+          serialized.data.seo ? JSON.stringify(serialized.data.seo) : null,
+          nowMs,
+          nowMs,
+        ),
+    ];
+
+    if (hasRevisionHistory) {
+      createManualStmts.push(
+        ...buildAppendRevisionStatements(tenantDb, {
+          resourceType: "page",
+          resourceId: pageId,
+          triggerKind: "save",
+          data: serialized.data as unknown as Record<string, unknown>,
+          actorUserId: input.actorUserId ?? null,
+          nowMs,
+          hasExtendedColumns: true,
+        }),
+      );
+    }
+
     try {
-      await tenantDb.batch([
-        tenantDb
-          .prepare(
-            `INSERT INTO resource_slugs (namespace, slug, resource_id, is_current, redirect_target_slug, updated_at)
-             VALUES ('pages', ?, ?, 1, NULL, ?)`,
-          )
-          .bind(manualSlug, pageId, nowMs),
-        tenantDb
-          .prepare(
-            `INSERT INTO pages (
-               id, slug, title, is_homepage, layout_mode,
-               draft_sections_json, published_sections_json, seo_json,
-               status, published_at, content_modified_at, deleted_at,
-               version, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'draft', NULL, NULL, NULL, 1, ?, ?)`,
-          )
-          .bind(
-            pageId,
-            manualSlug,
-            serialized.data.title,
-            isHomepage ? 1 : 0,
-            layoutMode,
-            serialized.json,
-            serialized.data.seo ? JSON.stringify(serialized.data.seo) : null,
-            nowMs,
-            nowMs,
-          ),
-      ]);
+      await tenantDb.batch(createManualStmts);
     } catch (err) {
       if (isUniqueConstraintError(err)) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -531,35 +555,51 @@ export async function createPage(
       seo,
     });
 
+    const createAutoStmts: D1PreparedStatement[] = [
+      tenantDb
+        .prepare(
+          `INSERT INTO resource_slugs (namespace, slug, resource_id, is_current, redirect_target_slug, updated_at)
+           VALUES ('pages', ?, ?, 1, NULL, ?)`,
+        )
+        .bind(candidate, pageId, nowMs),
+      tenantDb
+        .prepare(
+          `INSERT INTO pages (
+             id, slug, title, is_homepage, layout_mode,
+             draft_sections_json, published_sections_json, seo_json,
+             status, published_at, content_modified_at, deleted_at,
+             version, created_at, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'draft', NULL, NULL, NULL, 1, ?, ?)`,
+        )
+        .bind(
+          pageId,
+          candidate,
+          serialized.data.title,
+          isHomepage ? 1 : 0,
+          layoutMode,
+          serialized.json,
+          serialized.data.seo ? JSON.stringify(serialized.data.seo) : null,
+          nowMs,
+          nowMs,
+        ),
+    ];
+
+    if (hasRevisionHistory) {
+      createAutoStmts.push(
+        ...buildAppendRevisionStatements(tenantDb, {
+          resourceType: "page",
+          resourceId: pageId,
+          triggerKind: "save",
+          data: serialized.data as unknown as Record<string, unknown>,
+          actorUserId: input.actorUserId ?? null,
+          nowMs,
+          hasExtendedColumns: true,
+        }),
+      );
+    }
+
     try {
-      await tenantDb.batch([
-        tenantDb
-          .prepare(
-            `INSERT INTO resource_slugs (namespace, slug, resource_id, is_current, redirect_target_slug, updated_at)
-             VALUES ('pages', ?, ?, 1, NULL, ?)`,
-          )
-          .bind(candidate, pageId, nowMs),
-        tenantDb
-          .prepare(
-            `INSERT INTO pages (
-               id, slug, title, is_homepage, layout_mode,
-               draft_sections_json, published_sections_json, seo_json,
-               status, published_at, content_modified_at, deleted_at,
-               version, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, 'draft', NULL, NULL, NULL, 1, ?, ?)`,
-          )
-          .bind(
-            pageId,
-            candidate,
-            serialized.data.title,
-            isHomepage ? 1 : 0,
-            layoutMode,
-            serialized.json,
-            serialized.data.seo ? JSON.stringify(serialized.data.seo) : null,
-            nowMs,
-            nowMs,
-          ),
-      ]);
+      await tenantDb.batch(createAutoStmts);
 
       const created = await getPageById(tenantDb, pageId);
       if (!created) {
@@ -708,6 +748,7 @@ export interface UpdatePageOptions {
    */
   readonly platformDb?: D1Database;
   readonly tenantId?: string;
+  readonly actorUserId?: string | null;
 }
 
 function rewritePublishedEnvelopeSlug(
@@ -918,9 +959,27 @@ export async function updatePage(
             input.expectedVersion,
           );
 
+  const hasRevisionHistory = await hasContentRevisionHistoryColumns(tenantDb);
+  const pageUpdateGuard = {
+    sql: "EXISTS (SELECT 1 FROM pages WHERE id = ? AND version = ? AND draft_sections_json = ? AND updated_at = ? AND deleted_at IS NULL)",
+    binds: [input.pageId, nextVersion, serialized.json, nowMs] as const,
+  };
+
   const batchStmts: D1PreparedStatement[] = [
     updateStmt,
     ...(slugTransition ? slugTransition.statements : []),
+    ...(hasRevisionHistory
+      ? buildAppendRevisionStatements(tenantDb, {
+          resourceType: "page",
+          resourceId: input.pageId,
+          triggerKind: "save",
+          data: serialized.data as unknown as Record<string, unknown>,
+          actorUserId: input.actorUserId ?? options.actorUserId ?? null,
+          nowMs,
+          hasExtendedColumns: true,
+          guard: pageUpdateGuard,
+        })
+      : []),
   ];
 
   let batchResults: D1Result[];
@@ -1107,12 +1166,31 @@ export async function publishPage(
     nowMs,
   });
 
-  // Atomically sync `pages.layout_mode` and `resource_slugs` gated on the exact published `(id, slug, version)`
+  // Atomically sync `pages.layout_mode`, revision metadata (when 0023 migrated), and `resource_slugs` gated on the exact published `(id, slug, version)`
+  const hasRevisionHistory = await hasContentRevisionHistoryColumns(tenantDb);
   const postPublishStmts: D1PreparedStatement[] = [
     tenantDb
       .prepare(`UPDATE pages SET layout_mode = ? WHERE id = ? AND version = ?`)
       .bind(published.publishedSnapshot.data.layoutMode, input.pageId, published.version),
   ];
+
+  if (hasRevisionHistory && published.revisionNumber !== null) {
+    const pubSummary = buildRevisionSummaryText({
+      resourceType: "page",
+      triggerKind: "publish",
+      title: published.publishedSnapshot.data.title,
+      slug: published.publishedSnapshot.data.slug,
+    });
+    postPublishStmts.push(
+      tenantDb
+        .prepare(
+          `UPDATE content_revisions
+           SET trigger_kind = 'publish', schema_version = 1, summary = ?
+           WHERE resource_type = 'page' AND resource_id = ? AND revision_number = ?`,
+        )
+        .bind(pubSummary, input.pageId, published.revisionNumber),
+    );
+  }
 
   if (slugTransition && slugTransition.statements.length > 0) {
     postPublishStmts.push(...slugTransition.statements);
