@@ -7,9 +7,19 @@ import {
   resolveConsoleHostContext,
 } from "@punyasitus/auth/platform/index";
 import { listAbuseReports } from "@punyasitus/db/abuse/index";
+import {
+  listScreeningReviews,
+  listScreeningRules,
+  listTrustWatchRuns,
+} from "@punyasitus/db/content-screening/index";
 import ConsoleLayout from "../../../layouts/ConsoleLayout.astro";
+import {
+  DEFAULT_FALLBACK_SAAS_ZONE,
+  DEFAULT_PRIMARY_SAAS_ZONE,
+} from "../../../worker/cron/trust-watch.ts";
 import { buildConsoleAbuseRuntimeEnv } from "../../api/console/abuse/_shared.ts";
 import { AbuseQueuePanel } from "./_AbuseQueuePanel";
+import { SharedDomainProtectionPanel } from "./_SharedDomainProtectionPanel";
 
 Astro.response.headers.set("Cache-Control", "private, no-store");
 Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
@@ -62,6 +72,30 @@ if (!authz.ok) {
 const { actor, platformDb, nowMs, host } = authz.ctx;
 
 let initialQueue = await listAbuseReports(platformDb, { status: "all", limit: 20 });
+let initialScreening = {
+  items: [] as Awaited<ReturnType<typeof listScreeningReviews>>["items"],
+  counts: { all: 0, held_for_review: 0, released: 0, rejected: 0, takedown: 0 },
+};
+let initialTrustRuns: Awaited<ReturnType<typeof listTrustWatchRuns>> = [];
+let initialRules: Awaited<ReturnType<typeof listScreeningRules>> = {
+  operatorRules: [],
+  builtinRulesCount: 0,
+  effectiveActiveCount: 0,
+  rulesetVersion: 1,
+};
+try {
+  const [scrRes, trustRes, rulesRes] = await Promise.all([
+    listScreeningReviews(platformDb, { status: "all", limit: 20 }),
+    listTrustWatchRuns(platformDb, 5),
+    listScreeningRules(platformDb),
+  ]);
+  initialScreening = { items: scrRes.items, counts: scrRes.counts };
+  initialTrustRuns = trustRes;
+  initialRules = rulesRes;
+} catch {
+  // Graceful empty fallback if migration 0025 is not applied in legacy test DB fixtures.
+}
+const primarySaasZone = runtimeEnv.SAAS_ZONE || DEFAULT_PRIMARY_SAAS_ZONE;
 const stepUpFresh =
   actor.twoFactorVerifiedAtMs !== null &&
   nowMs - actor.twoFactorVerifiedAtMs <= DEFAULT_SECOND_FACTOR_WINDOW_MS;
@@ -138,6 +172,18 @@ const navLinks = [
       initialCounts={initialQueue.counts}
       initialNextCursor={initialQueue.page.nextCursor}
       initialHasMore={initialQueue.page.hasMore}
+      stepUpFresh={stepUpFresh}
+    />
+
+    <SharedDomainProtectionPanel
+      client:load
+      initialReviews={initialScreening.items}
+      initialCounts={initialScreening.counts}
+      initialLatestTrustRun={initialTrustRuns[0] ?? null}
+      initialOperatorRules={initialRules.operatorRules}
+      builtinRulesCount={initialRules.builtinRulesCount}
+      primarySaasZone={primarySaasZone}
+      fallbackSaasZone={DEFAULT_FALLBACK_SAAS_ZONE}
       stepUpFresh={stepUpFresh}
     />
   </div>

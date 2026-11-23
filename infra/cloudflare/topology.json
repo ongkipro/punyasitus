@@ -120,6 +120,8 @@
         "cnameTarget": "cname.situsku.click",
         "trustPlusCheckRequired": true,
         "trustPlusFallbackTld": ".my.id",
+        "trustPlusListUrl": "https://trustpositif.komdigi.go.id/assets/db/ipaddress_isp",
+        "fallbackZone": "situsku.my.id",
         "dnsRecords": [
           {
             "type": "AAAA",
@@ -240,8 +242,112 @@
         },
         "cloudflareForSaasZoneIdVar": "CF_SAAS_ZONE_ID",
         "cloudflareForSaasApiTokenSecretName": "CF_SAAS_ZONE_API_TOKEN",
+        "fallbackSaasZoneIdVar": "CF_FALLBACK_SAAS_ZONE_ID",
+        "fallbackSaasApiTokenSecretName": "CF_FALLBACK_SAAS_ZONE_API_TOKEN",
         "authSecretName": "AUTH_SECRET",
         "consoleAuthSecretName": "CONSOLE_AUTH_SECRET"
+      },
+      "fallbackSaasZone": {
+        "zone": "situsku.my.id",
+        "role": "standby_fallback",
+        "activationMode": "manual_operator_runbook",
+        "automaticFailover": false,
+        "cloudflareForSaas": true,
+        "fallbackOrigin": "fallback.situsku.my.id",
+        "cnameTarget": "cname.situsku.my.id",
+        "trustPlusPreChecked": true,
+        "trustPlusCheckRequired": true,
+        "runbookPath": "docs/operations/trust-positif.md",
+        "eligibleSubdomainTiers": ["trial", "active_subdomain"],
+        "customDomainsAffected": false,
+        "dnsRecords": [
+          {
+            "type": "AAAA",
+            "name": "@",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "originless-fallback-saas-zone-apex-redirect"
+          },
+          {
+            "type": "AAAA",
+            "name": "*",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "originless-fallback-tenant-subdomains"
+          },
+          {
+            "type": "AAAA",
+            "name": "fallback",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "fallback-zone-cloudflare-for-saas-fallback-origin"
+          },
+          {
+            "type": "CNAME",
+            "name": "cname",
+            "content": "fallback.situsku.my.id",
+            "proxied": true,
+            "purpose": "fallback-zone-customer-custom-hostname-cname-target"
+          }
+        ],
+        "workerRoutes": [
+          {
+            "pattern": "*/*",
+            "worker": "punyasitus-web",
+            "purpose": "standby-fallback-subdomains-and-custom-hostnames"
+          },
+          {
+            "pattern": "cname.situsku.my.id/*",
+            "worker": "punyasitus-web",
+            "purpose": "standby-fallback-o2o-proxied-customer-zones"
+          }
+        ],
+        "o2o": {
+          "supported": true,
+          "indicatorHeader": "cf-connecting-o2o",
+          "expectedIndicatorValue": "1",
+          "createHostnameBeforeCustomerCname": true,
+          "requiredCustomerSslModes": ["full", "strict"],
+          "preValidationSupported": false
+        },
+        "zoneSettings": {
+          "markdown_for_agents": true,
+          "bot_fight_mode": false,
+          "ssl_mode": "strict",
+          "always_use_https": true,
+          "min_tls_version": "1.2"
+        },
+        "waf": {
+          "planTier": "free",
+          "maxCustomRulesPerZone": 5,
+          "maxRateLimitRulesPerZone": 1,
+          "customRules": [
+            {
+              "id": "ps-prod-fallback-skip-http-dcv",
+              "description": "Bypass WAF challenges for HTTP DCV paths on fallback tenant zone",
+              "expression": "(starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\") or starts_with(http.request.uri.path, \"/.well-known/pki-validation/\"))",
+              "action": "skip"
+            },
+            {
+              "id": "ps-prod-fallback-block-sensitive-probes",
+              "description": "Block dotfile and legacy PHP probes on fallback tenant zone",
+              "expression": "(http.request.uri.path matches \"^/(\\\\.env|\\\\.git|wp-login\\\\.php|xmlrpc\\\\.php)\")",
+              "action": "block"
+            }
+          ],
+          "rateLimitRules": [
+            {
+              "id": "ps-prod-fallback-public-writes-ratelimit",
+              "description": "Edge burst cap for anonymous public POST endpoints on fallback tenant zone",
+              "expression": "(http.request.method eq \"POST\" and http.request.uri.path in {\"/api/leads\" \"/api/events\" \"/api/abuse-report\"})",
+              "characteristics": ["ip.src"],
+              "requestsPerPeriod": 30,
+              "periodSeconds": 10,
+              "mitigationTimeoutSeconds": 10,
+              "action": "block"
+            }
+          ]
+        }
       },
       "resources": {
         "d1": "punyasitus-platform",
@@ -444,8 +550,106 @@
         },
         "cloudflareForSaasZoneIdVar": "CF_SAAS_ZONE_ID",
         "cloudflareForSaasApiTokenSecretName": "CF_SAAS_ZONE_API_TOKEN",
+        "fallbackSaasZoneIdVar": "CF_FALLBACK_SAAS_ZONE_ID",
+        "fallbackSaasApiTokenSecretName": "CF_FALLBACK_SAAS_ZONE_API_TOKEN",
         "authSecretName": "AUTH_SECRET",
         "consoleAuthSecretName": "CONSOLE_AUTH_SECRET"
+      },
+      "fallbackSaasZone": {
+        "zone": "situsku-staging.my.id",
+        "role": "standby_fallback",
+        "activationMode": "manual_operator_runbook",
+        "automaticFailover": false,
+        "cloudflareForSaas": true,
+        "fallbackOrigin": "fallback.situsku-staging.my.id",
+        "cnameTarget": "cname.situsku-staging.my.id",
+        "trustPlusPreChecked": true,
+        "trustPlusCheckRequired": true,
+        "runbookPath": "docs/operations/trust-positif.md",
+        "eligibleSubdomainTiers": ["trial", "active_subdomain"],
+        "customDomainsAffected": false,
+        "dnsRecords": [
+          {
+            "type": "AAAA",
+            "name": "@",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "originless-staging-fallback-saas-zone-apex-redirect"
+          },
+          {
+            "type": "AAAA",
+            "name": "*",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "originless-staging-fallback-tenant-subdomains"
+          },
+          {
+            "type": "AAAA",
+            "name": "fallback",
+            "content": "100::",
+            "proxied": true,
+            "purpose": "staging-fallback-zone-cloudflare-for-saas-fallback-origin"
+          },
+          {
+            "type": "CNAME",
+            "name": "cname",
+            "content": "fallback.situsku-staging.my.id",
+            "proxied": true,
+            "purpose": "staging-fallback-zone-customer-custom-hostname-cname-target"
+          }
+        ],
+        "workerRoutes": [
+          {
+            "pattern": "*/*",
+            "worker": "punyasitus-web-staging",
+            "purpose": "staging-standby-fallback-subdomains-and-custom-hostnames"
+          },
+          {
+            "pattern": "cname.situsku-staging.my.id/*",
+            "worker": "punyasitus-web-staging",
+            "purpose": "staging-standby-fallback-o2o-proxied-customer-zones"
+          }
+        ],
+        "o2o": {
+          "supported": true,
+          "indicatorHeader": "cf-connecting-o2o",
+          "expectedIndicatorValue": "1",
+          "createHostnameBeforeCustomerCname": true,
+          "requiredCustomerSslModes": ["full", "strict"],
+          "preValidationSupported": false
+        },
+        "zoneSettings": {
+          "markdown_for_agents": true,
+          "bot_fight_mode": false,
+          "ssl_mode": "strict",
+          "always_use_https": true,
+          "min_tls_version": "1.2"
+        },
+        "waf": {
+          "planTier": "free",
+          "maxCustomRulesPerZone": 5,
+          "maxRateLimitRulesPerZone": 1,
+          "customRules": [
+            {
+              "id": "ps-stg-fallback-skip-http-dcv",
+              "description": "Bypass WAF challenges for HTTP DCV paths on staging fallback zone",
+              "expression": "(starts_with(http.request.uri.path, \"/.well-known/acme-challenge/\") or starts_with(http.request.uri.path, \"/.well-known/pki-validation/\"))",
+              "action": "skip"
+            }
+          ],
+          "rateLimitRules": [
+            {
+              "id": "ps-stg-fallback-public-writes-ratelimit",
+              "description": "Edge burst cap for anonymous public POST endpoints on staging fallback zone",
+              "expression": "(http.request.method eq \"POST\" and http.request.uri.path in {\"/api/leads\" \"/api/events\" \"/api/abuse-report\"})",
+              "characteristics": ["ip.src"],
+              "requestsPerPeriod": 30,
+              "periodSeconds": 10,
+              "mitigationTimeoutSeconds": 10,
+              "action": "block"
+            }
+          ]
+        }
       },
       "resources": {
         "d1": "punyasitus-platform-staging",
