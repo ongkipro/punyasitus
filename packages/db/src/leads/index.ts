@@ -7,11 +7,30 @@ import {
   type EmailSendRequest,
 } from "@punyasitus/core/email/index";
 import {
+  DEFAULT_TENANT_TIMEZONE,
+  formatPreferredDateIndonesian,
+  formatPreferredTimeLabelId,
+  normalizeTenantTimeZone,
+  parseOptionalBranchId,
+  sanitizeBranchLabelForDisplay,
+  validatePreferredDate,
+  validatePreferredTime,
+} from "@punyasitus/core/leads/index";
+import {
   buildWhatsAppUrl,
   normalizeIndonesianWhatsAppNumber,
   WhatsAppValidationError,
 } from "@punyasitus/core/wa-dispatcher";
 import type { LeadInsertInput } from "../lead-dedup/index.ts";
+import { hasLeadPreferredBranchLabelColumn } from "./migrations.ts";
+
+export {
+  applyTenantLeadPreferredScheduleMigrations,
+  hasLeadPreferredBranchLabelColumn,
+  LEAD_PREFERRED_SCHEDULE_MIGRATION,
+  TENANT_0024_LEAD_PREFERRED_SCHEDULE_SQL,
+  TENANT_MIGRATIONS_WITH_LEAD_PREFERRED_SCHEDULE,
+} from "./migrations.ts";
 
 /**
  * Per-Tenant Native Lead Capture & Inbox Repository (`packages/db/src/leads/index.ts`;
@@ -76,6 +95,7 @@ export const PUBLIC_LEAD_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   "preferred_time",
   "preferredTime",
   "branch",
+  "branch_id",
   "branchId",
   "sourcePath",
   "pagePath",
@@ -171,6 +191,7 @@ export interface LeadRecord {
   readonly preferredDate: string | null;
   readonly preferredTime: LeadPreferredTime | null;
   readonly branchId: number | null;
+  readonly preferredBranchLabel?: string | null;
   readonly sourceCategory: string;
   readonly utm: LeadUtmAttribution | null;
   readonly pagePath: string | null;
@@ -230,6 +251,7 @@ interface RawLeadRow {
   readonly preferred_date: string | null;
   readonly preferred_time: string | null;
   readonly branch_id: number | null;
+  readonly preferred_branch_label?: string | null;
   readonly source_category: string;
   readonly utm_json: string | null;
   readonly page_path: string | null;
@@ -401,7 +423,12 @@ function parseOptionalUtm(
  */
 export function validatePublicLeadSubmission(
   rawPayload: Readonly<Record<string, unknown>>,
-  options: { readonly requirePrivacyConsent?: boolean } = {},
+  options: {
+    readonly requirePrivacyConsent?: boolean;
+    readonly nowMs?: number;
+    readonly timeZone?: string | null;
+    readonly enforceDateBounds?: boolean;
+  } = {},
 ):
   | { readonly ok: true; readonly data: ValidatedPublicLeadSubmission }
   | { readonly ok: false; readonly message: string; readonly fields: readonly LeadValidationField[] } {
@@ -549,57 +576,118 @@ export function validatePublicLeadSubmission(
     });
   }
 
-  // 6. Optional preferred_date & preferred_time
-  const rawPreferredDate =
-    rawPayload.preferred_date !== undefined ? rawPayload.preferred_date : rawPayload.preferredDate;
+  // 6. Optional preferred_date & preferred_time (REQ-072, PLAN §6 & §18.4)
+  const hasSnakeDate =
+    rawPayload.preferred_date !== undefined &&
+    rawPayload.preferred_date !== null &&
+    rawPayload.preferred_date !== "";
+  const hasCamelDate =
+    rawPayload.preferredDate !== undefined &&
+    rawPayload.preferredDate !== null &&
+    rawPayload.preferredDate !== "";
+  const rawPreferredDate = hasSnakeDate ? rawPayload.preferred_date : rawPayload.preferredDate;
   let preferredDate: string | null = null;
-  if (rawPreferredDate !== undefined && rawPreferredDate !== null && rawPreferredDate !== "") {
-    if (typeof rawPreferredDate !== "string" || !isValidIsoCalendarDate(rawPreferredDate.trim())) {
-      fields.push({
-        field: "preferred_date",
-        code: "INVALID_DATE",
-        message: "Tanggal pilihan harus menggunakan format YYYY-MM-DD yang valid.",
-      });
+  if (
+    hasSnakeDate &&
+    hasCamelDate &&
+    String(rawPayload.preferred_date).trim() !== String(rawPayload.preferredDate).trim()
+  ) {
+    fields.push({
+      field: "preferred_date",
+      code: "INVALID_DATE",
+      message: "Nilai preferred_date dan preferredDate tidak konsisten.",
+    });
+  } else if (rawPreferredDate !== undefined && rawPreferredDate !== null && rawPreferredDate !== "") {
+    if (options.enforceDateBounds === false) {
+      if (typeof rawPreferredDate !== "string" || !isValidIsoCalendarDate(rawPreferredDate.trim())) {
+        fields.push({
+          field: "preferred_date",
+          code: "INVALID_DATE",
+          message: "Tanggal permintaan jadwal harus menggunakan format YYYY-MM-DD yang valid.",
+        });
+      } else {
+        preferredDate = rawPreferredDate.trim();
+      }
     } else {
-      preferredDate = rawPreferredDate.trim();
+      const dateCheck = validatePreferredDate(rawPreferredDate, {
+        nowMs: options.nowMs,
+        timeZone: options.timeZone,
+      });
+      if (!dateCheck.ok) {
+        fields.push({
+          field: "preferred_date",
+          code: dateCheck.code,
+          message: dateCheck.message,
+        });
+      } else {
+        preferredDate = dateCheck.value;
+      }
     }
   }
 
-  const rawPreferredTime =
-    rawPayload.preferred_time !== undefined ? rawPayload.preferred_time : rawPayload.preferredTime;
+  const hasSnakeTime =
+    rawPayload.preferred_time !== undefined &&
+    rawPayload.preferred_time !== null &&
+    rawPayload.preferred_time !== "";
+  const hasCamelTime =
+    rawPayload.preferredTime !== undefined &&
+    rawPayload.preferredTime !== null &&
+    rawPayload.preferredTime !== "";
+  const rawPreferredTime = hasSnakeTime ? rawPayload.preferred_time : rawPayload.preferredTime;
   let preferredTime: LeadPreferredTime | null = null;
-  if (rawPreferredTime !== undefined && rawPreferredTime !== null && rawPreferredTime !== "") {
-    const normalizedTime =
-      typeof rawPreferredTime === "string" ? rawPreferredTime.trim().toLowerCase() : "";
-    if (!LEAD_PREFERRED_TIME_SET.has(normalizedTime)) {
+  if (
+    hasSnakeTime &&
+    hasCamelTime &&
+    String(rawPayload.preferred_time).trim().toLowerCase() !==
+      String(rawPayload.preferredTime).trim().toLowerCase()
+  ) {
+    fields.push({
+      field: "preferred_time",
+      code: "INVALID_PREFERRED_TIME",
+      message: "Nilai preferred_time dan preferredTime tidak konsisten.",
+    });
+  } else if (rawPreferredTime !== undefined && rawPreferredTime !== null && rawPreferredTime !== "") {
+    const timeCheck = validatePreferredTime(rawPreferredTime);
+    if (!timeCheck.ok) {
       fields.push({
         field: "preferred_time",
-        code: "INVALID_PREFERRED_TIME",
-        message: "Waktu pilihan harus salah satu dari pagi, siang, sore, atau malam.",
+        code: timeCheck.code,
+        message: timeCheck.message,
       });
     } else {
-      preferredTime = normalizedTime as LeadPreferredTime;
+      preferredTime = timeCheck.value;
     }
   }
 
-  // 7. Optional branch ID
-  const rawBranch = rawPayload.branch !== undefined ? rawPayload.branch : rawPayload.branchId;
+  // 7. Optional branch ID (`branch_id`, `branch`, or `branchId`)
+  const branchCandidates = [
+    rawPayload.branch_id,
+    rawPayload.branch,
+    rawPayload.branchId,
+  ].filter((v) => v !== undefined && v !== null && v !== "");
   let branchId: number | null = null;
-  if (rawBranch !== undefined && rawBranch !== null && rawBranch !== "") {
-    const numericBranch =
-      typeof rawBranch === "number"
-        ? rawBranch
-        : typeof rawBranch === "string" && /^[1-9]\d{0,9}$/.test(rawBranch.trim())
-          ? Number(rawBranch.trim())
-          : Number.NaN;
-    if (!Number.isSafeInteger(numericBranch) || numericBranch < 1 || numericBranch > 2_147_483_647) {
+  if (branchCandidates.length > 0) {
+    const parsedBranchValues: number[] = [];
+    let branchInvalid = false;
+    for (const candidate of branchCandidates) {
+      const parsed = parseOptionalBranchId(candidate);
+      if (!parsed.ok || parsed.value === null) {
+        branchInvalid = true;
+        break;
+      }
+      parsedBranchValues.push(parsed.value);
+    }
+    if (
+      branchInvalid ||
+      parsedBranchValues.some((val) => val !== parsedBranchValues[0])
+    ) {
       fields.push({
-        field: "branch",
+        field: "branch_id",
         code: "INVALID_BRANCH",
         message: "ID cabang tidak valid.",
       });
     } else {
-      branchId = numericBranch;
+      branchId = parsedBranchValues[0] ?? null;
     }
   }
 
@@ -741,6 +829,9 @@ export function buildLeadWhatsAppFollowUpUrl(params: {
   readonly leadName: string;
   readonly primaryOrigin: string;
   readonly pagePath?: string | null;
+  readonly preferredDate?: string | null;
+  readonly preferredTime?: string | null;
+  readonly branchLabel?: string | null;
 }): string | null {
   try {
     const safeOrigin = params.primaryOrigin.trim().startsWith("https://")
@@ -748,13 +839,26 @@ export function buildLeadWhatsAppFollowUpUrl(params: {
       : `https://${params.primaryOrigin.trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "")}`;
     const safePath = sanitizeSafeRelativePath(params.pagePath) ?? "/";
     const cleanName = params.leadName.replace(/[\r\n\0]+/g, " ").trim() || "Bapak/Ibu";
+    const formattedDate = params.preferredDate
+      ? formatPreferredDateIndonesian(params.preferredDate)
+      : null;
+    const formattedTime = formatPreferredTimeLabelId(params.preferredTime);
+    const cleanBranch = sanitizeBranchLabelForDisplay(params.branchLabel);
+    const hasSchedule = Boolean(formattedDate || formattedTime || cleanBranch);
+
+    const template = hasSchedule
+      ? "Halo {{item_title}}, terima kasih telah menghubungi kami melalui {{page_url}}.\nPermintaan jadwal tanggal: {{preferred_date}}.\nWaktu pilihan: {{preferred_time}}.\nCabang tujuan: {{branch}}.\nAda yang bisa kami bantu?"
+      : "Halo {{item_title}}, terima kasih telah menghubungi kami melalui {{page_url}}. Ada yang bisa kami bantu?";
+
     const result = buildWhatsAppUrl({
       tenantPhone: params.phone,
-      template:
-        "Halo {{item_title}}, terima kasih telah menghubungi kami melalui {{page_url}}. Ada yang bisa kami bantu?",
+      template,
       itemTitle: cleanName,
       primaryOrigin: safeOrigin,
       canonicalPath: safePath,
+      preferredDate: formattedDate,
+      preferredTime: formattedTime,
+      branch: cleanBranch,
     });
     return result.url;
   } catch {
@@ -994,6 +1098,7 @@ function mapRawLeadRow(row: RawLeadRow): LeadRecord {
     preferredDate: row.preferred_date ?? null,
     preferredTime,
     branchId: row.branch_id === null || row.branch_id === undefined ? null : Number(row.branch_id),
+    preferredBranchLabel: sanitizeBranchLabelForDisplay(row.preferred_branch_label ?? null),
     sourceCategory: row.source_category || "direct",
     utm: safeParseUtmJson(row.utm_json),
     pagePath: row.page_path ?? null,
@@ -1004,6 +1109,163 @@ function mapRawLeadRow(row: RawLeadRow): LeadRecord {
     createdAtMs,
     updatedAtMs,
   };
+}
+
+function isMissingLeadColumnError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /no such column/i.test(msg);
+}
+
+function isMissingLeadTableOrColumnError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? "");
+  return /no such table|no such column/i.test(msg);
+}
+
+/**
+ * Reads the tenant's configured IANA timezone from `site_settings` (`0001_initial_tenant.sql`),
+ * defaulting to `Asia/Jakarta` when no row exists. Rethrows genuine transient storage outages.
+ */
+export async function resolveTenantTimeZoneForLead(tenantDb: D1Database): Promise<string> {
+  try {
+    const row = await tenantDb
+      .prepare("SELECT timezone FROM site_settings WHERE id = 1 LIMIT 1")
+      .first<{ readonly timezone: string | null }>();
+    return normalizeTenantTimeZone(row?.timezone ?? DEFAULT_TENANT_TIMEZONE);
+  } catch (err) {
+    if (isMissingLeadTableOrColumnError(err)) {
+      return DEFAULT_TENANT_TIMEZONE;
+    }
+    throw new LeadStorageError();
+  }
+}
+
+export interface ActiveLeadBranchInfo {
+  readonly id: number;
+  readonly name: string;
+}
+
+/**
+ * Verifies that `branchId` exists in THIS tenant's `TenantStore.branches` table and is BOTH
+ * active (`active = 1`) AND published (not `status: "draft"` or `active: false` in metadata).
+ * Returns `null` for missing, inactive, or draft outlets; throws `LeadStorageError` on DB outage.
+ */
+export async function resolveActivePublishedBranchForLead(
+  tenantDb: D1Database,
+  branchId: number,
+): Promise<ActiveLeadBranchInfo | null> {
+  if (!Number.isSafeInteger(branchId) || branchId < 1) {
+    return null;
+  }
+  try {
+    const row = await tenantDb
+      .prepare(
+        `SELECT id, name, active, weekday_hours_json
+         FROM branches
+         WHERE id = ?
+         LIMIT 1`,
+      )
+      .bind(branchId)
+      .first<{
+        readonly id: number;
+        readonly name: string;
+        readonly active: number;
+        readonly weekday_hours_json: string | null;
+      }>();
+
+    if (!row || Number(row.active) !== 1) {
+      return null;
+    }
+
+    if (row.weekday_hours_json) {
+      try {
+        const parsed = JSON.parse(row.weekday_hours_json) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          const obj = parsed as Record<string, unknown>;
+          if (obj.status === "draft" || obj.active === false) {
+            return null;
+          }
+        }
+      } catch {
+        // Legacy plain-text weekday_hours_json string -> treat as published when SQL active = 1
+      }
+    }
+
+    const label = sanitizeBranchLabelForDisplay(row.name) ?? `Cabang #${Number(row.id)}`;
+    return {
+      id: Number(row.id),
+      name: label,
+    };
+  } catch (err) {
+    if (isMissingLeadTableOrColumnError(err)) {
+      return null;
+    }
+    throw new LeadStorageError();
+  }
+}
+
+/**
+ * Persists the branch name snapshot onto `leads.preferred_branch_label` (additive migration 0024).
+ * Returns silently ONLY on pre-0024 tenant DBs lacking `preferred_branch_label`.
+ * On 0024-migrated DBs, retries once on genuine transient DO/SQL errors and rethrows `LeadStorageError`
+ * so real storage failures are never silently swallowed.
+ */
+export async function persistLeadPreferredBranchLabel(
+  tenantDb: D1Database,
+  leadId: number,
+  branchLabel: string | null | undefined,
+): Promise<void> {
+  const cleanLabel = sanitizeBranchLabelForDisplay(branchLabel);
+  if (!cleanLabel || !Number.isSafeInteger(leadId) || leadId < 1) {
+    return;
+  }
+  const hasCol = await hasLeadPreferredBranchLabelColumn(tenantDb);
+  if (!hasCol) {
+    return;
+  }
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await tenantDb
+        .prepare("UPDATE leads SET preferred_branch_label = ? WHERE id = ?")
+        .bind(cleanLabel, leadId)
+        .run();
+      return;
+    } catch (err) {
+      if (isMissingLeadColumnError(err)) {
+        return;
+      }
+      if (attempt === 1) {
+        throw new LeadStorageError("Gagal menyimpan snapshot label cabang pada pesan masuk.");
+      }
+    }
+  }
+}
+
+/**
+ * Returns a lightweight `id -> name` map of all branches in this tenant's `TenantStore`
+ * for Lead Inbox display fallback.
+ */
+export async function listLeadBranchLabels(
+  tenantDb: D1Database,
+): Promise<Readonly<Record<number, string>>> {
+  try {
+    const res = await tenantDb
+      .prepare("SELECT id, name FROM branches ORDER BY id ASC")
+      .all<{ readonly id: number; readonly name: string }>();
+    const map: Record<number, string> = {};
+    for (const row of res.results ?? []) {
+      const label = sanitizeBranchLabelForDisplay(row.name);
+      if (label) {
+        map[Number(row.id)] = label;
+      }
+    }
+    return map;
+  } catch (err) {
+    if (isMissingLeadTableOrColumnError(err)) {
+      return {};
+    }
+    return {};
+  }
 }
 
 function escapeSqlLike(term: string): string {
@@ -1056,39 +1318,49 @@ export async function listLeads(
   const bindValues: unknown[] = [];
 
   if (status !== "all") {
-    whereClauses.push("status = ?");
+    whereClauses.push("l.status = ?");
     bindValues.push(status);
   }
 
   if (searchTrimmed.length > 0) {
     const likePattern = `%${escapeSqlLike(searchTrimmed.toLowerCase())}%`;
     whereClauses.push(
-      "(LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(phone_e164) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(email, '')) LIKE ? ESCAPE '\\' OR LOWER(message) LIKE ? ESCAPE '\\')",
+      "(LOWER(l.name) LIKE ? ESCAPE '\\' OR LOWER(l.phone_e164) LIKE ? ESCAPE '\\' OR LOWER(COALESCE(l.email, '')) LIKE ? ESCAPE '\\' OR LOWER(l.message) LIKE ? ESCAPE '\\')",
     );
     bindValues.push(likePattern, likePattern, likePattern, likePattern);
   }
 
   if (parsedCursor) {
-    whereClauses.push("(created_at < ? OR (created_at = ? AND id < ?))");
+    whereClauses.push("(l.created_at < ? OR (l.created_at = ? AND l.id < ?))");
     bindValues.push(parsedCursor.c, parsedCursor.c, parsedCursor.i);
   }
 
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
 
+  const queryRows = async (includeSnapshotColumn: boolean) => {
+    const branchLabelExpr = includeSnapshotColumn
+      ? "COALESCE(l.preferred_branch_label, b.name)"
+      : "b.name";
+    return tenantDb
+      .prepare(
+        `SELECT l.id, l.name, l.phone_e164, l.email, l.message, l.preferred_date, l.preferred_time,
+                l.branch_id, ${branchLabelExpr} AS preferred_branch_label,
+                l.source_category, l.utm_json, l.page_path, l.status, l.internal_notes,
+                l.version, l.created_at, l.updated_at
+         FROM leads l
+         LEFT JOIN branches b ON b.id = l.branch_id
+         ${whereSql}
+         ORDER BY l.created_at DESC, l.id DESC
+         LIMIT ?`,
+      )
+      .bind(...bindValues, limit + 1)
+      .all<RawLeadRow>();
+  };
+
   try {
+    const includeSnapshotColumn = await hasLeadPreferredBranchLabelColumn(tenantDb);
     const [rowsRes, countsRes] = await Promise.all([
-      tenantDb
-        .prepare(
-          `SELECT id, name, phone_e164, email, message, preferred_date, preferred_time,
-                  branch_id, source_category, utm_json, page_path, status, internal_notes,
-                  version, created_at, updated_at
-           FROM leads
-           ${whereSql}
-           ORDER BY created_at DESC, id DESC
-           LIMIT ?`,
-        )
-        .bind(...bindValues, limit + 1)
-        .all<RawLeadRow>(),
+      queryRows(includeSnapshotColumn),
       tenantDb
         .prepare("SELECT status, COUNT(*) AS cnt FROM leads GROUP BY status")
         .all<{ readonly status: string; readonly cnt: number }>(),
@@ -1141,18 +1413,28 @@ export async function getLeadById(
   if (!Number.isSafeInteger(leadId) || leadId < 1) {
     return null;
   }
-  try {
-    const row = await tenantDb
+  const fetchOne = async (includeSnapshotColumn: boolean) => {
+    const branchLabelExpr = includeSnapshotColumn
+      ? "COALESCE(l.preferred_branch_label, b.name)"
+      : "b.name";
+    return tenantDb
       .prepare(
-        `SELECT id, name, phone_e164, email, message, preferred_date, preferred_time,
-                branch_id, source_category, utm_json, page_path, status, internal_notes,
-                version, created_at, updated_at
-         FROM leads
-         WHERE id = ?
+        `SELECT l.id, l.name, l.phone_e164, l.email, l.message, l.preferred_date, l.preferred_time,
+                l.branch_id, ${branchLabelExpr} AS preferred_branch_label,
+                l.source_category, l.utm_json, l.page_path, l.status, l.internal_notes,
+                l.version, l.created_at, l.updated_at
+         FROM leads l
+         LEFT JOIN branches b ON b.id = l.branch_id
+         WHERE l.id = ?
          LIMIT 1`,
       )
       .bind(leadId)
       .first<RawLeadRow>();
+  };
+
+  try {
+    const includeSnapshotColumn = await hasLeadPreferredBranchLabelColumn(tenantDb);
+    const row = await fetchOne(includeSnapshotColumn);
     return row ? mapRawLeadRow(row) : null;
   } catch {
     throw new LeadStorageError();
@@ -1273,7 +1555,10 @@ export async function updateLeadStatus(
       throw new LeadStaleVersionError(input.leadId, input.expectedVersion, latest.version);
     }
 
-    return mapRawLeadRow(updatedRow);
+    return {
+      ...mapRawLeadRow(updatedRow),
+      preferredBranchLabel: current.preferredBranchLabel ?? null,
+    };
   } catch (err) {
     if (
       err instanceof LeadValidationError ||
@@ -1301,18 +1586,28 @@ export async function listAllLeadsForExport(
   options: { readonly maxRows?: number } = {},
 ): Promise<ListLeadsForExportResult> {
   const maxRows = Math.min(Math.max(1, options.maxRows ?? MAX_LEAD_CSV_EXPORT_ROWS), MAX_LEAD_CSV_EXPORT_ROWS);
-  try {
-    const res = await tenantDb
+  const fetchExport = async (includeSnapshotColumn: boolean) => {
+    const branchLabelExpr = includeSnapshotColumn
+      ? "COALESCE(l.preferred_branch_label, b.name)"
+      : "b.name";
+    return tenantDb
       .prepare(
-        `SELECT id, name, phone_e164, email, message, preferred_date, preferred_time,
-                branch_id, source_category, utm_json, page_path, status, internal_notes,
-                version, created_at, updated_at
-         FROM leads
-         ORDER BY created_at DESC, id DESC
+        `SELECT l.id, l.name, l.phone_e164, l.email, l.message, l.preferred_date, l.preferred_time,
+                l.branch_id, ${branchLabelExpr} AS preferred_branch_label,
+                l.source_category, l.utm_json, l.page_path, l.status, l.internal_notes,
+                l.version, l.created_at, l.updated_at
+         FROM leads l
+         LEFT JOIN branches b ON b.id = l.branch_id
+         ORDER BY l.created_at DESC, l.id DESC
          LIMIT ?`,
       )
       .bind(maxRows + 1)
       .all<RawLeadRow>();
+  };
+
+  try {
+    const includeSnapshotColumn = await hasLeadPreferredBranchLabelColumn(tenantDb);
+    const res = await fetchExport(includeSnapshotColumn);
     const rawRows = res.results ?? [];
     const truncated = rawRows.length > maxRows;
     const bounded = truncated ? rawRows.slice(0, maxRows) : rawRows;

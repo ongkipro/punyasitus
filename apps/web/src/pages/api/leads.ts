@@ -23,13 +23,22 @@ import {
   getTenantFormComplianceContext,
 } from "@punyasitus/db/forms/index";
 import {
+  checkOrClaimLeadIdempotency,
   executeIdempotentLeadWrite,
   hashLeadPayload,
   type LeadInsertInput,
 } from "@punyasitus/db/lead-dedup/index";
 import {
+  normalizeTenantTimeZone,
+  validatePreferredDate,
+} from "@punyasitus/core/leads/index";
+import {
   buildNewLeadOwnerNotificationEmail,
   getLeadNotificationSettings,
+  LeadStorageError,
+  persistLeadPreferredBranchLabel,
+  resolveActivePublishedBranchForLead,
+  resolveTenantTimeZoneForLead,
   sanitizeSafeRelativePath,
   validatePublicLeadSubmission,
 } from "@punyasitus/db/leads/index";
@@ -913,9 +922,21 @@ export async function handlePublicLeadPost(
     );
   }
 
-  // 5b. Classic Built-In Contact Form Submission (`TASK-021`, `TASK-029` — preserved unchanged).
+  // 5b. Classic Built-In Contact Form Submission (`TASK-021`, `TASK-029`, `TASK-071`).
+  //     Run static syntactic/schema validation first (unknown keys, E.164 phone, valid ISO
+  //     calendar date format, `preferred_time` enum, positive integer `branch_id`).
+  //     Time-dependent date bounds (`today..+180d`) and mutable branch active-status checks
+  //     run AFTER idempotency replay lookup so valid retries across midnight or after branch
+  //     deactivation replay `201` cleanly instead of flipping to `422`.
+  const nowMs = Math.floor(deps.nowMs ?? Date.now());
+  const explicitTenantTimeZone = deps.tenant.timeZone
+    ? normalizeTenantTimeZone(deps.tenant.timeZone)
+    : null;
   const validation = validatePublicLeadSubmission(cleanedPayload, {
     requirePrivacyConsent: true,
+    nowMs,
+    timeZone: explicitTenantTimeZone ?? undefined,
+    enforceDateBounds: false,
   });
 
   if (!validation.ok) {
@@ -945,7 +966,7 @@ export async function handlePublicLeadPost(
   }
 
   // 7. Anonymous per-IP+tenant & per-tenant hourly rate limiting (`429 RATE_LIMITED`).
-  const nowMs = Math.floor(deps.nowMs ?? Date.now());
+  //    Enforced BEFORE DB-backed idempotency/branch/timezone lookups so unthrottled probing is blocked.
   const rateLimit = await enforceLeadRateLimit(deps.tenantDb, {
     tenantId: deps.tenant.id,
     clientIp: inputCheck.clientIp,
@@ -978,11 +999,11 @@ export async function handlePublicLeadPost(
     );
   }
 
-  // 8. Atomic idempotent persistence in `TenantStore` (`lead_dedup` + `leads`).
-  //    - Caller-supplied `Idempotency-Key` header or non-empty body `idempotencyKey`: strict replay/409 semantics.
-  //    - Omitted/empty key (e.g. No-JS cached HTML form): deterministic 30s double-submit bucket key
-  //      derived from `(tenantId, ipHash, canonicalPayload)` so concurrent visitors served identical cached HTML
-  //      NEVER collide with 409, while rapid accidental double-clicks by the same visitor still deduplicate!
+  // 7b. Derive idempotency key & check `lead_dedup` BEFORE time/state-dependent schedule checks:
+  //     - Matching active `(idempotency_key, payload_hash)` replays `201`/`303` immediately even
+  //       after midnight (`preferred_date` now yesterday) or after branch deactivation.
+  //     - Conflicting payload under the same active key returns `409 IDEMPOTENCY_CONFLICT`.
+  //     - Omitted/empty key (No-JS cached HTML form): deterministic 30s double-submit bucket key.
   const explicitIdempotencyKey =
     inputCheck.idempotencyKey ?? validation.data.idempotencyKey;
   let idempotencyKey: string;
@@ -999,10 +1020,188 @@ export async function handlePublicLeadPost(
     idempotencyKey = `nojs:${bucket30s}:${fingerprint.slice(0, 48)}`;
   }
 
+  const payloadHash = await hashLeadPayload(validation.data.canonicalPayload);
+  const idempotencyPrecheck = await checkOrClaimLeadIdempotency(deps.tenantDb, {
+    idempotencyKey,
+    payloadHash,
+    nowMs,
+  });
+
+  if (!idempotencyPrecheck.ok) {
+    if (idempotencyPrecheck.kind === "invalid_key") {
+      if (submissionMode === "form") {
+        return buildPrgRedirectResponse(validation.data.returnTo ?? returnPath, {
+          leadStatus: "error",
+          code: "VALIDATION_ERROR",
+        });
+      }
+      return createApiErrorJsonResponse(
+        422,
+        "VALIDATION_ERROR",
+        idempotencyPrecheck.message,
+        requestId,
+        [
+          {
+            field: "idempotencyKey",
+            code: "INVALID_IDEMPOTENCY_KEY",
+            message: idempotencyPrecheck.message,
+          },
+        ],
+      );
+    }
+    if (submissionMode === "form") {
+      return buildFormServiceUnavailableHtml(
+        idempotencyPrecheck.message,
+        validation.data.returnTo ?? returnPath,
+      );
+    }
+    return createApiErrorJsonResponse(
+      503,
+      "SERVICE_UNAVAILABLE",
+      idempotencyPrecheck.message,
+      requestId,
+    );
+  }
+
+  if (idempotencyPrecheck.kind === "conflict") {
+    if (submissionMode === "form") {
+      return buildPrgRedirectResponse(validation.data.returnTo ?? returnPath, {
+        leadStatus: "error",
+        code: "IDEMPOTENCY_CONFLICT",
+      });
+    }
+    return createApiErrorJsonResponse(
+      409,
+      "IDEMPOTENCY_CONFLICT",
+      idempotencyPrecheck.message,
+      requestId,
+    );
+  }
+
+  if (idempotencyPrecheck.kind === "replayed") {
+    if (submissionMode === "form") {
+      return buildPrgRedirectResponse(validation.data.returnTo ?? returnPath, {
+        leadStatus: "accepted",
+        leadNumber: String(idempotencyPrecheck.leadId),
+      });
+    }
+    return Response.json(
+      {
+        leadNumber: idempotencyPrecheck.leadId,
+        status: "accepted",
+        confirmationMessage: CONFIRMATION_MESSAGE_ID,
+      },
+      {
+        status: 201,
+        headers: NO_STORE_HEADERS,
+      },
+    );
+  }
+
+  // 7c. New lead only (`precheck.kind === "proceed"`): enforce tenant-timezone date bounds
+  //     and active same-tenant branch validation (`REQ-072`, `TASK-071`).
+  //     Schedule values are NEVER logged or forwarded to analytics payloads.
+  let effectiveTimeZone = explicitTenantTimeZone ?? "Asia/Jakarta";
+  if (explicitTenantTimeZone === null) {
+    if (validation.data.lead.preferredDate) {
+      try {
+        effectiveTimeZone = await resolveTenantTimeZoneForLead(deps.tenantDb);
+      } catch {
+        const unavailableMsg =
+          "Layanan penyimpanan pesan sementara tidak tersedia. Silakan coba lagi beberapa saat lagi.";
+        if (submissionMode === "form") {
+          return buildFormServiceUnavailableHtml(
+            unavailableMsg,
+            validation.data.returnTo ?? returnPath,
+          );
+        }
+        return createApiErrorJsonResponse(503, "SERVICE_UNAVAILABLE", unavailableMsg, requestId);
+      }
+    } else {
+      // Non-schedule leads must never fail with 503 if optional `site_settings` lookup hiccups.
+      try {
+        effectiveTimeZone = await resolveTenantTimeZoneForLead(deps.tenantDb);
+      } catch {
+        effectiveTimeZone = "Asia/Jakarta";
+      }
+    }
+  }
+
+  if (validation.data.lead.preferredDate) {
+    const tzDateCheck = validatePreferredDate(validation.data.lead.preferredDate, {
+      nowMs,
+      timeZone: effectiveTimeZone,
+    });
+    if (!tzDateCheck.ok) {
+      if (submissionMode === "form") {
+        return buildPrgRedirectResponse(validation.data.returnTo ?? returnPath, {
+          leadStatus: "error",
+          code: "VALIDATION_ERROR",
+        });
+      }
+      return createApiErrorJsonResponse(
+        422,
+        "VALIDATION_ERROR",
+        "Mohon periksa kembali tanggal permintaan jadwal Anda.",
+        requestId,
+        [
+          {
+            field: "preferred_date",
+            code: tzDateCheck.code,
+            message: tzDateCheck.message,
+          },
+        ],
+      );
+    }
+  }
+
+  let resolvedBranchLabel: string | null = null;
+  if (validation.data.lead.branchId !== null && validation.data.lead.branchId !== undefined) {
+    try {
+      const activeBranch = await resolveActivePublishedBranchForLead(
+        deps.tenantDb,
+        validation.data.lead.branchId,
+      );
+      if (!activeBranch) {
+        if (submissionMode === "form") {
+          return buildPrgRedirectResponse(validation.data.returnTo ?? returnPath, {
+            leadStatus: "error",
+            code: "VALIDATION_ERROR",
+          });
+        }
+        return createApiErrorJsonResponse(
+          422,
+          "VALIDATION_ERROR",
+          "Cabang yang dipilih tidak ditemukan atau tidak aktif.",
+          requestId,
+          [
+            {
+              field: "branch_id",
+              code: "INVALID_BRANCH",
+              message: "Cabang yang dipilih tidak ditemukan atau tidak aktif.",
+            },
+          ],
+        );
+      }
+      resolvedBranchLabel = activeBranch.name;
+    } catch (err) {
+      const unavailableMsg =
+        err instanceof LeadStorageError
+          ? err.message
+          : "Layanan penyimpanan pesan sementara tidak tersedia. Silakan coba lagi beberapa saat lagi.";
+      if (submissionMode === "form") {
+        return buildFormServiceUnavailableHtml(unavailableMsg, validation.data.returnTo ?? returnPath);
+      }
+      return createApiErrorJsonResponse(503, "SERVICE_UNAVAILABLE", unavailableMsg, requestId);
+    }
+  }
+
+  // 8. Atomic idempotent persistence in `TenantStore` (`lead_dedup` + `leads`).
   const writeResult = await executeIdempotentLeadWrite(deps.tenantDb, {
     idempotencyKey,
     lead: validation.data.lead,
     payload: validation.data.canonicalPayload,
+    payloadHash,
     nowMs,
   });
 
@@ -1035,15 +1234,33 @@ export async function handlePublicLeadPost(
   }
 
   // 9. Newly persisted lead ONLY (NEVER on idempotent replay):
-  //    dispatch first-party daily counter & ONE PII-free owner email off the critical path via `waitUntil`
-  //    so slow/hung mail providers never stall the visitor's 201/303 response.
+  //    persist optional branch label snapshot (0024, backward-compatible with pre-0024 DBs),
+  //    then dispatch first-party daily counter & ONE PII-free owner email off the critical path
+  //    via `waitUntil` so slow/hung mail providers never stall the visitor's 201/303 response.
+  //    Privacy invariant: schedule values NEVER enter analytics counters or notification emails.
   if (writeResult.kind === "created") {
+    if (resolvedBranchLabel) {
+      try {
+        await persistLeadPreferredBranchLabel(
+          deps.tenantDb,
+          writeResult.leadId,
+          resolvedBranchLabel,
+        );
+      } catch {
+        // Primary lead row is already committed; emit strictly PII-free & schedule-free error code.
+        console.warn("[leads] preferred_branch_label snapshot write failed", {
+          code: "BRANCH_LABEL_SNAPSHOT_FAILED",
+          requestId,
+        });
+      }
+    }
+
     const postCommitWork = Promise.all([
       recordLeadSubmitMetricBestEffort(
         deps.tenantDb,
         validation.data.lead.pagePath ?? null,
         nowMs,
-        deps.tenant.timeZone,
+        effectiveTimeZone,
       ),
       dispatchOwnerLeadNotificationBestEffort({
         deps,
