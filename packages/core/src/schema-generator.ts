@@ -196,6 +196,7 @@ export interface SchemaBusinessHoursInput {
 }
 
 export interface SchemaBranchInput {
+  readonly id?: number | string | null;
   readonly name: string;
   readonly address?: string | null;
   readonly city?: string | null;
@@ -203,6 +204,7 @@ export interface SchemaBranchInput {
   readonly postalCode?: string | null;
   readonly country?: string | null;
   readonly phone?: string | null;
+  readonly whatsappE164?: string | null;
   readonly whatsappNumber?: string | null;
   readonly mapsUrl?: string | null;
   readonly latitude?: number | null;
@@ -210,6 +212,9 @@ export interface SchemaBranchInput {
   readonly weekdayHours?: string | null;
   readonly holidayHours?: string | null;
   readonly openingHours?: SchemaBusinessHoursInput | null;
+  readonly timezone?: string | null;
+  readonly isPrimary?: boolean | null;
+  readonly active?: boolean | null;
 }
 
 export interface SchemaBusinessProfileInput {
@@ -1177,12 +1182,15 @@ function buildOrganizationAndBranchNodes(params: {
     business?.businessCategory,
   );
 
-  // Build optional branch nodes (REQ-088: up to 10 branches, same Schema.org subtype)
+  // Build optional branch nodes (REQ-088: up to 10 visible active branches, same Schema.org subtype)
   const branchNodes: SchemaNode[] = [];
   const branchRefs: { readonly "@id": string }[] = [];
-  const rawBranches = (business?.branches ?? []).slice(0, 10);
+  const rawBranches = (business?.branches ?? [])
+    .filter((branch) => branch !== null && branch !== undefined && branch.active !== false)
+    .slice(0, 10);
   const branchType: AllowedBusinessSchemaType =
     schemaType === "Organization" ? "LocalBusiness" : schemaType;
+  const usedBranchIds = new Set<string>();
 
   for (let i = 0; i < rawBranches.length; i += 1) {
     const branch = rawBranches[i];
@@ -1190,7 +1198,25 @@ function buildOrganizationAndBranchNodes(params: {
     const branchName = sanitizeSeoText(branch.name, { maxLength: 120 });
     if (!branchName) continue;
 
-    const branchId = `${params.verifiedOrigin}/#branch-${i + 1}`;
+    let branchFragment = `#branch-${branchNodes.length + 1}`;
+    if (
+      typeof branch.id === "number" &&
+      Number.isSafeInteger(branch.id) &&
+      branch.id >= 1
+    ) {
+      branchFragment = `#branch-${branch.id}`;
+    } else if (typeof branch.id === "string") {
+      const cleanedId = branch.id.trim().toLowerCase();
+      if (/^[a-z0-9][a-z0-9-]{0,39}$/.test(cleanedId)) {
+        branchFragment = `#branch-${cleanedId}`;
+      }
+    }
+    let branchId = `${params.verifiedOrigin}/${branchFragment}`;
+    if (usedBranchIds.has(branchId)) {
+      branchId = `${params.verifiedOrigin}/#branch-${branchNodes.length + 1}`;
+    }
+    usedBranchIds.add(branchId);
+
     const branchAddress = buildPostalAddress({
       address: branch.address,
       city: branch.city,
@@ -1198,8 +1224,9 @@ function buildOrganizationAndBranchNodes(params: {
       postalCode: branch.postalCode,
       country: branch.country,
     });
-    const branchPhone =
-      sanitizeTelephone(branch.phone) ?? sanitizeTelephone(branch.whatsappNumber);
+    // Visible-fact discipline (REQ-088): emit branch `telephone` strictly from visible `branch.phone`
+    // (never fall back to WhatsApp-only numbers that render only as a WhatsApp CTA button).
+    const branchPhone = sanitizeTelephone(branch.phone);
     const branchGeo = buildGeoCoordinates(branch.latitude, branch.longitude);
     const branchMap = validatePublicHttpsUrl(branch.mapsUrl);
     const branchHours = collectOpeningHours(
