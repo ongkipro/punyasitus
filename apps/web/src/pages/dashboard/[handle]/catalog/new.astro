@@ -1,5 +1,6 @@
 ---
 import type { CatalogOfferingType } from "@punyasitus/core/catalog/index";
+import { isSeoAutopilotEnabledForTenant } from "@punyasitus/db/seo/index";
 import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
 import DashboardLayout from "@/layouts/DashboardLayout.astro";
 import { OfferingEditorClient } from "./_OfferingEditorClient";
@@ -10,6 +11,7 @@ if (!resolved.ok) {
 }
 
 const { ctx } = resolved;
+const seoAutopilotEnabled = await isSeoAutopilotEnabledForTenant(ctx.tenantDb);
 
 function defaultOfferingType(): CatalogOfferingType {
   switch (ctx.vertical) {
@@ -46,6 +48,9 @@ function defaultOfferingType(): CatalogOfferingType {
     handle={ctx.handle}
     basePath={ctx.basePath}
     permissions={ctx.permissions}
+    siteName={ctx.workspaceName}
+    primaryHost={ctx.workspaceSubtitle}
+    seoAutopilotEnabled={seoAutopilotEnabled}
     initialOffering={{
       id: null,
       offeringType: defaultOfferingType(),
@@ -69,6 +74,7 @@ function defaultOfferingType(): CatalogOfferingType {
       whatsappTemplate: "",
       unitStatus: "available",
       attributes: {},
+      seo: null,
       status: "draft",
       version: 0,
     }}

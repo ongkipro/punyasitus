@@ -1,10 +1,17 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import {
   htmlToRestrictedRichTextDoc,
   renderRichTextDocToSanitizedHtml,
   type PageSnapshot,
   type RestrictedRichTextDoc,
 } from "@punyasitus/core/content/index";
+import {
+  extractChecklistSignalsFromRichTextDoc,
+  validateSearchAppearanceTemplateString,
+  type PeerPublishedSeoSummary,
+  type SeoEditorOverrideInput,
+} from "@punyasitus/core/seo/editor";
+import type { SiteVisibility } from "@punyasitus/core/seo/index";
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
@@ -31,6 +38,7 @@ import {
 import { createUniqueSectionId } from "@/components/admin/editor/section-id";
 import type { CmsAdminPermissions } from "@/components/admin/editor/cms-server-context";
 import { MediaPickerSheet, type MediaLibraryItemDto } from "@/components/admin/media";
+import { SeoOverrideDrawer } from "@/components/admin/seo";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -47,6 +55,7 @@ export interface PageEditorInitialData {
   readonly isHomepage: boolean;
   readonly layoutMode: "standard" | "focused";
   readonly sections: readonly PageSectionItem[];
+  readonly seo?: SeoEditorOverrideInput | null;
   readonly hasUnpublishedChanges: boolean;
   readonly version: number;
 }
@@ -56,6 +65,11 @@ export interface PageEditorClientProps {
   readonly basePath: string;
   readonly permissions: CmsAdminPermissions;
   readonly initialPage: PageEditorInitialData;
+  readonly siteName?: string;
+  readonly primaryHost?: string;
+  readonly siteVisibility?: SiteVisibility;
+  readonly seoAutopilotEnabled?: boolean;
+  readonly publishedPeers?: readonly PeerPublishedSeoSummary[];
 }
 
 const SECTION_KIND_OPTIONS: ReadonlyArray<{
@@ -100,6 +114,11 @@ export function PageEditorClient({
   basePath,
   permissions,
   initialPage,
+  siteName = handle,
+  primaryHost = `${handle}.situsku.click`,
+  siteVisibility = "public",
+  seoAutopilotEnabled = true,
+  publishedPeers = [],
 }: PageEditorClientProps) {
   const [pageId, setPageId] = useState<number | null>(initialPage.id);
   const [version, setVersion] = useState<number>(initialPage.version);
@@ -119,6 +138,8 @@ export function PageEditorClient({
   const [layoutMode, setLayoutMode] = useState<"standard" | "focused">(initialPage.layoutMode);
   const [sections, setSections] = useState<readonly PageSectionItem[]>(initialPage.sections);
   const [newSectionKind, setNewSectionKind] = useState<PageSectionItem["kind"]>("hero");
+  const [seo, setSeo] = useState<SeoEditorOverrideInput>(initialPage.seo ?? {});
+  const [seoDirty, setSeoDirty] = useState(false);
 
   const [isDirty, setIsDirty] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -199,9 +220,58 @@ export function PageEditorClient({
       errs.slug =
         "Centang konfirmasi perubahan slug karena halaman ini sudah terbit (redirect 308 akan dibuat).";
     }
+    if (seoAutopilotEnabled && seo.titleOverride?.trim()) {
+      const check = validateSearchAppearanceTemplateString(seo.titleOverride.trim());
+      if (!check.ok) errs["seo.titleOverride"] = check.issue.message;
+    }
+    if (seoAutopilotEnabled && seo.descriptionOverride?.trim()) {
+      const check = validateSearchAppearanceTemplateString(seo.descriptionOverride.trim());
+      if (!check.ok) errs["seo.descriptionOverride"] = check.issue.message;
+    }
     setFieldErrors(errs);
     return Object.keys(errs).length === 0;
   }
+
+  const pageChecklistSignals = useMemo(() => {
+    const hasVisibleFaqBlock = sections.some((s) => s.kind === "faq");
+    let firstParagraphText = "";
+    const headings: Array<{ readonly level: number; readonly text: string }> = [];
+    const textParts: string[] = [];
+    let internalLinkCount = 0;
+    const images: Array<{ readonly altText: string; readonly isDecorative?: boolean }> = [];
+    for (const sec of sections) {
+      if (sec.heading?.trim()) {
+        headings.push({ level: 2, text: sec.heading.trim() });
+        textParts.push(sec.heading.trim());
+      }
+      if (sec.subheading?.trim()) {
+        if (!firstParagraphText) firstParagraphText = sec.subheading.trim();
+        textParts.push(sec.subheading.trim());
+      }
+      if (sec.ctaHref?.trim().startsWith("/") && !sec.ctaHref.trim().startsWith("//")) {
+        internalLinkCount += 1;
+      }
+      if (sec.bodyHtml?.trim()) {
+        const sig = extractChecklistSignalsFromRichTextDoc(
+          htmlToRestrictedRichTextDoc(sec.bodyHtml),
+          primaryHost,
+        );
+        if (!firstParagraphText && sig.firstParagraphText) firstParagraphText = sig.firstParagraphText;
+        headings.push(...sig.headings);
+        if (sig.plainTextBody) textParts.push(sig.plainTextBody);
+        internalLinkCount += sig.internalLinkCount;
+        images.push(...sig.images);
+      }
+    }
+    return {
+      hasVisibleFaqBlock,
+      firstParagraphText,
+      headings,
+      plainTextBody: textParts.join(" "),
+      internalLinkCount,
+      images,
+    };
+  }, [sections, primaryHost]);
 
   async function saveDraft(options?: {
     readonly keepSubmitting?: boolean;
@@ -262,7 +332,20 @@ export function PageEditorClient({
         );
       }
 
-      setVersion(saved.version);
+      let nextVersion = saved.version;
+      if (seoAutopilotEnabled && seoDirty && saved.id !== null) {
+        const seoRes = await cmsFetchJson<{ readonly seo: { readonly version: number } }>(
+          `/api/tenants/${encodeURIComponent(handle)}/seo/resources/page/${saved.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ seo, version: nextVersion }),
+          },
+        );
+        nextVersion = seoRes.seo.version;
+        setSeoDirty(false);
+      }
+
+      setVersion(nextVersion);
       setStatus(saved.status);
       setSlug(saved.slug);
       setHasUnpublishedChanges(saved.hasUnpublishedChanges);
@@ -274,9 +357,9 @@ export function PageEditorClient({
       setBanner({
         tone: "success",
         title: "Draf halaman tersimpan",
-        message: `Perubahan disimpan pada versi v${saved.version}.`,
+        message: `Perubahan disimpan pada versi v${nextVersion}.`,
       });
-      return saved;
+      return { ...saved, version: nextVersion };
     } catch (err) {
       if (err instanceof CmsApiError) {
         if (err.isStaleVersion) {
@@ -842,6 +925,46 @@ export function PageEditorClient({
           )}
         </CardContent>
       </Card>
+
+      <SeoOverrideDrawer
+        seoAutopilotEnabled={seoAutopilotEnabled}
+        resourceKind="page"
+        isHomepage={isHomepage}
+        siteName={siteName}
+        primaryHost={primaryHost}
+        tenantHandle={handle}
+        tenantStatus={permissions.tenantStatus}
+        siteVisibility={siteVisibility}
+        pathname={isHomepage ? "/" : `/${slug || "halaman-baru"}`}
+        resourceTitle={title}
+        slug={slug}
+        resourceExcerpt={pageChecklistSignals.firstParagraphText || null}
+        publicationState={status}
+        hasVisibleFaqBlock={pageChecklistSignals.hasVisibleFaqBlock}
+        firstParagraphText={pageChecklistSignals.firstParagraphText}
+        headings={pageChecklistSignals.headings}
+        plainTextBody={pageChecklistSignals.plainTextBody}
+        internalLinkCount={pageChecklistSignals.internalLinkCount}
+        images={pageChecklistSignals.images}
+        publishedPeers={publishedPeers}
+        slugChangedWhilePublished={slugChangedWhilePublished}
+        oldPublishedSlug={originalPublishedSlug || null}
+        value={seo}
+        onChange={(nextSeo) => {
+          setSeo(nextSeo);
+          setSeoDirty(true);
+          markDirty();
+        }}
+        onPickOgMedia={() =>
+          setMediaPickerCallback(() => (item: MediaLibraryItemDto) => {
+            setSeo((prev) => ({ ...prev, ogImageMediaId: item.id }));
+            setSeoDirty(true);
+            markDirty();
+          })
+        }
+        readOnly={readOnly}
+        fieldErrors={fieldErrors}
+      />
 
       {pageId !== null && status !== "trashed" && permissions.canWriteContent && (
         <div className="flex justify-end">

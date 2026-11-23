@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type {
   CatalogCtaMode,
   CatalogOfferingType,
@@ -9,6 +9,13 @@ import {
   htmlToRestrictedRichTextDoc,
   type RestrictedRichTextDoc,
 } from "@punyasitus/core/content/index";
+import {
+  extractChecklistSignalsFromRichTextDoc,
+  validateSearchAppearanceTemplateString,
+  type PeerPublishedSeoSummary,
+  type SeoEditorOverrideInput,
+} from "@punyasitus/core/seo/editor";
+import type { SiteVisibility } from "@punyasitus/core/seo/index";
 import {
   ArrowDownIcon,
   ArrowLeftIcon,
@@ -36,6 +43,7 @@ import {
 } from "@/components/admin/editor";
 import type { CmsAdminPermissions } from "@/components/admin/editor/cms-server-context";
 import { MediaPickerSheet, type MediaLibraryItemDto } from "@/components/admin/media";
+import { SeoOverrideDrawer } from "@/components/admin/seo";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,6 +73,7 @@ export interface OfferingEditorInitialData {
   readonly whatsappTemplate: string;
   readonly unitStatus: CatalogVehicleUnitStatus | null;
   readonly attributes: Record<string, unknown>;
+  readonly seo?: SeoEditorOverrideInput | null;
   readonly status: "draft" | "published" | "trashed";
   readonly version: number;
 }
@@ -74,6 +83,11 @@ export interface OfferingEditorClientProps {
   readonly basePath: string;
   readonly permissions: CmsAdminPermissions;
   readonly initialOffering: OfferingEditorInitialData;
+  readonly siteName?: string;
+  readonly primaryHost?: string;
+  readonly siteVisibility?: SiteVisibility;
+  readonly seoAutopilotEnabled?: boolean;
+  readonly publishedPeers?: readonly PeerPublishedSeoSummary[];
 }
 
 function parseOptionalInt(raw: string): number | null {
@@ -98,6 +112,11 @@ export function OfferingEditorClient({
   basePath,
   permissions,
   initialOffering,
+  siteName = handle,
+  primaryHost = `${handle}.situsku.click`,
+  siteVisibility = "public",
+  seoAutopilotEnabled = true,
+  publishedPeers = [],
 }: OfferingEditorClientProps) {
   const [offeringId, setOfferingId] = useState<number | null>(initialOffering.id);
   const [version, setVersion] = useState(initialOffering.version);
@@ -142,6 +161,8 @@ export function OfferingEditorClient({
     initialOffering.unitStatus ?? "available",
   );
   const [attrs, setAttrs] = useState<Record<string, unknown>>(initialOffering.attributes);
+  const [seo, setSeo] = useState<SeoEditorOverrideInput>(initialOffering.seo ?? {});
+  const [seoDirty, setSeoDirty] = useState(false);
 
   const [isDirty, setIsDirty] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -159,6 +180,7 @@ export function OfferingEditorClient({
     | null
     | { readonly kind: "cover" }
     | { readonly kind: "gallery" }
+    | { readonly kind: "seo_og" }
     | { readonly kind: "inline"; readonly onPick: (media: MediaLibraryItemDto) => void }
   >(null);
 
@@ -248,6 +270,20 @@ export function OfferingEditorClient({
     return out;
   }
 
+  const offeringChecklistSignals = useMemo(
+    () => extractChecklistSignalsFromRichTextDoc(description, primaryHost),
+    [description, primaryHost],
+  );
+
+  const offeringBasePath =
+    offeringType === "service"
+      ? "/layanan"
+      : offeringType === "product"
+        ? "/produk"
+        : offeringType === "tour"
+          ? "/tour"
+          : "/kendaraan";
+
   function validateLocally(): boolean {
     const errs: Record<string, string> = {};
     if (!title.trim()) errs.title = "Nama penawaran wajib diisi.";
@@ -266,6 +302,14 @@ export function OfferingEditorClient({
     }
     if (ctaMode === "external_link" && !externalUrl.trim().startsWith("https://")) {
       errs.externalUrl = "URL eksternal wajib dimulai dengan https://.";
+    }
+    if (seoAutopilotEnabled && seo.titleOverride?.trim()) {
+      const check = validateSearchAppearanceTemplateString(seo.titleOverride.trim());
+      if (!check.ok) errs["seo.titleOverride"] = check.issue.message;
+    }
+    if (seoAutopilotEnabled && seo.descriptionOverride?.trim()) {
+      const check = validateSearchAppearanceTemplateString(seo.descriptionOverride.trim());
+      if (!check.ok) errs["seo.descriptionOverride"] = check.issue.message;
     }
     setFieldErrors(errs);
     return Object.keys(errs).length === 0;
@@ -344,16 +388,29 @@ export function OfferingEditorClient({
         );
       }
 
-      setVersion(saved.version);
+      let nextVersion = saved.version;
+      if (seoAutopilotEnabled && seoDirty) {
+        const seoRes = await cmsFetchJson<{ readonly seo: { readonly version: number } }>(
+          `/api/tenants/${encodeURIComponent(handle)}/seo/resources/offering/${saved.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ seo, version: nextVersion }),
+          },
+        );
+        nextVersion = seoRes.seo.version;
+        setSeoDirty(false);
+      }
+
+      setVersion(nextVersion);
       setStatus(saved.status);
       setSlug(saved.slug);
       setIsDirty(false);
       setBanner({
         tone: "success",
         title: "Draf penawaran tersimpan",
-        message: `Penawaran tersimpan pada versi v${saved.version}.`,
+        message: `Penawaran tersimpan pada versi v${nextVersion}.`,
       });
-      return saved;
+      return { ...saved, version: nextVersion };
     } catch (err) {
       if (err instanceof CmsApiError) {
         if (err.isStaleVersion) {
@@ -1388,6 +1445,49 @@ export function OfferingEditorClient({
         </CardContent>
       </Card>
 
+      <SeoOverrideDrawer
+        seoAutopilotEnabled={seoAutopilotEnabled}
+        resourceKind="offering"
+        offeringType={offeringType}
+        siteName={siteName}
+        primaryHost={primaryHost}
+        tenantHandle={handle}
+        tenantStatus={permissions.tenantStatus}
+        siteVisibility={siteVisibility}
+        pathname={`${offeringBasePath}/${slug || "penawaran-baru"}`}
+        resourceTitle={title}
+        slug={slug}
+        resourceExcerpt={summary || offeringChecklistSignals.firstParagraphText || null}
+        resourceFeaturedMediaId={coverMediaId}
+        publicationState={status}
+        priceMode={priceMode}
+        price={priceMode === "on_request" ? null : parseOptionalInt(priceStr)}
+        hasVisibleItinerary={
+          offeringType === "tour" &&
+          Boolean(
+            (typeof attrs.destination === "string" && attrs.destination.trim()) ||
+              /\b(?:hari\s*1|day\s*1|itinerary|rencana perjalanan)\b/i.test(
+                offeringChecklistSignals.plainTextBody,
+              ),
+          )
+        }
+        firstParagraphText={summary || offeringChecklistSignals.firstParagraphText}
+        headings={offeringChecklistSignals.headings}
+        plainTextBody={`${summary} ${offeringChecklistSignals.plainTextBody}`.trim()}
+        internalLinkCount={offeringChecklistSignals.internalLinkCount}
+        images={offeringChecklistSignals.images}
+        publishedPeers={publishedPeers}
+        value={seo}
+        onChange={(nextSeo) => {
+          setSeo(nextSeo);
+          setSeoDirty(true);
+          markDirty();
+        }}
+        onPickOgMedia={() => setMediaPickerMode({ kind: "seo_og" })}
+        readOnly={readOnly}
+        fieldErrors={fieldErrors}
+      />
+
       {offeringId !== null && status !== "trashed" && permissions.canWriteContent && (
         <div className="flex justify-end">
           <Button
@@ -1408,7 +1508,13 @@ export function OfferingEditorClient({
         open={mediaPickerMode !== null}
         onOpenChange={(o) => !o && setMediaPickerMode(null)}
         handle={handle}
-        selectedMediaId={mediaPickerMode?.kind === "cover" ? coverMediaId : null}
+        selectedMediaId={
+          mediaPickerMode?.kind === "cover"
+            ? coverMediaId
+            : mediaPickerMode?.kind === "seo_og"
+              ? (seo.ogImageMediaId ?? null)
+              : null
+        }
         canUpload={permissions.canUploadMedia}
         onSelect={(item) => {
           if (mediaPickerMode?.kind === "cover") {
@@ -1418,6 +1524,10 @@ export function OfferingEditorClient({
             setGalleryMediaIds((prev) =>
               prev.includes(item.id) || prev.length >= 12 ? prev : [...prev, item.id],
             );
+            markDirty();
+          } else if (mediaPickerMode?.kind === "seo_og") {
+            setSeo((prev) => ({ ...prev, ogImageMediaId: item.id }));
+            setSeoDirty(true);
             markDirty();
           } else if (mediaPickerMode?.kind === "inline") {
             mediaPickerMode.onPick(item);

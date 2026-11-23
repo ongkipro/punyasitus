@@ -1,5 +1,6 @@
 ---
 import { listBlogTaxonomies } from "@punyasitus/db/posts/index";
+import { isSeoAutopilotEnabledForTenant } from "@punyasitus/db/seo/index";
 import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
 import DashboardLayout from "@/layouts/DashboardLayout.astro";
 import { PostEditorClient } from "./_PostEditorClient";
@@ -10,9 +11,10 @@ if (!resolved.ok) {
 }
 
 const { ctx } = resolved;
-const [catsRes, tagsRes] = await Promise.all([
+const [catsRes, tagsRes, seoAutopilotEnabled] = await Promise.all([
   listBlogTaxonomies(ctx.tenantDb, { kind: "post_category", limit: 100 }),
   listBlogTaxonomies(ctx.tenantDb, { kind: "post_tag", limit: 100 }),
+  isSeoAutopilotEnabledForTenant(ctx.tenantDb),
 ]);
 ---
 
@@ -36,6 +38,9 @@ const [catsRes, tagsRes] = await Promise.all([
     handle={ctx.handle}
     basePath={ctx.basePath}
     permissions={ctx.permissions}
+    siteName={ctx.workspaceName}
+    primaryHost={ctx.workspaceSubtitle}
+    seoAutopilotEnabled={seoAutopilotEnabled}
     initialPost={{
       id: null,
       title: "",
@@ -48,6 +53,7 @@ const [catsRes, tagsRes] = await Promise.all([
       categoryIds: [],
       tagIds: [],
       enableToc: true,
+      seo: null,
       hasUnpublishedChanges: true,
       version: 0,
     }}

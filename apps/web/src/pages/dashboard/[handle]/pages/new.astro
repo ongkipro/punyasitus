@@ -1,4 +1,5 @@
 ---
+import { isSeoAutopilotEnabledForTenant } from "@punyasitus/db/seo/index";
 import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
 import DashboardLayout from "@/layouts/DashboardLayout.astro";
 import { PageEditorClient } from "./_PageEditorClient";
@@ -9,6 +10,7 @@ if (!resolved.ok) {
 }
 
 const { ctx } = resolved;
+const seoAutopilotEnabled = await isSeoAutopilotEnabledForTenant(ctx.tenantDb);
 ---
 
 <DashboardLayout
@@ -31,6 +33,9 @@ const { ctx } = resolved;
     handle={ctx.handle}
     basePath={ctx.basePath}
     permissions={ctx.permissions}
+    siteName={ctx.workspaceName}
+    primaryHost={ctx.workspaceSubtitle}
+    seoAutopilotEnabled={seoAutopilotEnabled}
     initialPage={{
       id: null,
       title: "",
@@ -39,6 +44,7 @@ const { ctx } = resolved;
       isHomepage: false,
       layoutMode: "standard",
       sections: [],
+      seo: null,
       hasUnpublishedChanges: true,
       version: 0,
     }}
