@@ -14,9 +14,11 @@ import {
   type ServiceKind,
 } from "@punyasitus/core/custom-themes/index";
 import {
+  getTenantSeatUsageForServiceRequest,
   listConsoleCustomThemeRequests,
   listTenantActiveCustomThemeGrants,
   type TenantCustomThemeGrantSummary,
+  type TenantServiceSeatUsage,
 } from "@punyasitus/db/custom-themes/index";
 import type { APIRoute } from "astro";
 import {
@@ -87,21 +89,31 @@ export async function handleConsoleCustomThemeRequestsListRequest(
       limit,
     });
 
-    // Fetch active custom theme grants per distinct tenant so operators see eligible delivery grants
+    // Fetch active custom theme grants & seat usage per distinct tenant from narrow PLATFORM_DB metadata
     const distinctTenantIds = Array.from(new Set(requests.map((r) => r.tenantId)));
-    const grantEntries = await Promise.all(
+    const enrichmentEntries = await Promise.all(
       distinctTenantIds.map(async (tid) => {
-        const grants = await listTenantActiveCustomThemeGrants(authz.ctx.platformDb, tid);
-        return [tid, grants] as const;
+        const [grants, seats] = await Promise.all([
+          listTenantActiveCustomThemeGrants(authz.ctx.platformDb, tid),
+          getTenantSeatUsageForServiceRequest(authz.ctx.platformDb, {
+            tenantId: tid,
+            nowMs: authz.ctx.nowMs,
+          }),
+        ]);
+        return [tid, { grants, seats }] as const;
       }),
     );
-    const grantsByTenant = new Map<string, readonly TenantCustomThemeGrantSummary[]>(grantEntries);
+    const enrichmentByTenant = new Map<
+      string,
+      { readonly grants: readonly TenantCustomThemeGrantSummary[]; readonly seats: TenantServiceSeatUsage | null }
+    >(enrichmentEntries);
 
     return consoleJsonResponse(200, {
       success: true,
-      requests: requests.map((item) =>
-        formatConsoleRequestDto(item, grantsByTenant.get(item.tenantId) ?? []),
-      ),
+      requests: requests.map((item) => {
+        const enriched = enrichmentByTenant.get(item.tenantId);
+        return formatConsoleRequestDto(item, enriched?.grants ?? [], enriched?.seats ?? null);
+      }),
       requestId: authz.ctx.requestId,
     });
   } catch (err) {

@@ -5,10 +5,12 @@ import {
   DEFAULT_SECOND_FACTOR_WINDOW_MS,
 } from "@punyasitus/auth/platform/index";
 import {
+  getTenantSeatUsageForServiceRequest,
   listConsoleCustomThemeRequests,
   listCustomThemePackages,
   listTenantActiveCustomThemeGrants,
   type TenantCustomThemeGrantSummary,
+  type TenantServiceSeatUsage,
 } from "@punyasitus/db/custom-themes/index";
 import { ConsoleCustomThemesPanel } from "@/components/admin/custom-theme";
 import ConsoleLayout from "@/layouts/ConsoleLayout.astro";
@@ -66,23 +68,30 @@ if (!authz.ok) {
 
 const { actor, platformDb, nowMs, host } = authz.ctx;
 const [rawPackages, rawRequests] = await Promise.all([
-  listCustomThemePackages(platformDb, { serviceKind: "custom_theme", limit: 100 }),
-  listConsoleCustomThemeRequests(platformDb, { serviceKind: "custom_theme", limit: 100 }),
+  listCustomThemePackages(platformDb, { limit: 100 }),
+  listConsoleCustomThemeRequests(platformDb, { limit: 100 }),
 ]);
 
 const distinctTenantIds = Array.from(new Set(rawRequests.map((r) => r.tenantId)));
-const grantEntries = await Promise.all(
+const enrichmentEntries = await Promise.all(
   distinctTenantIds.map(async (tid) => {
-    const grants = await listTenantActiveCustomThemeGrants(platformDb, tid);
-    return [tid, grants] as const;
+    const [grants, seats] = await Promise.all([
+      listTenantActiveCustomThemeGrants(platformDb, tid),
+      getTenantSeatUsageForServiceRequest(platformDb, { tenantId: tid, nowMs }),
+    ]);
+    return [tid, { grants, seats }] as const;
   }),
 );
-const grantsByTenant = new Map<string, readonly TenantCustomThemeGrantSummary[]>(grantEntries);
+const enrichmentByTenant = new Map<
+  string,
+  { readonly grants: readonly TenantCustomThemeGrantSummary[]; readonly seats: TenantServiceSeatUsage | null }
+>(enrichmentEntries);
 
 const initialPackages = rawPackages.map(formatConsolePackageDto);
-const initialRequests = rawRequests.map((req) =>
-  formatConsoleRequestDto(req, grantsByTenant.get(req.tenantId) ?? []),
-);
+const initialRequests = rawRequests.map((req) => {
+  const enriched = enrichmentByTenant.get(req.tenantId);
+  return formatConsoleRequestDto(req, enriched?.grants ?? [], enriched?.seats ?? null);
+});
 
 const stepUpFresh =
   actor.twoFactorVerifiedAtMs !== null &&
@@ -147,12 +156,13 @@ const navLinks = [
 
     <header class="space-y-1">
       <h1 class="text-2xl font-semibold tracking-tight text-foreground">
-        Layanan &amp; Permintaan Tema Kustom
+        Layanan Tema Kustom &amp; Terima Beres
       </h1>
       <p class="text-sm text-muted-foreground">
-        Kelola paket jasa tema kustom dan proses antrean permintaan tenant. Menandai permintaan
-        sebagai <strong>Diserahkan (delivered)</strong> wajib menautkan izin tema kustom aktif milik
-        tenant dan setiap mutasi dicatat atomik ke log audit platform.
+        Kelola paket jasa Tema Kustom dan Layanan Terima Beres (Setup Website) serta proses antrean
+        permintaan tenant. Permintaan <strong>Tema Kustom</strong> berstatus Diserahkan wajib
+        menautkan izin tema kustom aktif; permintaan <strong>Terima Beres</strong> diselesaikan
+        tanpa izin tema dan otomatis mencabut keanggotaan sementara Tim Setup.
       </p>
     </header>
 

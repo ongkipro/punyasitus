@@ -1,0 +1,120 @@
+---
+import { env } from "cloudflare:workers";
+import type { Role } from "@punyasitus/core/schemas";
+import type { TenantStatus, TenantVertical } from "@punyasitus/db/platform";
+import { SetupServicePage } from "@/components/admin/custom-theme";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import {
+  createNeutralSetupNotFoundHtmlResponse,
+  loadSetupServicePageOrGateResponse,
+} from "./_page-gate";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+
+function mapTenantStatusToLifecycle(status: TenantStatus): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+function mapVerticalToOfferingLabel(vertical?: TenantVertical): string {
+  switch (vertical) {
+    case "catalog":
+    case "resto":
+      return "Produk";
+    case "travel":
+      return "Paket Tur";
+    case "dealer":
+      return "Kendaraan";
+    default:
+      return "Layanan";
+  }
+}
+
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+// Strict platform app-host isolation: NEVER served on tenant or console hosts!
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return createNeutralSetupNotFoundHtmlResponse();
+}
+
+const authorizedMember = Astro.locals.authorizedTenantMember;
+const authUser = Astro.locals.authUser;
+if (!authorizedMember) {
+  return createNeutralSetupNotFoundHtmlResponse();
+}
+
+const tenantId = authorizedMember.tenantId;
+const workspaceName = authorizedMember.tenantName || rawHandle;
+const saasZone = env.SAAS_ZONE || "situsku.click";
+const workspaceSubtitle = Astro.locals.tenant?.primaryHost ?? `${rawHandle}.${saasZone}`;
+const basePath = `/dashboard/${rawHandle}`;
+const offeringLabel = mapVerticalToOfferingLabel(Astro.locals.tenant?.vertical);
+const tenantStatus: TenantStatus = authorizedMember.tenantStatus;
+const role: Role = authorizedMember.role;
+const lifecycleStatus = mapTenantStatusToLifecycle(tenantStatus);
+
+// Enforce lifecycle & RBAC gate STRICTLY BEFORE any database reads!
+const loaded = await loadSetupServicePageOrGateResponse({
+  platformDb: env.PLATFORM_DB,
+  member: {
+    tenantId,
+    handle: rawHandle,
+    tenantName: workspaceName,
+    userId: authUser?.id ?? authorizedMember.userId,
+    role,
+    tenantStatus,
+  },
+  operatorHold: Astro.locals.tenant?.operatorHold === true,
+});
+
+if (!loaded.ok) {
+  return loaded.response;
+}
+
+const userRoleLabel =
+  role === "owner"
+    ? "Pemilik Situs"
+    : role === "admin"
+      ? "Admin"
+      : role === "agency_admin"
+        ? "Admin Agensi"
+        : "Editor";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+---
+
+<DashboardLayout
+  title={`Layanan Terima Beres — ${workspaceName}`}
+  surface="dashboard"
+  workspaceName={workspaceName}
+  workspaceSubtitle={workspaceSubtitle}
+  activeNavId="settings"
+  basePath={basePath}
+  offeringLabel={offeringLabel}
+  lifecycleStatus={lifecycleStatus}
+  publicSiteHref={`https://${workspaceSubtitle}`}
+  userDisplayName={authUser?.name ?? "Admin Situs"}
+  userRoleLabel={userRoleLabel}
+>
+  <SetupServicePage
+    client:load
+    tenantHandle={rawHandle}
+    workspaceName={workspaceName}
+    settingsHref={`${basePath}/settings`}
+    membersHref={`${basePath}/settings/members`}
+    requestsApiUrl={`/api/tenants/${encodeURIComponent(rawHandle)}/service-requests`}
+    initialState={loaded.initialState}
+  />
+</DashboardLayout>

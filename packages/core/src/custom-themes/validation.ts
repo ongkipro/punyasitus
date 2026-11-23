@@ -1,3 +1,4 @@
+import { z } from "zod";
 import {
   ExternalLinkValidationError,
   sanitizeExternalLink,
@@ -34,6 +35,7 @@ import {
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 const IDEMPOTENCY_KEY_RE = /^[A-Za-z0-9._:-]{8,128}$/;
 const THEME_ID_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
+const SIMPLE_STAFF_EMAIL_RE = /^[^\s@<>,;"'\\]+@[^\s@<>,;"'\\]+\.[^\s@<>,;"'\\]{2,}$/;
 
 const SERVICE_KIND_SET: ReadonlySet<string> = new Set(SERVICE_KINDS);
 const CONTACT_PREFERENCE_SET: ReadonlySet<string> = new Set(CONTACT_PREFERENCES);
@@ -843,6 +845,8 @@ export interface ValidatedTransitionCustomThemeRequestInput {
   readonly reason: string;
   readonly operatorNotes?: string | null;
   readonly deliveredThemeId?: string | null;
+  readonly staffUserEmail?: string | null;
+  readonly staffUserId?: string | null;
 }
 
 export function isAllowedCustomThemeStatusTransition(
@@ -854,9 +858,11 @@ export function isAllowedCustomThemeStatusTransition(
 
 export function validateTransitionCustomThemeRequestInput(
   rawInput: unknown,
+  options: { readonly serviceKind?: ServiceKind } = {},
 ): ValidatedTransitionCustomThemeRequestInput {
   const rec = asRecord(rawInput);
   const fields: CustomThemeFieldError[] = [];
+  const serviceKind: ServiceKind = options.serviceKind ?? "custom_theme";
 
   let expectedVersion = 0;
   if (
@@ -937,22 +943,86 @@ export function validateTransitionCustomThemeRequestInput(
     }
   }
 
-  if (status === "delivered" && !deliveredThemeId) {
+  let staffUserEmail: string | null | undefined;
+  if (Object.prototype.hasOwnProperty.call(rec, "staffUserEmail")) {
+    if (rec.staffUserEmail === null || rec.staffUserEmail === "") {
+      staffUserEmail = null;
+    } else if (typeof rec.staffUserEmail !== "string") {
+      fields.push({
+        field: "staffUserEmail",
+        code: "INVALID_STAFF_EMAIL",
+        message: "Email akun Tim Setup harus berupa teks.",
+      });
+    } else {
+      const cleaned = rec.staffUserEmail.trim().toLowerCase();
+      if (
+        cleaned.length > 254 ||
+        hasDisallowedControlChars(cleaned, false) ||
+        !SIMPLE_STAFF_EMAIL_RE.test(cleaned)
+      ) {
+        fields.push({
+          field: "staffUserEmail",
+          code: "INVALID_STAFF_EMAIL",
+          message: "Format email akun Tim Setup tidak valid.",
+        });
+      } else {
+        staffUserEmail = cleaned;
+      }
+    }
+  }
+
+  let staffUserId: string | null | undefined;
+  if (Object.prototype.hasOwnProperty.call(rec, "staffUserId")) {
+    if (rec.staffUserId === null || rec.staffUserId === "") {
+      staffUserId = null;
+    } else if (typeof rec.staffUserId !== "string") {
+      fields.push({
+        field: "staffUserId",
+        code: "INVALID_TYPE",
+        message: "ID akun Tim Setup harus berupa teks.",
+      });
+    } else {
+      const cleaned = rec.staffUserId.trim();
+      if (cleaned.length < 4 || cleaned.length > 64 || hasDisallowedControlChars(cleaned, false)) {
+        fields.push({
+          field: "staffUserId",
+          code: "INVALID_VALUE",
+          message: "Format ID akun Tim Setup tidak valid.",
+        });
+      } else {
+        staffUserId = cleaned;
+      }
+    }
+  }
+
+  if (serviceKind === "custom_theme") {
+    if (status === "delivered" && !deliveredThemeId) {
+      fields.push({
+        field: "deliveredThemeId",
+        code: "THEME_GRANT_REQUIRED",
+        message:
+          "Menandai permintaan sebagai diserahkan (delivered) wajib menautkan ID tema kustom yang sudah diberikan izin ke tenant ini.",
+      });
+    }
+  } else if (serviceKind === "setup" && deliveredThemeId) {
     fields.push({
       field: "deliveredThemeId",
-      code: "THEME_GRANT_REQUIRED",
-      message:
-        "Menandai permintaan sebagai diserahkan (delivered) wajib menautkan ID tema kustom yang sudah diberikan izin ke tenant ini.",
+      code: "VALIDATION_ERROR",
+      message: "Permintaan Layanan Terima Beres tidak menggunakan tautan izin tema kustom.",
     });
   }
 
   if (fields.length > 0) {
     const code =
-      status === "delivered" && fields.some((f) => f.code === "THEME_GRANT_REQUIRED")
+      serviceKind === "custom_theme" &&
+      status === "delivered" &&
+      fields.some((f) => f.code === "THEME_GRANT_REQUIRED")
         ? "THEME_GRANT_REQUIRED"
-        : fields.some((f) => f.code === "INVALID_REASON") && fields.length === 1
-          ? "INVALID_REASON"
-          : "VALIDATION_ERROR";
+        : fields.some((f) => f.code === "INVALID_STAFF_EMAIL")
+          ? "INVALID_STAFF_EMAIL"
+          : fields.some((f) => f.code === "INVALID_REASON") && fields.length === 1
+            ? "INVALID_REASON"
+            : "VALIDATION_ERROR";
     throw new CustomThemeValidationError(
       code,
       fields[0]?.message ?? "Transisi status permintaan tidak valid.",
@@ -966,5 +1036,119 @@ export function validateTransitionCustomThemeRequestInput(
     reason,
     ...(operatorNotes !== undefined ? { operatorNotes } : {}),
     ...(deliveredThemeId !== undefined ? { deliveredThemeId } : {}),
+    ...(staffUserEmail !== undefined ? { staffUserEmail } : {}),
+    ...(staffUserId !== undefined ? { staffUserId } : {}),
+  };
+}
+
+/**
+ * Strict Zod v4 schema for Terima Beres setup service request creation
+ * (`POST /api/tenants/:tenantId/service-requests`; REQ-070, TASK-069).
+ */
+export const SetupServiceRequestCreateSchema = z
+  .object({
+    packageId: z.string().nullable().optional(),
+    brandName: z.string(),
+    brief: z.string(),
+    referenceUrls: z.array(z.string()).optional(),
+    budgetRange: z.string().nullable().optional(),
+    contactPreference: z.enum(CONTACT_PREFERENCES).optional(),
+    idempotencyKey: z.string().optional(),
+  })
+  .strict();
+
+export function validateCreateSetupServiceRequestInput(
+  rawInput: unknown,
+  options: { readonly headerIdempotencyKey?: string | null } = {},
+): ValidatedCreateCustomThemeRequestInput {
+  const parsed = SetupServiceRequestCreateSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    const firstIssue = parsed.error.issues[0];
+    const isUnrecognized = firstIssue?.code === "unrecognized_keys";
+    const fieldName = firstIssue?.path.length ? String(firstIssue.path.join(".")) : "body";
+    throw new CustomThemeValidationError(
+      isUnrecognized ? "UNKNOWN_FIELD" : "VALIDATION_ERROR",
+      isUnrecognized
+        ? `Field tidak dikenal pada permintaan Layanan Terima Beres.`
+        : "Periksa kembali isian formulir permintaan Layanan Terima Beres.",
+      parsed.error.issues.map((issue) => ({
+        field: issue.path.length ? String(issue.path.join(".")) : fieldName,
+        code: issue.code === "unrecognized_keys" ? "UNKNOWN_FIELD" : "VALIDATION_ERROR",
+        message: issue.message,
+      })),
+    );
+  }
+  return validateCreateCustomThemeRequestInput(parsed.data, {
+    headerIdempotencyKey: options.headerIdempotencyKey,
+    serviceKind: "setup",
+  });
+}
+
+export const SETUP_STAFF_ACCESS_ACTIONS = ["approve", "revoke"] as const;
+export type SetupStaffAccessAction = (typeof SETUP_STAFF_ACCESS_ACTIONS)[number];
+
+/**
+ * Strict Zod v4 schema for owner approval/revocation of Terima Beres staff editor access
+ * (`POST /api/tenants/:tenantId/service-requests/:requestId/staff-access`; REQ-070, TASK-069).
+ */
+export const SetupStaffAccessActionSchema = z
+  .object({
+    action: z.enum(SETUP_STAFF_ACCESS_ACTIONS),
+    expectedVersion: z.number().int().min(1),
+    reason: z.string().max(CUSTOM_THEME_MAX_REASON_LENGTH).optional(),
+  })
+  .strict();
+
+export interface ValidatedSetupStaffAccessActionInput {
+  readonly action: SetupStaffAccessAction;
+  readonly expectedVersion: number;
+  readonly reason: string | null;
+}
+
+export function validateSetupStaffAccessActionInput(
+  rawInput: unknown,
+): ValidatedSetupStaffAccessActionInput {
+  const parsed = SetupStaffAccessActionSchema.safeParse(rawInput);
+  if (!parsed.success) {
+    const firstIssue = parsed.error.issues[0];
+    const isUnrecognized = firstIssue?.code === "unrecognized_keys";
+    throw new CustomThemeValidationError(
+      isUnrecognized ? "UNKNOWN_FIELD" : "VALIDATION_ERROR",
+      isUnrecognized
+        ? "Field tidak dikenal pada aksi persetujuan Tim Setup."
+        : "Payload aksi akses Tim Setup tidak valid.",
+      parsed.error.issues.map((issue) => ({
+        field: issue.path.length ? String(issue.path.join(".")) : "body",
+        code: issue.code === "unrecognized_keys" ? "UNKNOWN_FIELD" : "VALIDATION_ERROR",
+        message: issue.message,
+      })),
+    );
+  }
+
+  let cleanReason: string | null = null;
+  if (parsed.data.reason !== undefined) {
+    const trimmed = parsed.data.reason.trim();
+    if (trimmed.length > 0) {
+      if (hasDisallowedControlChars(trimmed, false)) {
+        throw new CustomThemeValidationError(
+          "VALIDATION_ERROR",
+          "Alasan tidak boleh mengandung karakter kontrol.",
+          [
+            {
+              field: "reason",
+              code: "CONTROL_CHARACTER",
+              message: "Alasan tidak boleh mengandung karakter kontrol.",
+            },
+          ],
+        );
+      }
+      cleanReason = trimmed;
+    }
+  }
+
+  return {
+    action: parsed.data.action,
+    expectedVersion: parsed.data.expectedVersion,
+    reason: cleanReason,
   };
 }

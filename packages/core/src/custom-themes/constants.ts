@@ -6,6 +6,32 @@
 export const SERVICE_KINDS = ["custom_theme", "setup", "custom_plugin"] as const;
 export type ServiceKind = (typeof SERVICE_KINDS)[number];
 
+export const SERVICE_KIND_LABELS_ID: Readonly<Record<ServiceKind, string>> = {
+  custom_theme: "Tema Kustom",
+  setup: "Layanan Terima Beres",
+  custom_plugin: "Plugin Kustom",
+};
+
+export const STAFF_ACCESS_STATES = [
+  "none",
+  "awaiting_owner_approval",
+  "waiting_seat",
+  "active",
+  "revoked",
+] as const;
+export type StaffAccessState = (typeof STAFF_ACCESS_STATES)[number];
+
+export const STAFF_ACCESS_STATE_LABELS_ID: Readonly<Record<StaffAccessState, string>> = {
+  none: "Belum ada penugasan tim",
+  awaiting_owner_approval: "Menunggu persetujuan Pemilik Situs",
+  waiting_seat: "Menunggu kursi anggota kosong",
+  active: "Tim Setup aktif (Editor)",
+  revoked: "Akses Tim Setup dicabut",
+};
+
+export const SETUP_SERVICE_SEAT_FULL_EXPLANATION =
+  "Semua 5 kursi anggota situs sedang terpakai. Hapus anggota atau batalkan undangan tertunda di Pengaturan > Anggota, lalu setujui kembali akses Tim Setup agar pengerjaan dapat dimulai." as const;
+
 export const CUSTOM_THEME_REQUEST_STATUSES = [
   "new",
   "contacted",
@@ -86,7 +112,9 @@ export type CustomThemeValidationErrorCode =
   | "TOO_MANY_REFERENCE_URLS"
   | "INVALID_IDEMPOTENCY_KEY"
   | "INVALID_REASON"
-  | "THEME_GRANT_REQUIRED";
+  | "THEME_GRANT_REQUIRED"
+  | "INVALID_STAFF_EMAIL"
+  | "UNKNOWN_FIELD";
 
 export class CustomThemeValidationError extends Error {
   readonly status = 422 as const;
@@ -147,6 +175,19 @@ export interface CustomThemeRequestRecord {
   readonly deliveredThemeGrantId: string | null;
   readonly statusReason: string | null;
   readonly operatorNotes: string | null;
+  readonly staffUserId: string | null;
+  readonly staffEmail: string | null;
+  readonly staffName: string | null;
+  readonly staffAccessState: StaffAccessState;
+  readonly staffApprovedByUserId: string | null;
+  readonly staffApprovedAtMs: number | null;
+  readonly staffApprovedAtIso: string | null;
+  readonly staffMemberId: string | null;
+  readonly staffJoinedAtMs: number | null;
+  readonly staffJoinedAtIso: string | null;
+  readonly staffRevokedAtMs: number | null;
+  readonly staffRevokedAtIso: string | null;
+  readonly staffWaitReason: string | null;
   readonly version: number;
   readonly createdAtMs: number;
   readonly updatedAtMs: number;

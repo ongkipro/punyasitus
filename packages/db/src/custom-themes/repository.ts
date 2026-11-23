@@ -1,6 +1,8 @@
 import {
   CUSTOM_THEME_DAILY_REQUEST_LIMIT,
+  CUSTOM_THEME_TERMINAL_STATUSES,
   CUSTOM_THEME_UNDECIDED_PACKAGE_LABEL,
+  SETUP_SERVICE_SEAT_FULL_EXPLANATION,
   computeCustomThemeDayBucket,
   formatCustomThemeStartingPriceLabel,
   isAllowedCustomThemeStatusTransition,
@@ -9,12 +11,15 @@ import {
   type CustomThemeRequestRecord,
   type CustomThemeRequestStatus,
   type ServiceKind,
+  type StaffAccessState,
   type ValidatedCreateCustomThemePackageInput,
   type ValidatedCreateCustomThemeRequestInput,
   type ValidatedTransitionCustomThemeRequestInput,
   type ValidatedUpdateCustomThemePackageInput,
 } from "@punyasitus/core/custom-themes/index";
 import { buildPlatformAuditStatement, type PlatformAuditRecord } from "../platform/audit.ts";
+
+const MAX_TENANT_SEAT_CAP = 5 as const;
 
 /**
  * Authoritative `PLATFORM_DB` repository for Custom Theme Service Packages & Requests
@@ -61,7 +66,13 @@ export type CustomThemeRepositoryErrorCode =
   | "IDEMPOTENCY_KEY_REUSED"
   | "DAILY_REQUEST_LIMIT_REACHED"
   | "INVALID_STATUS_TRANSITION"
-  | "THEME_GRANT_REQUIRED";
+  | "THEME_GRANT_REQUIRED"
+  | "STAFF_USER_NOT_FOUND"
+  | "STAFF_NOT_ACTIVE_OPERATOR"
+  | "STAFF_ALREADY_MEMBER"
+  | "STAFF_ALREADY_ASSIGNED"
+  | "STAFF_NOT_ASSIGNED"
+  | "INVALID_STAFF_ACCESS_STATE";
 
 export class CustomThemeRepositoryError extends Error {
   readonly status: 404 | 409 | 422 | 429;
@@ -119,6 +130,16 @@ interface RequestSqlRow {
   readonly delivered_theme_grant_id: string | null;
   readonly status_reason: string | null;
   readonly operator_notes: string | null;
+  readonly staff_user_id: string | null;
+  readonly staff_email_snapshot: string | null;
+  readonly staff_name_snapshot: string | null;
+  readonly staff_access_state: StaffAccessState | null;
+  readonly staff_approved_by_user_id: string | null;
+  readonly staff_approved_at: number | null;
+  readonly staff_member_id: string | null;
+  readonly staff_joined_at: number | null;
+  readonly staff_revoked_at: number | null;
+  readonly staff_wait_reason: string | null;
   readonly version: number;
   readonly created_at: number;
   readonly updated_at: number;
@@ -183,6 +204,16 @@ const REQUEST_SELECT_COLUMNS = `
   delivered_theme_grant_id,
   status_reason,
   operator_notes,
+  staff_user_id,
+  staff_email_snapshot,
+  staff_name_snapshot,
+  staff_access_state,
+  staff_approved_by_user_id,
+  staff_approved_at,
+  staff_member_id,
+  staff_joined_at,
+  staff_revoked_at,
+  staff_wait_reason,
   version,
   created_at,
   updated_at
@@ -233,6 +264,19 @@ function mapPackageRow(row: PackageSqlRow): CustomThemePackageRecord {
 }
 
 function mapRequestRow(row: RequestSqlRow): CustomThemeRequestRecord {
+  const approvedAtMs =
+    row.staff_approved_at === null || row.staff_approved_at === undefined
+      ? null
+      : Number(row.staff_approved_at);
+  const joinedAtMs =
+    row.staff_joined_at === null || row.staff_joined_at === undefined
+      ? null
+      : Number(row.staff_joined_at);
+  const revokedAtMs =
+    row.staff_revoked_at === null || row.staff_revoked_at === undefined
+      ? null
+      : Number(row.staff_revoked_at);
+
   return {
     id: row.id,
     requestCode: row.request_code,
@@ -254,6 +298,19 @@ function mapRequestRow(row: RequestSqlRow): CustomThemeRequestRecord {
     deliveredThemeGrantId: row.delivered_theme_grant_id,
     statusReason: row.status_reason,
     operatorNotes: row.operator_notes,
+    staffUserId: row.staff_user_id ?? null,
+    staffEmail: row.staff_email_snapshot ?? null,
+    staffName: row.staff_name_snapshot ?? null,
+    staffAccessState: (row.staff_access_state ?? "none") as StaffAccessState,
+    staffApprovedByUserId: row.staff_approved_by_user_id ?? null,
+    staffApprovedAtMs: approvedAtMs,
+    staffApprovedAtIso: approvedAtMs !== null ? new Date(approvedAtMs).toISOString() : null,
+    staffMemberId: row.staff_member_id ?? null,
+    staffJoinedAtMs: joinedAtMs,
+    staffJoinedAtIso: joinedAtMs !== null ? new Date(joinedAtMs).toISOString() : null,
+    staffRevokedAtMs: revokedAtMs,
+    staffRevokedAtIso: revokedAtMs !== null ? new Date(revokedAtMs).toISOString() : null,
+    staffWaitReason: row.staff_wait_reason ?? null,
     version: Number(row.version),
     createdAtMs: Number(row.created_at),
     updatedAtMs: Number(row.updated_at),
@@ -697,6 +754,8 @@ export async function submitTenantCustomThemeRequest(
   }
 
   // 2. Resolve optional package snapshot
+  const serviceLabel =
+    input.serviceKind === "setup" ? "Layanan Terima Beres" : "tema kustom";
   let packageNameSnapshot: string = CUSTOM_THEME_UNDECIDED_PACKAGE_LABEL;
   if (input.packageId !== null) {
     const pkg = await getCustomThemePackageById(db, input.packageId);
@@ -704,14 +763,14 @@ export async function submitTenantCustomThemeRequest(
       throw new CustomThemeRepositoryError(
         422,
         "INVALID_PACKAGE",
-        "Paket tema kustom yang dipilih tidak ditemukan.",
+        `Paket ${serviceLabel} yang dipilih tidak ditemukan.`,
       );
     }
     if (!pkg.active) {
       throw new CustomThemeRepositoryError(
         422,
         "PACKAGE_INACTIVE",
-        "Paket tema kustom yang dipilih sudah tidak aktif. Pilih paket lain atau konsultasi.",
+        `Paket ${serviceLabel} yang dipilih sudah tidak aktif. Pilih paket lain atau konsultasi.`,
       );
     }
     packageNameSnapshot = pkg.name;
@@ -719,7 +778,13 @@ export async function submitTenantCustomThemeRequest(
 
   // 3. Atomic conditional INSERT enforcing 3/day cap + active package inside a single SQLite batch
   const requestId = generateUlid(nowMs);
-  const requestCode = `CTR-${dayBucket.replace(/-/g, "")}-${requestId.slice(-6)}`;
+  const requestPrefix =
+    input.serviceKind === "setup"
+      ? "TBR"
+      : input.serviceKind === "custom_plugin"
+        ? "CPR"
+        : "CTR";
+  const requestCode = `${requestPrefix}-${dayBucket.replace(/-/g, "")}-${requestId.slice(-6)}`;
 
   const insertStmt = db
     .prepare(
@@ -844,13 +909,13 @@ export async function submitTenantCustomThemeRequest(
       throw new CustomThemeRepositoryError(
         429,
         "DAILY_REQUEST_LIMIT_REACHED",
-        `Batas maksimal ${CUSTOM_THEME_DAILY_REQUEST_LIMIT} permintaan tema kustom per hari untuk situs ini telah tercapai. Silakan coba lagi besok atau hubungi tim kami melalui WhatsApp.`,
+        `Batas maksimal ${CUSTOM_THEME_DAILY_REQUEST_LIMIT} permintaan ${serviceLabel} per hari untuk situs ini telah tercapai. Silakan coba lagi besok atau hubungi tim kami melalui WhatsApp.`,
       );
     }
     throw new CustomThemeRepositoryError(
       422,
       "PACKAGE_INACTIVE",
-      "Paket tema kustom yang dipilih sudah tidak aktif. Pilih paket lain atau konsultasi.",
+      `Paket ${serviceLabel} yang dipilih sudah tidak aktif. Pilih paket lain atau konsultasi.`,
     );
   }
 
@@ -970,12 +1035,24 @@ export async function getConsoleCustomThemeRequestById(
   return row ? mapRequestRow(row) : null;
 }
 
+export interface TransitionConsoleServiceRequestResult {
+  readonly request: CustomThemeRequestRecord;
+  readonly audit: PlatformAuditRecord;
+  readonly staffMembershipRemoved?: boolean;
+}
+
 /**
- * Transitions a custom theme request status in `console.punyasitus.com/custom-themes` with:
+ * Transitions a service request (`custom_theme` or `setup`) status in `console.punyasitus.com/custom-themes` with:
  * - Optimistic concurrency (`expectedVersion` -> `409 STALE_VERSION`)
  * - Valid forward-only state transition (`409 INVALID_STATUS_TRANSITION`)
- * - Mandatory active `tenant_theme_entitlements` + active custom `theme_catalog` grant when
- *   marking `delivered` (`409 THEME_GRANT_REQUIRED` if absent or revoked!)
+ * - For `custom_theme`: mandatory active `tenant_theme_entitlements` + active custom `theme_catalog`
+ *   grant when marking `delivered` (`409 THEME_GRANT_REQUIRED` if absent or revoked).
+ * - For `setup` (`TASK-069` / `REQ-070`):
+ *   - `delivered` NEVER requires a theme grant!
+ *   - Operator may nominate a named staff `users` account (`staffUserEmail` / `staffUserId`) which
+ *     enters `staff_access_state = 'awaiting_owner_approval'` (NEVER auto-joins without owner approval!).
+ *   - Every terminal state (`delivered`, `declined`, `cancelled`) atomically & idempotently removes
+ *     any `setup_staff` row from `members` inside the SAME `db.batch([...])`!
  * - Atomic `platform_audit` insert inside single `db.batch([...])` (`WHERE changes() = 1`).
  */
 export async function transitionConsoleCustomThemeRequest(
@@ -988,13 +1065,13 @@ export async function transitionConsoleCustomThemeRequest(
     readonly httpRequestId: string;
     readonly nowMs: number;
   },
-): Promise<{ readonly request: CustomThemeRequestRecord; readonly audit: PlatformAuditRecord }> {
+): Promise<TransitionConsoleServiceRequestResult> {
   const existing = await getConsoleCustomThemeRequestById(db, params.requestId);
   if (!existing) {
     throw new CustomThemeRepositoryError(
       404,
       "NOT_FOUND",
-      "Permintaan tema kustom tidak ditemukan.",
+      "Permintaan layanan tidak ditemukan.",
     );
   }
   if (existing.version !== params.input.expectedVersion) {
@@ -1004,19 +1081,375 @@ export async function transitionConsoleCustomThemeRequest(
       "Versi permintaan sudah berubah. Muat ulang sebelum mengubah status.",
     );
   }
-  if (!isAllowedCustomThemeStatusTransition(existing.status, params.input.status)) {
-    throw new CustomThemeRepositoryError(
-      409,
-      "INVALID_STATUS_TRANSITION",
-      `Status tidak dapat diubah dari "${existing.status}" ke "${params.input.status}".`,
-    );
-  }
 
   const nowMs = Math.trunc(params.nowMs);
   const { input } = params;
+  const isSetup = existing.serviceKind === "setup";
+  const isTerminal = CUSTOM_THEME_TERMINAL_STATUSES.has(input.status);
+  const hasStaffNomination =
+    isSetup &&
+    !isTerminal &&
+    Boolean((input.staffUserEmail && input.staffUserEmail.trim()) || (input.staffUserId && input.staffUserId.trim()));
+
+  // Allow forward-only transitions, plus nominating a staff account while already `in_progress` (if not active yet).
+  const isStaffNominationInPlace =
+    hasStaffNomination &&
+    existing.status === "in_progress" &&
+    input.status === "in_progress" &&
+    existing.staffAccessState !== "active";
+
+  if (!isStaffNominationInPlace && !isAllowedCustomThemeStatusTransition(existing.status, input.status)) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "INVALID_STATUS_TRANSITION",
+      `Status tidak dapat diubah dari "${existing.status}" ke "${input.status}".`,
+    );
+  }
+
   const nextOperatorNotes =
     input.operatorNotes !== undefined ? input.operatorNotes : existing.operatorNotes;
 
+  // -------------------------------------------------------------------------
+  // Branch 1: `setup` (Terima Beres — REQ-070, TASK-069)
+  // -------------------------------------------------------------------------
+  if (isSetup) {
+    const tenantOrgRow = await db
+      .prepare("SELECT organization_id FROM tenants WHERE id = ? LIMIT 1")
+      .bind(existing.tenantId)
+      .first<{ readonly organization_id: string }>();
+
+    if (!tenantOrgRow) {
+      throw new CustomThemeRepositoryError(404, "NOT_FOUND", "Organisasi tenant tidak ditemukan.");
+    }
+
+    let nominatedStaff: {
+      readonly id: string;
+      readonly email: string;
+      readonly name: string;
+    } | null = null;
+
+    if (hasStaffNomination) {
+      if (input.status !== "in_progress") {
+        throw new CustomThemeRepositoryError(
+          409,
+          "INVALID_STATUS_TRANSITION",
+          "Penugasan akun Tim Setup hanya dapat dilakukan saat status permintaan adalah 'in_progress' (Dikerjakan).",
+        );
+      }
+
+      const lookupByEmail = input.staffUserEmail?.trim().toLowerCase() || null;
+      const lookupById = input.staffUserId?.trim() || null;
+      const userRow = lookupById
+        ? await db
+            .prepare(
+              `SELECT u.id, u.email, u.name, po.revoked_at AS operator_revoked_at, po.user_id AS operator_user_id
+               FROM users u
+               LEFT JOIN platform_operators po ON po.user_id = u.id
+               WHERE u.id = ?
+               LIMIT 1`,
+            )
+            .bind(lookupById)
+            .first<{
+              readonly id: string;
+              readonly email: string;
+              readonly name: string;
+              readonly operator_user_id: string | null;
+              readonly operator_revoked_at: number | null;
+            }>()
+        : await db
+            .prepare(
+              `SELECT u.id, u.email, u.name, po.revoked_at AS operator_revoked_at, po.user_id AS operator_user_id
+               FROM users u
+               LEFT JOIN platform_operators po ON po.user_id = u.id
+               WHERE lower(u.email) = ?
+               LIMIT 1`,
+            )
+            .bind(lookupByEmail)
+            .first<{
+              readonly id: string;
+              readonly email: string;
+              readonly name: string;
+              readonly operator_user_id: string | null;
+              readonly operator_revoked_at: number | null;
+            }>();
+
+      if (!userRow) {
+        throw new CustomThemeRepositoryError(
+          422,
+          "STAFF_USER_NOT_FOUND",
+          "Akun Tim Setup dengan email/ID tersebut tidak ditemukan. Gunakan akun operator platform aktif.",
+        );
+      }
+
+      if (!userRow.operator_user_id || userRow.operator_revoked_at !== null) {
+        throw new CustomThemeRepositoryError(
+          422,
+          "STAFF_NOT_ACTIVE_OPERATOR",
+          "Akun yang ditugaskan sebagai Tim Setup wajib memiliki izin operator platform yang aktif.",
+        );
+      }
+
+      // Refuse nominating ANY user who already holds an active membership on this tenant
+      // (including an active `setup_staff` row) to prevent cross-request member collisions!
+      const existingMemberRow = await db
+        .prepare(
+          "SELECT id, role FROM members WHERE organization_id = ? AND user_id = ? LIMIT 1",
+        )
+        .bind(tenantOrgRow.organization_id, userRow.id)
+        .first<{ readonly id: string; readonly role: string }>();
+
+      if (existingMemberRow) {
+        throw new CustomThemeRepositoryError(
+          409,
+          "STAFF_ALREADY_MEMBER",
+          "Akun tersebut sudah terdaftar sebagai anggota aktif pada situs ini sehingga tidak dapat ditugaskan ulang sebagai Tim Setup.",
+        );
+      }
+
+      // Refuse nominating a staff user already nominated on another open setup request for this tenant
+      const otherOpenNomination = await db
+        .prepare(
+          `SELECT id
+           FROM custom_theme_requests
+           WHERE tenant_id = ?
+             AND service_kind = 'setup'
+             AND id != ?
+             AND staff_user_id = ?
+             AND status NOT IN ('delivered', 'declined', 'cancelled')
+             AND staff_access_state != 'revoked'
+           LIMIT 1`,
+        )
+        .bind(existing.tenantId, existing.id, userRow.id)
+        .first<{ readonly id: string }>();
+
+      if (otherOpenNomination) {
+        throw new CustomThemeRepositoryError(
+          409,
+          "STAFF_ALREADY_ASSIGNED",
+          "Akun Tim Setup tersebut sedang ditugaskan pada permintaan Terima Beres aktif lainnya di situs ini.",
+        );
+      }
+
+      nominatedStaff = { id: userRow.id, email: userRow.email, name: userRow.name };
+    }
+
+    const nextStaffAccessState: StaffAccessState = isTerminal
+      ? existing.staffAccessState === "none"
+        ? "none"
+        : "revoked"
+      : nominatedStaff
+        ? "awaiting_owner_approval"
+        : existing.staffAccessState;
+
+    const updateStmt = isTerminal
+      ? db
+          .prepare(
+            `UPDATE custom_theme_requests
+             SET status = ?,
+                 status_reason = ?,
+                 operator_notes = ?,
+                 staff_access_state = ?,
+                 staff_revoked_at = CASE WHEN staff_access_state = 'none' THEN staff_revoked_at ELSE ? END,
+                 staff_wait_reason = NULL,
+                 version = version + 1,
+                 updated_at = ?
+             WHERE id = ?
+               AND version = ?`,
+          )
+          .bind(
+            input.status,
+            input.reason,
+            nextOperatorNotes,
+            nextStaffAccessState,
+            nowMs,
+            nowMs,
+            existing.id,
+            input.expectedVersion,
+          )
+      : nominatedStaff
+        ? db
+            .prepare(
+              `UPDATE custom_theme_requests
+               SET status = ?,
+                   status_reason = ?,
+                   operator_notes = ?,
+                   staff_user_id = ?,
+                   staff_email_snapshot = ?,
+                   staff_name_snapshot = ?,
+                   staff_access_state = 'awaiting_owner_approval',
+                   staff_approved_by_user_id = NULL,
+                   staff_approved_at = NULL,
+                   staff_member_id = NULL,
+                   staff_joined_at = NULL,
+                   staff_revoked_at = NULL,
+                   staff_wait_reason = NULL,
+                   version = version + 1,
+                   updated_at = ?
+               WHERE id = ?
+                 AND version = ?
+                 AND NOT EXISTS (
+                   SELECT 1 FROM members WHERE organization_id = ? AND user_id = ?
+                 )
+                 AND NOT EXISTS (
+                   SELECT 1
+                   FROM custom_theme_requests
+                   WHERE tenant_id = ?
+                     AND service_kind = 'setup'
+                     AND id != ?
+                     AND staff_user_id = ?
+                     AND status NOT IN ('delivered', 'declined', 'cancelled')
+                     AND staff_access_state != 'revoked'
+                 )`,
+            )
+            .bind(
+              input.status,
+              input.reason,
+              nextOperatorNotes,
+              nominatedStaff.id,
+              nominatedStaff.email,
+              nominatedStaff.name,
+              nowMs,
+              existing.id,
+              input.expectedVersion,
+              tenantOrgRow.organization_id,
+              nominatedStaff.id,
+              existing.tenantId,
+              existing.id,
+              nominatedStaff.id,
+            )
+        : db
+            .prepare(
+              `UPDATE custom_theme_requests
+               SET status = ?,
+                   status_reason = ?,
+                   operator_notes = ?,
+                   version = version + 1,
+                   updated_at = ?
+               WHERE id = ?
+                 AND version = ?`,
+            )
+            .bind(
+              input.status,
+              input.reason,
+              nextOperatorNotes,
+              nowMs,
+              existing.id,
+              input.expectedVersion,
+            );
+
+    const auditAction =
+      input.status === "delivered"
+        ? "setup_service.request.delivered"
+        : nominatedStaff
+          ? "setup_service.request.staff_assigned"
+          : "setup_service.request.status_changed";
+
+    const { statement: auditStmt, entry: audit } = buildPlatformAuditStatement(
+      db,
+      {
+        actorUserId: params.actorUserId,
+        actorRole: params.actorRole,
+        action: auditAction,
+        targetType: "custom_theme_request",
+        targetId: existing.id,
+        tenantId: existing.tenantId,
+        reason: input.reason,
+        requireReason: true,
+        outcome: "success",
+        requestId: params.httpRequestId,
+        metadata: {
+          serviceKind: "setup",
+          requestCode: existing.requestCode,
+          tenantHandle: existing.tenantHandle,
+          previousStatus: existing.status,
+          nextStatus: input.status,
+          previousVersion: existing.version,
+          nextVersion: existing.version + 1,
+          previousStaffAccessState: existing.staffAccessState,
+          nextStaffAccessState,
+          ...(nominatedStaff
+            ? { nominatedStaffUserId: nominatedStaff.id, nominatedStaffEmail: nominatedStaff.email }
+            : {}),
+          ...(isTerminal && existing.staffMemberId
+            ? { cleanupStaffMemberId: existing.staffMemberId }
+            : {}),
+        },
+        createdAtMs: nowMs,
+      },
+      { onlyIfPreviousChanged: true },
+    );
+
+    const batchStmts: D1PreparedStatement[] = [updateStmt, auditStmt];
+    // STRICTLY scope `setup_staff` member deletion by exact `staff_member_id` (NEVER `OR user_id = ?`)!
+    if (isTerminal && existing.staffMemberId) {
+      batchStmts.push(
+        db
+          .prepare(
+            `DELETE FROM members
+             WHERE organization_id = ?
+               AND id = ?
+               AND role = 'setup_staff'
+               AND EXISTS (
+                 SELECT 1
+                 FROM custom_theme_requests
+                 WHERE id = ?
+                   AND version = ?
+                   AND status IN ('delivered', 'declined', 'cancelled')
+               )`,
+          )
+          .bind(
+            tenantOrgRow.organization_id,
+            existing.staffMemberId,
+            existing.id,
+            input.expectedVersion + 1,
+          ),
+      );
+    }
+
+    const results = await db.batch(batchStmts);
+    const updatedChanges = results[0]?.meta?.changes ?? 0;
+    if (updatedChanges !== 1) {
+      if (nominatedStaff) {
+        const refreshed = await getConsoleCustomThemeRequestById(db, existing.id);
+        if (refreshed && refreshed.version === input.expectedVersion) {
+          const racedMember = await db
+            .prepare("SELECT id FROM members WHERE organization_id = ? AND user_id = ? LIMIT 1")
+            .bind(tenantOrgRow.organization_id, nominatedStaff.id)
+            .first<{ readonly id: string }>();
+          if (racedMember) {
+            throw new CustomThemeRepositoryError(
+              409,
+              "STAFF_ALREADY_MEMBER",
+              "Akun tersebut sudah terdaftar sebagai anggota aktif pada situs ini.",
+            );
+          }
+          throw new CustomThemeRepositoryError(
+            409,
+            "STAFF_ALREADY_ASSIGNED",
+            "Akun Tim Setup tersebut sedang ditugaskan pada permintaan Terima Beres aktif lainnya di situs ini.",
+          );
+        }
+      }
+      throw new CustomThemeRepositoryError(
+        409,
+        "STALE_VERSION",
+        "Permintaan berubah secara bersamaan. Muat ulang dan coba lagi.",
+      );
+    }
+
+    const staffMembershipRemoved =
+      isTerminal && batchStmts.length > 2 ? (results[2]?.meta?.changes ?? 0) > 0 : false;
+
+    const updated = await getConsoleCustomThemeRequestById(db, existing.id);
+    if (!updated) {
+      throw new Error("SETUP_SERVICE_REQUEST_UPDATE_READBACK_FAILED");
+    }
+    return { request: updated, audit, staffMembershipRemoved };
+  }
+
+  // -------------------------------------------------------------------------
+  // Branch 2: `custom_theme` (TASK-061 — unchanged delivery theme-grant invariant)
+  // -------------------------------------------------------------------------
   let resolvedThemeId: string | null = existing.deliveredThemeId;
   let resolvedGrantId: string | null = existing.deliveredThemeGrantId;
 
@@ -1180,4 +1613,635 @@ export async function transitionConsoleCustomThemeRequest(
     throw new Error("CUSTOM_THEME_REQUEST_UPDATE_READBACK_FAILED");
   }
   return { request: updated, audit };
+}
+
+// ---------------------------------------------------------------------------
+// Terima Beres Setup Service — Seat Usage, Owner Approval & Idempotent Revoke
+// (REQ-070, PLAN §18.2, TASK-069)
+// ---------------------------------------------------------------------------
+
+export interface TenantServiceSeatUsage {
+  readonly tenantId: string;
+  readonly organizationId: string;
+  readonly activeMembersCount: number;
+  readonly pendingInvitationsCount: number;
+  readonly seatsUsed: number;
+  readonly seatsLimit: number;
+  readonly seatsRemaining: number;
+}
+
+export async function getTenantSeatUsageForServiceRequest(
+  db: D1Database,
+  params: { readonly tenantId: string; readonly nowMs?: number },
+): Promise<TenantServiceSeatUsage | null> {
+  const nowMs = Math.trunc(params.nowMs ?? Date.now());
+  const tenantRow = await db
+    .prepare("SELECT id, organization_id FROM tenants WHERE id = ? LIMIT 1")
+    .bind(params.tenantId.trim())
+    .first<{ readonly id: string; readonly organization_id: string }>();
+  if (!tenantRow) return null;
+
+  const counts = await db
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM members WHERE organization_id = ?) AS active_members,
+         (SELECT COUNT(*) FROM invitations WHERE organization_id = ? AND status = 'pending' AND expires_at > ?) AS pending_invites`,
+    )
+    .bind(tenantRow.organization_id, tenantRow.organization_id, nowMs)
+    .first<{ readonly active_members: number; readonly pending_invites: number }>();
+
+  const activeMembersCount = Number(counts?.active_members ?? 0);
+  const pendingInvitationsCount = Number(counts?.pending_invites ?? 0);
+  const seatsUsed = activeMembersCount + pendingInvitationsCount;
+  return {
+    tenantId: tenantRow.id,
+    organizationId: tenantRow.organization_id,
+    activeMembersCount,
+    pendingInvitationsCount,
+    seatsUsed,
+    seatsLimit: MAX_TENANT_SEAT_CAP,
+    seatsRemaining: Math.max(0, MAX_TENANT_SEAT_CAP - seatsUsed),
+  };
+}
+
+export interface ApproveSetupStaffAccessResult {
+  readonly request: CustomThemeRequestRecord;
+  readonly joined: boolean;
+  readonly alreadyActive: boolean;
+  readonly waitingForSeat: boolean;
+  readonly waitReason: string | null;
+  readonly seats: TenantServiceSeatUsage;
+  readonly audit: PlatformAuditRecord | null;
+}
+
+/**
+ * Owner-approved staff editor membership join for a Terima Beres setup request:
+ * - Atomically enforces the 5-member seat cap (`active members + active unexpired pending invitations < 5`)
+ *   inside SQLite so concurrent approvals/invitations can NEVER exceed 5 seats!
+ * - Joins the nominated staff user into `members` with `role = 'setup_staff'` (mapped to canonical `editor`).
+ * - If all 5 seats are occupied, atomically transitions `staff_access_state = 'waiting_seat'` with a clear
+ *   Bahasa Indonesia explanation and writes an audit entry instead of bypassing the cap.
+ */
+export async function approveSetupServiceStaffAccess(
+  db: D1Database,
+  params: {
+    readonly tenantId: string;
+    readonly requestId: string;
+    readonly expectedVersion: number;
+    readonly actorUserId: string;
+    readonly actorRole: string;
+    readonly reason?: string | null;
+    readonly httpRequestId: string;
+    readonly nowMs: number;
+  },
+): Promise<ApproveSetupStaffAccessResult> {
+  const nowMs = Math.trunc(params.nowMs);
+  const existing = await getTenantCustomThemeRequestById(db, {
+    tenantId: params.tenantId,
+    requestId: params.requestId,
+  });
+
+  if (!existing || existing.serviceKind !== "setup") {
+    throw new CustomThemeRepositoryError(
+      404,
+      "NOT_FOUND",
+      "Permintaan Layanan Terima Beres tidak ditemukan.",
+    );
+  }
+
+  const initialSeats = await getTenantSeatUsageForServiceRequest(db, {
+    tenantId: existing.tenantId,
+    nowMs,
+  });
+  if (!initialSeats) {
+    throw new CustomThemeRepositoryError(404, "NOT_FOUND", "Tenant tidak ditemukan.");
+  }
+
+  if (existing.staffAccessState === "active") {
+    return {
+      request: existing,
+      joined: true,
+      alreadyActive: true,
+      waitingForSeat: false,
+      waitReason: null,
+      seats: initialSeats,
+      audit: null,
+    };
+  }
+
+  if (existing.version !== params.expectedVersion) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "STALE_VERSION",
+      "Versi permintaan sudah berubah. Muat ulang halaman sebelum menyetujui akses Tim Setup.",
+    );
+  }
+
+  if (existing.status !== "in_progress") {
+    throw new CustomThemeRepositoryError(
+      409,
+      "INVALID_STATUS_TRANSITION",
+      "Persetujuan akses Tim Setup hanya dapat dilakukan saat permintaan berstatus Dikerjakan (in_progress).",
+    );
+  }
+
+  if (!existing.staffUserId) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "STAFF_NOT_ASSIGNED",
+      "Operator belum menugaskan akun Tim Setup untuk permintaan ini.",
+    );
+  }
+
+  if (
+    existing.staffAccessState !== "awaiting_owner_approval" &&
+    existing.staffAccessState !== "waiting_seat"
+  ) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "INVALID_STAFF_ACCESS_STATE",
+      `Status akses Tim Setup saat ini (${existing.staffAccessState}) tidak dapat disetujui.`,
+    );
+  }
+
+  const existingMember = await db
+    .prepare("SELECT id, role FROM members WHERE organization_id = ? AND user_id = ? LIMIT 1")
+    .bind(initialSeats.organizationId, existing.staffUserId)
+    .first<{ readonly id: string; readonly role: string }>();
+
+  if (existingMember) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "STAFF_ALREADY_MEMBER",
+      "Akun staf tersebut sudah terdaftar sebagai anggota aktif situs ini.",
+    );
+  }
+
+  const memberId = generateUlid(nowMs);
+  const approveReason =
+    params.reason?.trim() ||
+    `Pemilik situs menyetujui akses Editor sementara Tim Setup (${existing.staffEmail ?? existing.staffUserId}) untuk permintaan ${existing.requestCode}`;
+
+  // Atomic Attempt 1: Join free seat (active members + active unexpired pending invites < 5)
+  const insertMemberStmt = db
+    .prepare(
+      `INSERT INTO members (id, organization_id, user_id, role, created_at)
+       SELECT ?, ?, ?, 'setup_staff', ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM members WHERE organization_id = ? AND user_id = ?
+       )
+       AND (
+         (SELECT COUNT(*) FROM members WHERE organization_id = ?)
+         + (SELECT COUNT(*) FROM invitations WHERE organization_id = ? AND status = 'pending' AND expires_at > ?)
+       ) < ?
+       AND EXISTS (
+         SELECT 1
+         FROM custom_theme_requests
+         WHERE id = ?
+           AND tenant_id = ?
+           AND version = ?
+           AND service_kind = 'setup'
+           AND status = 'in_progress'
+           AND staff_access_state IN ('awaiting_owner_approval', 'waiting_seat')
+       )`,
+    )
+    .bind(
+      memberId,
+      initialSeats.organizationId,
+      existing.staffUserId,
+      nowMs,
+      initialSeats.organizationId,
+      existing.staffUserId,
+      initialSeats.organizationId,
+      initialSeats.organizationId,
+      nowMs,
+      MAX_TENANT_SEAT_CAP,
+      existing.id,
+      existing.tenantId,
+      params.expectedVersion,
+    );
+
+  const markActiveStmt = db
+    .prepare(
+      `UPDATE custom_theme_requests
+       SET staff_access_state = 'active',
+           staff_approved_by_user_id = ?,
+           staff_approved_at = ?,
+           staff_member_id = ?,
+           staff_joined_at = ?,
+           staff_wait_reason = NULL,
+           version = version + 1,
+           updated_at = ?
+       WHERE id = ?
+         AND tenant_id = ?
+         AND version = ?
+         AND service_kind = 'setup'
+         AND status = 'in_progress'
+         AND staff_access_state IN ('awaiting_owner_approval', 'waiting_seat')
+         AND EXISTS (
+           SELECT 1
+           FROM members
+           WHERE id = ?
+             AND organization_id = ?
+             AND user_id = ?
+             AND role = 'setup_staff'
+         )`,
+    )
+    .bind(
+      params.actorUserId,
+      nowMs,
+      memberId,
+      nowMs,
+      nowMs,
+      existing.id,
+      existing.tenantId,
+      params.expectedVersion,
+      memberId,
+      initialSeats.organizationId,
+      existing.staffUserId,
+    );
+
+  const { statement: joinAuditStmt, entry: joinAudit } = buildPlatformAuditStatement(
+    db,
+    {
+      actorUserId: params.actorUserId,
+      actorRole: params.actorRole,
+      action: "setup_service.staff_access.approved_and_joined",
+      targetType: "custom_theme_request",
+      targetId: existing.id,
+      tenantId: existing.tenantId,
+      reason: approveReason,
+      requireReason: true,
+      outcome: "success",
+      requestId: params.httpRequestId,
+      metadata: {
+        requestCode: existing.requestCode,
+        staffUserId: existing.staffUserId,
+        staffEmail: existing.staffEmail,
+        staffMemberId: memberId,
+        memberRole: "setup_staff",
+        canonicalRole: "editor",
+        previousVersion: existing.version,
+        nextVersion: existing.version + 1,
+      },
+      createdAtMs: nowMs,
+    },
+    { onlyIfPreviousChanged: true },
+  );
+
+  const joinResults = await db.batch([insertMemberStmt, markActiveStmt, joinAuditStmt]);
+  const insertedMemberChanges = joinResults[0]?.meta?.changes ?? 0;
+  const markedActiveChanges = joinResults[1]?.meta?.changes ?? 0;
+
+  if (insertedMemberChanges === 1 && markedActiveChanges === 1) {
+    const [updated, seatsAfter] = await Promise.all([
+      getTenantCustomThemeRequestById(db, { tenantId: existing.tenantId, requestId: existing.id }),
+      getTenantSeatUsageForServiceRequest(db, { tenantId: existing.tenantId, nowMs }),
+    ]);
+    if (!updated || !seatsAfter) {
+      throw new Error("SETUP_STAFF_APPROVE_READBACK_FAILED");
+    }
+    return {
+      request: updated,
+      joined: true,
+      alreadyActive: false,
+      waitingForSeat: false,
+      waitReason: null,
+      seats: seatsAfter,
+      audit: joinAudit,
+    };
+  }
+
+  // Fallback inspection: verify request state, member conflict, AND exact seat count
+  // before ever classifying as `waiting_seat`!
+  const refreshed = await getTenantCustomThemeRequestById(db, {
+    tenantId: existing.tenantId,
+    requestId: existing.id,
+  });
+  if (!refreshed) {
+    throw new CustomThemeRepositoryError(404, "NOT_FOUND", "Permintaan tidak ditemukan.");
+  }
+  if (refreshed.staffAccessState === "active") {
+    const seatsActive =
+      (await getTenantSeatUsageForServiceRequest(db, { tenantId: existing.tenantId, nowMs })) ??
+      initialSeats;
+    return {
+      request: refreshed,
+      joined: true,
+      alreadyActive: true,
+      waitingForSeat: false,
+      waitReason: null,
+      seats: seatsActive,
+      audit: null,
+    };
+  }
+  if (refreshed.status !== "in_progress") {
+    throw new CustomThemeRepositoryError(
+      409,
+      "INVALID_STATUS_TRANSITION",
+      "Permintaan sudah tidak berstatus Dikerjakan (in_progress) sehingga akses Tim Setup tidak dapat diaktifkan.",
+    );
+  }
+  if (
+    refreshed.staffAccessState !== "awaiting_owner_approval" &&
+    refreshed.staffAccessState !== "waiting_seat"
+  ) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "INVALID_STAFF_ACCESS_STATE",
+      `Status akses Tim Setup (${refreshed.staffAccessState}) tidak dapat disetujui.`,
+    );
+  }
+  if (refreshed.version !== params.expectedVersion) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "STALE_VERSION",
+      "Permintaan berubah secara bersamaan. Muat ulang dan coba lagi.",
+    );
+  }
+
+  const racedMember = await db
+    .prepare("SELECT id, role FROM members WHERE organization_id = ? AND user_id = ? LIMIT 1")
+    .bind(initialSeats.organizationId, existing.staffUserId)
+    .first<{ readonly id: string; readonly role: string }>();
+
+  if (racedMember) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "STAFF_ALREADY_MEMBER",
+      "Akun staf tersebut sudah terdaftar sebagai anggota aktif situs ini.",
+    );
+  }
+
+  const seatsNow = await getTenantSeatUsageForServiceRequest(db, {
+    tenantId: existing.tenantId,
+    nowMs,
+  });
+  if (!seatsNow) {
+    throw new CustomThemeRepositoryError(404, "NOT_FOUND", "Tenant tidak ditemukan.");
+  }
+  if (seatsNow.seatsUsed < seatsNow.seatsLimit) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "STALE_VERSION",
+      "Permintaan berubah secara bersamaan. Muat ulang dan coba lagi.",
+    );
+  }
+
+  // Record explicit `waiting_seat` state with explanation + audit (strictly guarded on `in_progress`!)
+  const waitReason = SETUP_SERVICE_SEAT_FULL_EXPLANATION;
+  const markWaitingStmt = db
+    .prepare(
+      `UPDATE custom_theme_requests
+       SET staff_access_state = 'waiting_seat',
+           staff_approved_by_user_id = ?,
+           staff_approved_at = ?,
+           staff_wait_reason = ?,
+           version = version + 1,
+           updated_at = ?
+       WHERE id = ?
+         AND tenant_id = ?
+         AND version = ?
+         AND service_kind = 'setup'
+         AND status = 'in_progress'
+         AND staff_access_state IN ('awaiting_owner_approval', 'waiting_seat')`,
+    )
+    .bind(
+      params.actorUserId,
+      nowMs,
+      waitReason,
+      nowMs,
+      existing.id,
+      existing.tenantId,
+      params.expectedVersion,
+    );
+
+  const { statement: waitAuditStmt, entry: waitAudit } = buildPlatformAuditStatement(
+    db,
+    {
+      actorUserId: params.actorUserId,
+      actorRole: params.actorRole,
+      action: "setup_service.staff_access.waiting_seat",
+      targetType: "custom_theme_request",
+      targetId: existing.id,
+      tenantId: existing.tenantId,
+      reason: `Persetujuan Tim Setup menunggu kursi anggota kosong (${seatsNow.seatsUsed}/${seatsNow.seatsLimit} kursi terpakai)`,
+      requireReason: true,
+      outcome: "success",
+      requestId: params.httpRequestId,
+      metadata: {
+        requestCode: existing.requestCode,
+        staffUserId: existing.staffUserId,
+        seatsUsed: seatsNow.seatsUsed,
+        seatsLimit: seatsNow.seatsLimit,
+        activeMembersCount: seatsNow.activeMembersCount,
+        pendingInvitationsCount: seatsNow.pendingInvitationsCount,
+      },
+      createdAtMs: nowMs,
+    },
+    { onlyIfPreviousChanged: true },
+  );
+
+  const waitResults = await db.batch([markWaitingStmt, waitAuditStmt]);
+  if ((waitResults[0]?.meta?.changes ?? 0) !== 1) {
+    const postRace = await getTenantCustomThemeRequestById(db, {
+      tenantId: existing.tenantId,
+      requestId: existing.id,
+    });
+    if (postRace && postRace.status !== "in_progress") {
+      throw new CustomThemeRepositoryError(
+        409,
+        "INVALID_STATUS_TRANSITION",
+        "Permintaan sudah selesai atau dibatalkan secara bersamaan.",
+      );
+    }
+    throw new CustomThemeRepositoryError(
+      409,
+      "STALE_VERSION",
+      "Permintaan berubah secara bersamaan. Muat ulang dan coba lagi.",
+    );
+  }
+
+  const waitingReq = await getTenantCustomThemeRequestById(db, {
+    tenantId: existing.tenantId,
+    requestId: existing.id,
+  });
+  if (!waitingReq) {
+    throw new Error("SETUP_STAFF_WAIT_READBACK_FAILED");
+  }
+
+  return {
+    request: waitingReq,
+    joined: false,
+    alreadyActive: false,
+    waitingForSeat: true,
+    waitReason,
+    seats: seatsNow,
+    audit: waitAudit,
+  };
+}
+
+export interface RevokeSetupStaffAccessResult {
+  readonly request: CustomThemeRequestRecord;
+  readonly removed: boolean;
+  readonly alreadyRevoked: boolean;
+  readonly seats: TenantServiceSeatUsage;
+  readonly audit: PlatformAuditRecord | null;
+}
+
+/**
+ * Idempotently revokes a Terima Beres setup request's temporary `setup_staff` membership
+ * on owner request, freeing the member seat immediately and recording an atomic audit row.
+ */
+export async function revokeSetupServiceStaffAccess(
+  db: D1Database,
+  params: {
+    readonly tenantId: string;
+    readonly requestId: string;
+    readonly expectedVersion: number;
+    readonly actorUserId: string;
+    readonly actorRole: string;
+    readonly reason?: string | null;
+    readonly httpRequestId: string;
+    readonly nowMs: number;
+  },
+): Promise<RevokeSetupStaffAccessResult> {
+  const nowMs = Math.trunc(params.nowMs);
+  const existing = await getTenantCustomThemeRequestById(db, {
+    tenantId: params.tenantId,
+    requestId: params.requestId,
+  });
+
+  if (!existing || existing.serviceKind !== "setup") {
+    throw new CustomThemeRepositoryError(
+      404,
+      "NOT_FOUND",
+      "Permintaan Layanan Terima Beres tidak ditemukan.",
+    );
+  }
+
+  const initialSeats = await getTenantSeatUsageForServiceRequest(db, {
+    tenantId: existing.tenantId,
+    nowMs,
+  });
+  if (!initialSeats) {
+    throw new CustomThemeRepositoryError(404, "NOT_FOUND", "Tenant tidak ditemukan.");
+  }
+
+  if (existing.staffAccessState === "revoked" || existing.staffAccessState === "none") {
+    // Pure read-only idempotent replay: ZERO unguarded or unaudited DELETE statements!
+    return {
+      request: existing,
+      removed: false,
+      alreadyRevoked: true,
+      seats: initialSeats,
+      audit: null,
+    };
+  }
+
+  if (existing.version !== params.expectedVersion) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "STALE_VERSION",
+      "Versi permintaan sudah berubah. Muat ulang halaman sebelum mencabut akses Tim Setup.",
+    );
+  }
+
+  const revokeReason =
+    params.reason?.trim() ||
+    `Pemilik situs mencabut akses sementara Tim Setup untuk permintaan ${existing.requestCode}`;
+
+  const updateStmt = db
+    .prepare(
+      `UPDATE custom_theme_requests
+       SET staff_access_state = 'revoked',
+           staff_revoked_at = ?,
+           staff_wait_reason = NULL,
+           version = version + 1,
+           updated_at = ?
+       WHERE id = ?
+         AND tenant_id = ?
+         AND version = ?
+         AND service_kind = 'setup'
+         AND staff_access_state IN ('awaiting_owner_approval', 'waiting_seat', 'active')`,
+    )
+    .bind(nowMs, nowMs, existing.id, existing.tenantId, params.expectedVersion);
+
+  const { statement: auditStmt, entry: audit } = buildPlatformAuditStatement(
+    db,
+    {
+      actorUserId: params.actorUserId,
+      actorRole: params.actorRole,
+      action: "setup_service.staff_access.revoked",
+      targetType: "custom_theme_request",
+      targetId: existing.id,
+      tenantId: existing.tenantId,
+      reason: revokeReason,
+      requireReason: true,
+      outcome: "success",
+      requestId: params.httpRequestId,
+      metadata: {
+        requestCode: existing.requestCode,
+        staffUserId: existing.staffUserId,
+        staffMemberId: existing.staffMemberId,
+        previousStaffAccessState: existing.staffAccessState,
+        previousVersion: existing.version,
+        nextVersion: existing.version + 1,
+      },
+      createdAtMs: nowMs,
+    },
+    { onlyIfPreviousChanged: true },
+  );
+
+  const batchStmts: D1PreparedStatement[] = [updateStmt, auditStmt];
+  // STRICTLY scope `setup_staff` member deletion by exact `staff_member_id` (NEVER `OR user_id = ?`)!
+  if (existing.staffMemberId) {
+    batchStmts.push(
+      db
+        .prepare(
+          `DELETE FROM members
+           WHERE organization_id = ?
+             AND id = ?
+             AND role = 'setup_staff'
+             AND EXISTS (
+               SELECT 1
+               FROM custom_theme_requests
+               WHERE id = ?
+                 AND version = ?
+                 AND staff_access_state = 'revoked'
+             )`,
+        )
+        .bind(
+          initialSeats.organizationId,
+          existing.staffMemberId,
+          existing.id,
+          params.expectedVersion + 1,
+        ),
+    );
+  }
+
+  const results = await db.batch(batchStmts);
+  if ((results[0]?.meta?.changes ?? 0) !== 1) {
+    throw new CustomThemeRepositoryError(
+      409,
+      "STALE_VERSION",
+      "Permintaan berubah secara bersamaan. Muat ulang dan coba lagi.",
+    );
+  }
+
+  const [updated, seatsAfter] = await Promise.all([
+    getTenantCustomThemeRequestById(db, { tenantId: existing.tenantId, requestId: existing.id }),
+    getTenantSeatUsageForServiceRequest(db, { tenantId: existing.tenantId, nowMs }),
+  ]);
+  if (!updated || !seatsAfter) {
+    throw new Error("SETUP_STAFF_REVOKE_READBACK_FAILED");
+  }
+
+  return {
+    request: updated,
+    removed: batchStmts.length > 2 ? (results[2]?.meta?.changes ?? 0) > 0 : false,
+    alreadyRevoked: false,
+    seats: seatsAfter,
+    audit,
+  };
 }

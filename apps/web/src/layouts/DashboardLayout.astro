@@ -132,6 +132,8 @@ const activeIncidentBanners =
         await resolvePlatformDbFromRuntime(Astro.locals),
       )
     : [];
+const isSetupStaffSession =
+  surface === "dashboard" && Astro.locals.authorizedTenantMember?.dbRole === "setup_staff";
 ---
 
 <!doctype html>
@@ -181,6 +183,17 @@ const activeIncidentBanners =
         userDisplayName={userDisplayName}
         userRoleLabel={userRoleLabel}
       >
+        {isSetupStaffSession ? (
+          <div
+            role="status"
+            data-testid="setup-staff-context-banner"
+            class="mb-4 rounded-lg border border-info-border bg-info-soft px-4 py-2.5 text-xs font-medium text-foreground sm:text-sm"
+          >
+            Akses Tim Setup Aktif (Editor Sementara) — Anda masuk dengan akun staf Anda sendiri;
+            setiap perubahan dicatat di log audit situs dan akses otomatis dicabut saat Layanan
+            Terima Beres selesai.
+          </div>
+        ) : null}
         {activeIncidentBanners.length > 0 ? (
           <DashboardIncidentBanner incidents={activeIncidentBanners} />
         ) : null}
