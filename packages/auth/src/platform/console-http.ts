@@ -44,6 +44,22 @@ export const CONSOLE_PRIVATE_HEADERS = {
   "X-Robots-Tag": "noindex, nofollow",
 } as const;
 
+/**
+ * Bare neutral `404 Not Found` response returned whenever a console page or API route is
+ * requested on a non-console host (`app.`, tenant hosts, marketing host). Never renders
+ * console HTML or discloses console operational copy.
+ */
+export function consoleNeutralNotFoundResponse(): Response {
+  return new Response("Not Found", {
+    status: 404,
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "cache-control": "private, no-store",
+      "x-robots-tag": "noindex, nofollow",
+    },
+  });
+}
+
 export interface ConsoleRuntimeEnv {
   readonly APP_ENV?: string;
   readonly PLATFORM_DOMAIN?: string;
