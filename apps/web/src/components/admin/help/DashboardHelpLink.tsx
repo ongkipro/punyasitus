@@ -3,30 +3,20 @@ import {
   resolveDashboardHelpLink,
   type DashboardHelpScreenId,
 } from "@punyasitus/core/help/index";
-import { BookOpenIcon, ExternalLinkIcon, XIcon } from "lucide-react";
+import type { DashboardSupportViewModel } from "@punyasitus/core/support/index";
+import {
+  BookOpen,
+  Building2,
+  Clock,
+  ExternalLink,
+  HelpCircle,
+  Mail,
+  MessageCircle,
+  X,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-
-function HelpCircleGlyph({ className }: { readonly className?: string }) {
-  return (
-    <svg
-      xmlns="http://www.w3.org/2000/svg"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={2}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className={cn("size-4 shrink-0", className)}
-      aria-hidden="true"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-      <path d="M12 17h.01" />
-    </svg>
-  );
-}
 
 export interface DashboardHelpLinkProps {
   /** Typed dashboard screen ID mapped in `DASHBOARD_HELP_LINKS` (`packages/core/src/help/registry.ts`). */
@@ -46,6 +36,8 @@ export interface DashboardHelpLinkProps {
   readonly align?: "start" | "end";
   /** Optional visible label for `"inline"` or `"popover"` variants. */
   readonly label?: string;
+  /** Optional WhatsApp support view model (REQ-105) rendered inside the popover beneath the guide link. */
+  readonly support?: DashboardSupportViewModel | null;
   readonly className?: string;
 }
 
@@ -56,6 +48,7 @@ export function DashboardHelpLink({
   openInNewTab = true,
   align = "end",
   label,
+  support = null,
   className,
 }: DashboardHelpLinkProps) {
   const [open, setOpen] = React.useState(false);
@@ -118,7 +111,7 @@ export function DashboardHelpLink({
         data-testid={`dashboard-help-link-${screen}`}
         render={<a href={resolved.href} {...linkTargetProps} />}
       >
-        <HelpCircleGlyph className="text-primary" />
+        <HelpCircle className="size-4 shrink-0 text-primary" aria-hidden="true" />
       </Button>
     );
   }
@@ -134,9 +127,9 @@ export function DashboardHelpLink({
         data-testid={`dashboard-help-link-${screen}`}
         render={<a href={resolved.href} {...linkTargetProps} />}
       >
-        <HelpCircleGlyph className="text-primary" />
+        <HelpCircle className="size-4 shrink-0 text-primary" aria-hidden="true" />
         <span>{label ?? "Panduan"}</span>
-        <ExternalLinkIcon className="size-3.5 text-muted-foreground" aria-hidden="true" />
+        <ExternalLink className="size-3.5 text-muted-foreground" aria-hidden="true" />
       </Button>
     );
   }
@@ -164,7 +157,7 @@ export function DashboardHelpLink({
         )}
         onClick={() => setOpen((prev) => !prev)}
       >
-        <HelpCircleGlyph className="text-primary" />
+        <HelpCircle className="size-4 shrink-0 text-primary" aria-hidden="true" />
         {label && <span>{label}</span>}
       </Button>
 
@@ -196,7 +189,7 @@ export function DashboardHelpLink({
               data-testid={`dashboard-help-close-${screen}`}
               className="inline-flex min-h-8 min-w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
             >
-              <XIcon className="size-4" aria-hidden="true" />
+              <X className="size-4" aria-hidden="true" />
             </button>
           </div>
 
@@ -217,10 +210,10 @@ export function DashboardHelpLink({
               render={<a href={resolved.href} {...linkTargetProps} />}
             >
               <span className="inline-flex items-center gap-1.5">
-                <BookOpenIcon className="size-3.5" aria-hidden="true" />
+                <BookOpen className="size-3.5" aria-hidden="true" />
                 Baca panduan lengkap
               </span>
-              <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
+              <ExternalLink className="size-3.5" aria-hidden="true" />
             </Button>
 
             <a
@@ -232,6 +225,100 @@ export function DashboardHelpLink({
               Lihat semua panduan di Pusat Bantuan
             </a>
           </div>
+
+          {support && (
+            <div
+              className="mt-3 space-y-2 border-t border-border pt-3"
+              data-testid={`dashboard-help-support-section-${screen}`}
+              data-support-mode={support.mode}
+            >
+              {support.primaryChannel.kind === "agency" ? (
+                <>
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+                    <Building2 className="size-3.5 shrink-0 text-info" aria-hidden="true" />
+                    <span className="truncate">
+                      Dukungan Agensi: {support.primaryChannel.agencyName}
+                    </span>
+                  </div>
+                  <p className="text-xs leading-relaxed text-muted-foreground">
+                    {support.primaryChannel.fallbackNote}
+                  </p>
+                  {support.primaryChannel.whatsappUrl ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11 w-full justify-between md:min-h-9"
+                      data-testid={`dashboard-help-agency-wa-${screen}`}
+                      render={
+                        <a
+                          href={support.primaryChannel.whatsappUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        />
+                      }
+                    >
+                      <span className="inline-flex min-w-0 items-center gap-1.5 truncate">
+                        <MessageCircle className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+                        <span className="truncate">
+                          Chat {support.primaryChannel.agencyName}
+                        </span>
+                      </span>
+                      <ExternalLink className="size-3.5 shrink-0" aria-hidden="true" />
+                    </Button>
+                  ) : support.primaryChannel.mailtoUrl ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11 w-full justify-between md:min-h-9"
+                      data-testid={`dashboard-help-agency-email-${screen}`}
+                      render={<a href={support.primaryChannel.mailtoUrl} />}
+                    >
+                      <span className="inline-flex min-w-0 items-center gap-1.5 truncate">
+                        <Mail className="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+                        <span className="truncate">
+                          Email {support.primaryChannel.agencyName}
+                        </span>
+                      </span>
+                      <ExternalLink className="size-3.5 shrink-0" aria-hidden="true" />
+                    </Button>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <div className="flex items-start gap-1.5 text-xs text-muted-foreground">
+                    <Clock className="mt-0.5 size-3.5 shrink-0 text-primary" aria-hidden="true" />
+                    <div className="min-w-0 space-y-0.5">
+                      <p className="font-medium text-foreground">
+                        {support.platformChannel.supportHours}
+                      </p>
+                      <p>Target respons: {support.platformChannel.responseTarget}</p>
+                    </div>
+                  </div>
+                  {support.platformChannel.whatsappUrl && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="min-h-11 w-full justify-between md:min-h-9"
+                      data-testid={`dashboard-help-whatsapp-cta-${screen}`}
+                      render={
+                        <a
+                          href={support.platformChannel.whatsappUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        />
+                      }
+                    >
+                      <span className="inline-flex items-center gap-1.5">
+                        <MessageCircle className="size-3.5 text-primary" aria-hidden="true" />
+                        Hubungi Dukungan via WhatsApp
+                      </span>
+                      <ExternalLink className="size-3.5" aria-hidden="true" />
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

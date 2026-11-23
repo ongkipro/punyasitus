@@ -11,6 +11,7 @@ import {
   type ConsoleRuntimeEnv,
 } from "@punyasitus/auth/platform/index";
 import type { CloudflareSendEmailBinding } from "@punyasitus/core/email/index";
+import { resolvePlatformSupportSettings } from "@punyasitus/core/support/index";
 import { getPlatformSettings } from "@punyasitus/db/platform";
 import type { APIRoute } from "astro";
 
@@ -47,6 +48,7 @@ export async function handleConsoleSettingsRequest(
     return consoleJsonResponse(200, {
       success: true,
       settings,
+      supportConfig: resolvePlatformSupportSettings(settings),
       requestId: authz.ctx.requestId,
     });
   }
@@ -76,6 +78,7 @@ export async function handleConsoleSettingsRequest(
       return consoleJsonResponse(200, {
         success: true,
         settings: result.settings,
+        supportConfig: resolvePlatformSupportSettings(result.settings),
         changedFields: result.changedFields,
         auditId: result.audit.id,
         requestId: authz.ctx.requestId,
