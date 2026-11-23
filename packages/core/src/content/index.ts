@@ -569,11 +569,17 @@ export const OfferingSnapshotSchema = z
     negotiable: z.boolean().default(false),
     originalAmount: IdrAmountSchema.nullable().optional(),
     badge: z.string().max(40).nullable().optional(),
+    badges: z.array(z.string().trim().min(1).max(40)).max(5).optional(),
     ctaMode: OfferingCtaKindSchema.default("whatsapp"),
+    ctaLabel: z.string().trim().min(1).max(80).nullable().optional(),
     externalUrl: HttpsUrlSchema.nullable().optional(),
+    whatsappOverride: NormalizedPhoneSchema.nullable().optional(),
+    whatsappTemplate: z.string().max(1000).nullable().optional(),
     unitStatus: VehicleUnitStatusSchema.nullable().optional(),
+    categoryIds: z.array(SequentialIdSchema).max(10).optional(),
     attributesVersion: VersionSchema.default(1),
     attributes: PublicOfferingAttributesSchema.default({}),
+    verticalAttributes: z.record(z.string(), z.unknown()).optional(),
     seo: ResourceSeoInputSchema.nullable().optional(),
   })
   .strict()

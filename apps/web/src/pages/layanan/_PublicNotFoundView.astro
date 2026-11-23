@@ -1,0 +1,69 @@
+---
+import "../../themes/default/sections/sections.css";
+import "./_public-pages.css";
+import SEOHead from "../../components/SEOHead.astro";
+import type { PublicBrandedNotFoundResult } from "../../core/public-routes.ts";
+import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.astro";
+import Layout from "../../themes/default/Layout.astro";
+
+export interface Props {
+  readonly result: PublicBrandedNotFoundResult;
+}
+
+const { result } = Astro.props;
+---
+
+<Layout
+  shell={result.shell}
+  pageTitle={result.pageTitle}
+  pageDescription={result.message}
+  currentPath={result.currentPath}
+  initialCookieHeader={Astro.request.headers.get("cookie")}
+>
+  <SEOHead
+    slot="head"
+    metadata={result.seoMetadata}
+    omitTitle={true}
+    omitDescription={true}
+  />
+
+  <section class="ps-archive-section" data-testid="public-not-found-page">
+    <div class="ps-container">
+      <div class="ps-state-panel">
+        <p class="ps-state-code">Kesalahan 404</p>
+        <h1 class="ps-state-heading">{result.heading}</h1>
+        <p class="ps-state-body">{result.message}</p>
+        <div class="ps-actions">
+          <a href="/" class="ps-btn ps-btn--primary" data-testid="not-found-home-link">
+            Kembali ke Beranda
+          </a>
+          {result.shell.site.catalogEnabled && (
+            <a href="/layanan" class="ps-btn ps-btn--secondary">
+              Lihat Layanan
+            </a>
+          )}
+          {result.shell.site.blogEnabled && (
+            <a href="/blog" class="ps-btn ps-btn--secondary">
+              Baca Blog
+            </a>
+          )}
+        </div>
+      </div>
+    </div>
+  </section>
+
+  {result.floatingWa.phone && (
+    <FloatingWhatsApp
+      slot="floating"
+      shell={result.shell}
+      phone={result.floatingWa.phone}
+      businessName={result.floatingWa.businessName}
+      greetingMessage={result.floatingWa.greetingMessage}
+      operatingHours={result.floatingWa.operatingHours}
+      holidayHours={result.floatingWa.holidayHours}
+      primaryOrigin={result.floatingWa.primaryOrigin}
+      canonicalPath={result.floatingWa.canonicalPath}
+      itemTitle={result.floatingWa.itemTitle}
+    />
+  )}
+</Layout>

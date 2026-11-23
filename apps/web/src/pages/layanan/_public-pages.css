@@ -1,0 +1,566 @@
+/*
+ * PunyaSitus Public Routes Stylesheet (TASK-036, DESIGN.md §1, §2.2 & §7)
+ *
+ * Pure CSS consuming ONLY `--ps-*` tokens from `Layout.astro` + `tokens.css`.
+ * Zero React, zero admin imports, zero JavaScript dependency, fluid 320px..2560px,
+ * zero horizontal overflow, >= 44px touch targets, tabular-nums for IDR prices.
+ */
+
+.ps-route-hero {
+  background-color: var(--ps-surface-muted);
+  border-bottom: 1px solid var(--ps-border);
+  padding-block: clamp(1.75rem, 4vw, 3rem);
+}
+
+.ps-route-hero-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.ps-route-title {
+  margin: 0;
+  max-width: 28ch;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+
+.ps-route-lead {
+  margin: 0;
+  max-width: 62ch;
+  color: var(--ps-ink-muted);
+  font-size: clamp(0.975rem, 0.94rem + 0.2vw, 1.0625rem);
+  line-height: 1.65;
+}
+
+/* Breadcrumbs */
+.ps-breadcrumbs {
+  margin-bottom: 0.25rem;
+}
+
+.ps-breadcrumbs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  color: var(--ps-ink-muted);
+}
+
+.ps-breadcrumbs-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.ps-breadcrumbs-item + .ps-breadcrumbs-item::before {
+  content: "/";
+  color: var(--ps-ink-muted);
+  opacity: 0.65;
+}
+
+.ps-breadcrumbs-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-block: 0.25rem;
+  color: var(--ps-ink-muted);
+  text-decoration: none;
+}
+
+.ps-breadcrumbs-link:hover {
+  color: var(--ps-brand-primary);
+  text-decoration: underline;
+}
+
+.ps-breadcrumbs-current {
+  color: var(--ps-ink);
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+/* Archive / listing section */
+.ps-archive-section {
+  padding-block: clamp(2rem, 4vw, 3.25rem);
+}
+
+.ps-archive-summary {
+  margin: 0 0 1.25rem;
+  font-size: 0.875rem;
+  color: var(--ps-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ps-archive-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(1rem, 2vw, 1.5rem);
+}
+
+.ps-archive-grid .ps-offering-title-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* Pagination */
+.ps-pagination {
+  margin-top: clamp(2rem, 4vw, 2.75rem);
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--ps-border);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.ps-pagination-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.ps-pagination-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0.5rem 0.875rem;
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius-sm);
+  background-color: var(--ps-surface);
+  color: var(--ps-ink);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+
+.ps-pagination-link:hover {
+  background-color: var(--ps-surface-muted);
+  border-color: var(--ps-brand-primary);
+  color: var(--ps-brand-primary);
+  text-decoration: none;
+}
+
+.ps-pagination-link[aria-current="page"] {
+  background-color: var(--ps-brand-primary);
+  border-color: var(--ps-brand-primary);
+  color: var(--ps-brand-on-primary);
+}
+
+.ps-pagination-link--disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Empty & Branded 404 States */
+.ps-state-panel {
+  max-width: 40rem;
+  margin-inline: auto;
+  padding: clamp(1.75rem, 4vw, 2.75rem);
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius-lg);
+  background-color: var(--ps-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.ps-state-code {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ps-brand-primary);
+}
+
+.ps-state-heading {
+  margin: 0;
+}
+
+.ps-state-body {
+  margin: 0;
+  color: var(--ps-ink-muted);
+  line-height: 1.65;
+}
+
+/* Blog Article Detail */
+.ps-article-shell {
+  padding-block: clamp(1.75rem, 4vw, 3rem);
+}
+
+.ps-article-header {
+  max-width: 48rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+  margin-bottom: clamp(1.5rem, 3vw, 2.25rem);
+}
+
+.ps-article-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  font-size: 0.875rem;
+  color: var(--ps-ink-muted);
+}
+
+.ps-article-cover {
+  margin: 0 0 clamp(1.5rem, 3vw, 2.25rem);
+  max-width: 56rem;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--ps-radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--ps-border);
+  background-color: var(--ps-surface-muted);
+}
+
+.ps-article-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ps-article-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: start;
+}
+
+.ps-toc {
+  padding: 1.125rem 1.25rem;
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius);
+  background-color: var(--ps-surface-muted);
+}
+
+.ps-toc-heading {
+  margin: 0 0 0.625rem;
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--ps-ink);
+}
+
+.ps-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.ps-toc-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding-block: 0.25rem;
+  font-size: 0.9375rem;
+  color: var(--ps-ink);
+  text-decoration: none;
+}
+
+.ps-toc-link:hover {
+  color: var(--ps-brand-primary);
+  text-decoration: underline;
+}
+
+.ps-toc-item--h3 {
+  padding-left: 1rem;
+}
+
+.ps-toc-item--h4 {
+  padding-left: 1.75rem;
+}
+
+.ps-tags-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 2rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--ps-border);
+}
+
+.ps-author-box {
+  margin-top: 1.75rem;
+  padding: 1.25rem;
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius);
+  background-color: var(--ps-surface-muted);
+}
+
+.ps-author-name {
+  margin: 0 0 0.25rem;
+  font-weight: 700;
+  color: var(--ps-ink);
+}
+
+.ps-author-bio {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--ps-ink-muted);
+}
+
+/* Offering Detail Layout */
+.ps-detail-shell {
+  padding-block: clamp(1.75rem, 4vw, 3rem);
+}
+
+.ps-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 2.75rem);
+  align-items: start;
+}
+
+.ps-detail-main {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(1.5rem, 3vw, 2.25rem);
+  min-width: 0;
+}
+
+.ps-detail-cover {
+  margin: 0;
+  aspect-ratio: 3 / 2;
+  border-radius: var(--ps-radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--ps-border);
+  background-color: var(--ps-surface-muted);
+}
+
+.ps-detail-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ps-detail-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 8.5rem), 1fr));
+  gap: 0.75rem;
+}
+
+.ps-detail-thumb {
+  margin: 0;
+  aspect-ratio: 3 / 2;
+  border-radius: var(--ps-radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--ps-border);
+  background-color: var(--ps-surface-muted);
+}
+
+.ps-detail-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ps-detail-sidebar {
+  order: -1;
+  padding: clamp(1.25rem, 2.5vw, 1.75rem);
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius-lg);
+  background-color: var(--ps-surface);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.ps-detail-price {
+  margin: 0;
+  font-family: var(--ps-font-heading);
+  font-size: clamp(1.375rem, 1.15rem + 0.9vw, 1.875rem);
+  font-weight: 700;
+  color: var(--ps-brand-primary);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.ps-detail-cta-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.ps-detail-cta-stack .ps-btn {
+  width: 100%;
+}
+
+.ps-detail-note {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--ps-ink-muted);
+  line-height: 1.5;
+}
+
+.ps-detail-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0.875rem;
+}
+
+.ps-detail-block h2 {
+  margin: 0;
+  font-size: clamp(1.25rem, 1.1rem + 0.5vw, 1.5rem);
+}
+
+.ps-spec-list {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius);
+  overflow: hidden;
+}
+
+.ps-spec-row {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 0.75rem;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid var(--ps-border);
+  background-color: var(--ps-surface);
+}
+
+.ps-spec-row:last-child {
+  border-bottom: 0;
+}
+
+.ps-spec-row:nth-child(even) {
+  background-color: var(--ps-surface-muted);
+}
+
+.ps-spec-row dt {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ps-ink-muted);
+}
+
+.ps-spec-row dd {
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  color: var(--ps-ink);
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
+.ps-check-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.ps-check-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  color: var(--ps-ink);
+  font-size: 0.9375rem;
+}
+
+.ps-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius);
+}
+
+.ps-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ps-data-table th,
+.ps-data-table td {
+  padding: 0.6875rem 0.875rem;
+  border-bottom: 1px solid var(--ps-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.ps-data-table th {
+  background-color: var(--ps-surface-muted);
+  font-weight: 700;
+  color: var(--ps-ink);
+}
+
+.ps-data-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.ps-disclaimer {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius-sm);
+  background-color: var(--ps-surface-muted);
+  font-size: 0.8125rem;
+  color: var(--ps-ink-muted);
+  line-height: 1.5;
+}
+
+.ps-related-section {
+  padding-block: clamp(2rem, 4vw, 3rem);
+  background-color: var(--ps-surface-muted);
+  border-top: 1px solid var(--ps-border);
+}
+
+/* Responsive Breakpoints (DESIGN.md §1: 768px, 1024px — max 3 cols) */
+@media (min-width: 768px) {
+  .ps-archive-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ps-check-columns {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .ps-archive-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ps-article-layout--with-toc {
+    grid-template-columns: minmax(0, 1fr) 17rem;
+  }
+
+  .ps-article-layout--with-toc .ps-toc {
+    position: sticky;
+    top: 5.5rem;
+  }
+
+  .ps-detail-grid {
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 0.85fr);
+  }
+
+  .ps-detail-sidebar {
+    order: 0;
+    position: sticky;
+    top: 5.5rem;
+  }
+}

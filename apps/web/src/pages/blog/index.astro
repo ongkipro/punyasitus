@@ -1,0 +1,153 @@
+---
+import { env } from "cloudflare:workers";
+import "../../themes/default/sections/sections.css";
+import "../layanan/_public-pages.css";
+import SEOHead from "../../components/SEOHead.astro";
+import {
+  applyPublicRouteResponseMeta,
+  buildPublicRouteDepsFromAstro,
+  resolveBlogListingRoute,
+} from "../../core/public-routes.ts";
+import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.astro";
+import Layout from "../../themes/default/Layout.astro";
+import PublicBreadcrumbs from "../layanan/_PublicBreadcrumbs.astro";
+import PublicNotFoundView from "../layanan/_PublicNotFoundView.astro";
+import PublicPagination from "../layanan/_PublicPagination.astro";
+
+const deps = buildPublicRouteDepsFromAstro(
+  Astro.locals,
+  env as unknown as Record<string, unknown>,
+);
+const result = await resolveBlogListingRoute(Astro.request, deps, { url: Astro.url });
+
+if (result.kind === "response") {
+  return result.response;
+}
+
+applyPublicRouteResponseMeta(Astro.response, result.http);
+---
+
+{result.kind === "not_found" ? (
+  <PublicNotFoundView result={result} />
+) : (
+  <Layout
+    shell={result.shell}
+    pageTitle={result.pageTitle}
+    pageDescription={result.seoMetadata.description || undefined}
+    currentPath={result.currentPath}
+    initialCookieHeader={Astro.request.headers.get("cookie")}
+  >
+    <SEOHead
+      slot="head"
+      metadata={result.seoMetadata}
+      jsonLd={result.schemaGraph ?? undefined}
+      omitTitle={true}
+      omitDescription={Boolean(result.seoMetadata.description)}
+    />
+
+    <section class="ps-route-hero" data-testid="blog-listing-hero">
+      <div class="ps-container ps-route-hero-inner">
+        <PublicBreadcrumbs items={result.breadcrumbs} />
+        <h1 class="ps-route-title">{result.heading}</h1>
+        <p class="ps-route-lead">{result.description}</p>
+      </div>
+    </section>
+
+    <section class="ps-archive-section" data-testid="blog-listing-section">
+      <div class="ps-container">
+        {result.items.length > 0 ? (
+          <>
+            <p class="ps-archive-summary">
+              Menampilkan {result.items.length} dari {result.pagination.totalItems} artikel
+              {result.pagination.totalPages > 1
+                ? ` • Halaman ${result.pagination.page} dari ${result.pagination.totalPages}`
+                : ""}
+            </p>
+
+            <div class="ps-archive-grid" data-testid="blog-listing-grid">
+              {result.items.map((post) => (
+                <article
+                  class="ps-card ps-post-card"
+                  data-testid="blog-post-card"
+                  data-post-slug={post.slug}
+                >
+                  {post.coverImage && (
+                    <div class="ps-offering-media">
+                      <img
+                        src={post.coverImage.url}
+                        alt={post.coverImage.alt || post.title}
+                        width={post.coverImage.width}
+                        height={post.coverImage.height}
+                        loading="lazy"
+                        decoding="async"
+                      />
+                    </div>
+                  )}
+                  <div class="ps-post-body">
+                    {post.categoryName && (
+                      <div>
+                        <span class="ps-badge">{post.categoryName}</span>
+                      </div>
+                    )}
+                    <h2 class="ps-card-title">
+                      <a
+                        href={post.href}
+                        class="ps-offering-title-link"
+                        data-testid="blog-card-link"
+                      >
+                        {post.title}
+                      </a>
+                    </h2>
+                    {post.excerpt && <p class="ps-card-desc">{post.excerpt}</p>}
+                    <div class="ps-post-meta">
+                      {post.authorName && <span>{post.authorName}</span>}
+                      {post.publishedDateLabel && (
+                        <time datetime={post.publishedAtIso ?? undefined}>
+                          {post.publishedDateLabel}
+                        </time>
+                      )}
+                      <span>{post.readingTimeMinutes} menit baca</span>
+                    </div>
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            <PublicPagination
+              pagination={result.pagination}
+              ariaLabel="Navigasi halaman blog"
+            />
+          </>
+        ) : (
+          <div class="ps-state-panel" data-testid="blog-empty-state">
+            <h2 class="ps-state-heading">Belum ada artikel yang diterbitkan</h2>
+            <p class="ps-state-body">
+              Artikel dan panduan terbaru akan muncul di halaman ini setelah pemilik situs
+              menerbitkannya.
+            </p>
+            <div class="ps-actions">
+              <a href="/" class="ps-btn ps-btn--primary">
+                Kembali ke Beranda
+              </a>
+            </div>
+          </div>
+        )}
+      </div>
+    </section>
+
+    {result.floatingWa.phone && (
+      <FloatingWhatsApp
+        slot="floating"
+        shell={result.shell}
+        phone={result.floatingWa.phone}
+        businessName={result.floatingWa.businessName}
+        greetingMessage={result.floatingWa.greetingMessage}
+        operatingHours={result.floatingWa.operatingHours}
+        holidayHours={result.floatingWa.holidayHours}
+        primaryOrigin={result.floatingWa.primaryOrigin}
+        canonicalPath={result.floatingWa.canonicalPath}
+        itemTitle={result.floatingWa.itemTitle}
+      />
+    )}
+  </Layout>
+)}

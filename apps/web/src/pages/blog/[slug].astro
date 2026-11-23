@@ -1,0 +1,214 @@
+---
+import { env } from "cloudflare:workers";
+import "../../themes/default/sections/sections.css";
+import "../layanan/_public-pages.css";
+import SEOHead from "../../components/SEOHead.astro";
+import {
+  applyPublicRouteResponseMeta,
+  buildPublicRouteDepsFromAstro,
+  resolveBlogDetailRoute,
+} from "../../core/public-routes.ts";
+import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.astro";
+import Layout from "../../themes/default/Layout.astro";
+import PublicBreadcrumbs from "../layanan/_PublicBreadcrumbs.astro";
+import PublicNotFoundView from "../layanan/_PublicNotFoundView.astro";
+
+const deps = buildPublicRouteDepsFromAstro(
+  Astro.locals,
+  env as unknown as Record<string, unknown>,
+);
+const result = await resolveBlogDetailRoute(Astro.request, deps, Astro.params.slug ?? "", {
+  url: Astro.url,
+});
+
+if (result.kind === "response") {
+  return result.response;
+}
+
+applyPublicRouteResponseMeta(Astro.response, result.http);
+---
+
+{result.kind === "not_found" ? (
+  <PublicNotFoundView result={result} />
+) : (
+  <Layout
+    shell={result.shell}
+    pageTitle={result.pageTitle}
+    pageDescription={result.seoMetadata.description || undefined}
+    currentPath={result.currentPath}
+    initialCookieHeader={Astro.request.headers.get("cookie")}
+  >
+    <SEOHead
+      slot="head"
+      metadata={result.seoMetadata}
+      jsonLd={result.schemaGraph ?? undefined}
+      omitTitle={true}
+      omitDescription={Boolean(result.seoMetadata.description)}
+    />
+
+    <article class="ps-article-shell" data-testid="blog-detail-article" data-post-slug={result.post.slug}>
+      <div class="ps-container">
+        <header class="ps-article-header">
+          <PublicBreadcrumbs items={result.breadcrumbs} />
+
+          {result.post.categoryNames.length > 0 && (
+            <div class="ps-offering-badges">
+              {result.post.categoryNames.map((cat) => (
+                <span class="ps-badge">{cat}</span>
+              ))}
+            </div>
+          )}
+
+          <h1 class="ps-route-title" data-testid="blog-detail-title">{result.post.title}</h1>
+
+          {result.post.excerpt && <p class="ps-route-lead">{result.post.excerpt}</p>}
+
+          <div class="ps-article-meta" data-testid="blog-detail-meta">
+            {result.post.authorName && (
+              <span>
+                Oleh <strong>{result.post.authorName}</strong>
+              </span>
+            )}
+            {result.post.publishedDateLabel && (
+              <time datetime={result.post.publishedAtIso ?? undefined}>
+                Diterbitkan {result.post.publishedDateLabel}
+              </time>
+            )}
+            {result.post.modifiedDateLabel &&
+              result.post.modifiedDateLabel !== result.post.publishedDateLabel && (
+                <time datetime={result.post.modifiedAtIso ?? undefined}>
+                  Diperbarui {result.post.modifiedDateLabel}
+                </time>
+              )}
+            <span>{result.post.readingTimeMinutes} menit baca</span>
+          </div>
+        </header>
+
+        {result.post.coverImage && (
+          <figure class="ps-article-cover">
+            <img
+              src={result.post.coverImage.url}
+              alt={result.post.coverImage.alt || result.post.title}
+              width={result.post.coverImage.width}
+              height={result.post.coverImage.height}
+              loading="eager"
+              decoding="async"
+            />
+          </figure>
+        )}
+
+        <div
+          class:list={[
+            "ps-article-layout",
+            result.post.showToc && "ps-article-layout--with-toc",
+          ]}
+        >
+          <div>
+            <div
+              class="ps-prose"
+              data-testid="blog-detail-body"
+              set:html={result.post.sanitizedHtml}
+            />
+
+            {result.post.tagNames.length > 0 && (
+              <div class="ps-tags-row" aria-label="Tag artikel">
+                {result.post.tagNames.map((tag) => (
+                  <span class="ps-badge">#{tag}</span>
+                ))}
+              </div>
+            )}
+
+            {result.post.authorName && (
+              <aside class="ps-author-box" aria-label="Tentang penulis">
+                <p class="ps-author-name">{result.post.authorName}</p>
+                <p class="ps-author-bio">
+                  {result.post.authorBio ??
+                    `Tim redaksi dan pengelola informasi resmi ${result.shell.business.name}.`}
+                </p>
+              </aside>
+            )}
+
+            <div class="ps-actions" style="margin-top: 1.5rem;">
+              <a href="/blog" class="ps-btn ps-btn--secondary" data-testid="blog-back-link">
+                &larr; Kembali ke Semua Artikel
+              </a>
+            </div>
+          </div>
+
+          {result.post.showToc && (
+            <nav class="ps-toc" aria-label="Daftar isi" data-testid="blog-detail-toc">
+              <h2 class="ps-toc-heading">Daftar Isi</h2>
+              <ol class="ps-toc-list">
+                {result.post.toc.map((entry) => (
+                  <li class={`ps-toc-item--h${entry.level}`}>
+                    <a href={`#${entry.id}`} class="ps-toc-link">
+                      {entry.text}
+                    </a>
+                  </li>
+                ))}
+              </ol>
+            </nav>
+          )}
+        </div>
+      </div>
+    </article>
+
+    {result.relatedPosts.length > 0 && (
+      <section class="ps-related-section" aria-labelledby="related-posts-heading">
+        <div class="ps-container">
+          <header class="ps-section-header ps-section-header--row">
+            <h2 id="related-posts-heading" class="ps-section-title">
+              Artikel Lainnya
+            </h2>
+            <a href="/blog" class="ps-btn ps-btn--secondary">
+              Semua Artikel
+            </a>
+          </header>
+
+          <div class="ps-archive-grid">
+            {result.relatedPosts.map((related) => (
+              <article class="ps-card ps-post-card" data-post-slug={related.slug}>
+                <div class="ps-post-body">
+                  {related.categoryName && (
+                    <div>
+                      <span class="ps-badge">{related.categoryName}</span>
+                    </div>
+                  )}
+                  <h3 class="ps-card-title">
+                    <a href={related.href} class="ps-offering-title-link">
+                      {related.title}
+                    </a>
+                  </h3>
+                  {related.excerpt && <p class="ps-card-desc">{related.excerpt}</p>}
+                  <div class="ps-post-meta">
+                    {related.publishedDateLabel && (
+                      <time datetime={related.publishedAtIso ?? undefined}>
+                        {related.publishedDateLabel}
+                      </time>
+                    )}
+                    <span>{related.readingTimeMinutes} menit baca</span>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+    )}
+
+    {result.floatingWa.phone && (
+      <FloatingWhatsApp
+        slot="floating"
+        shell={result.shell}
+        phone={result.floatingWa.phone}
+        businessName={result.floatingWa.businessName}
+        greetingMessage={result.floatingWa.greetingMessage}
+        operatingHours={result.floatingWa.operatingHours}
+        holidayHours={result.floatingWa.holidayHours}
+        primaryOrigin={result.floatingWa.primaryOrigin}
+        canonicalPath={result.floatingWa.canonicalPath}
+        itemTitle={result.floatingWa.itemTitle}
+      />
+    )}
+  </Layout>
+)}

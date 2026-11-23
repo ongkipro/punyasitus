@@ -1,0 +1,60 @@
+---
+import type { PublicPaginationState } from "../../core/public-routes.ts";
+
+export interface Props {
+  readonly pagination: PublicPaginationState;
+  readonly ariaLabel?: string;
+}
+
+const { pagination, ariaLabel = "Navigasi halaman" } = Astro.props;
+---
+
+{pagination.totalPages > 1 && (
+  <nav class="ps-pagination" aria-label={ariaLabel} data-testid="public-pagination">
+    {pagination.prevHref ? (
+      <a
+        href={pagination.prevHref}
+        rel="prev"
+        class="ps-pagination-link"
+        data-testid="pagination-prev"
+      >
+        &larr; Sebelumnya
+      </a>
+    ) : (
+      <span class="ps-pagination-link ps-pagination-link--disabled" aria-disabled="true">
+        &larr; Sebelumnya
+      </span>
+    )}
+
+    <ol class="ps-pagination-list">
+      {pagination.pageLinks.map((link) => (
+        <li>
+          <a
+            href={link.href}
+            class="ps-pagination-link"
+            aria-current={link.current ? "page" : undefined}
+            aria-label={`Halaman ${link.page}`}
+            data-testid={`pagination-page-${link.page}`}
+          >
+            {link.page}
+          </a>
+        </li>
+      ))}
+    </ol>
+
+    {pagination.nextHref ? (
+      <a
+        href={pagination.nextHref}
+        rel="next"
+        class="ps-pagination-link"
+        data-testid="pagination-next"
+      >
+        Berikutnya &rarr;
+      </a>
+    ) : (
+      <span class="ps-pagination-link ps-pagination-link--disabled" aria-disabled="true">
+        Berikutnya &rarr;
+      </span>
+    )}
+  </nav>
+)}

@@ -1,6 +1,19 @@
 ---
 import { env } from "cloudflare:workers";
 import { classifySurfaceHost } from "@punyasitus/core";
+import "../themes/default/sections/sections.css";
+import "./layanan/_public-pages.css";
+import SEOHead from "../components/SEOHead.astro";
+import {
+  applyPublicRouteResponseMeta,
+  buildPublicRouteDepsFromAstro,
+  resolvePublicPageRoute,
+  type PublicPageRouteResult,
+} from "../core/public-routes.ts";
+import FloatingWhatsApp from "../themes/default/components/FloatingWhatsApp.astro";
+import Layout from "../themes/default/Layout.astro";
+import SectionRenderer from "../themes/default/sections/SectionRenderer.astro";
+import PublicNotFoundView from "./layanan/_PublicNotFoundView.astro";
 
 // Never trust X-Forwarded-Host or X-Tenant-ID; normalize Host from the request URL (PLAN §3.3).
 const rawHost = (Astro.url.host || Astro.request.headers.get("host") || "").trim().toLowerCase();
@@ -12,29 +25,182 @@ const isLocalLoopback =
     rawHost === "localhost" ||
     rawHost.startsWith("localhost:"));
 
-if (classified.surface === "unknown" && !isLocalLoopback) {
-  Astro.response.status = 404;
-  Astro.response.headers.set("Cache-Control", "no-store");
-  Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
-} else if (classified.surface === "app" || classified.surface === "console") {
-  Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+const isTenantSurface =
+  !isLocalLoopback && (Astro.locals.surface === "tenant" || classified.surface === "tenant");
+
+function escapeBootstrapHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
-Astro.response.headers.set("X-PunyaSitus-Surface", classified.surface);
----
+if (!isTenantSurface) {
+  const headers = new Headers({
+    "Content-Type": "text/html; charset=utf-8",
+    "X-PunyaSitus-Surface": classified.surface,
+  });
+  let status = 200;
+  if (classified.surface === "unknown" && !isLocalLoopback) {
+    status = 404;
+    headers.set("Cache-Control", "no-store");
+    headers.set("X-Robots-Tag", "noindex, nofollow");
+  } else if (classified.surface === "app" || classified.surface === "console") {
+    headers.set("X-Robots-Tag", "noindex, nofollow");
+  }
 
-<!doctype html>
+  const safeSurface = escapeBootstrapHtml(classified.surface);
+  const safeHost = escapeBootstrapHtml(classified.host);
+  const safeTenant = escapeBootstrapHtml(classified.tenantHandle ?? "");
+  const tenantParagraph = classified.tenantHandle
+    ? `<p>Tenant handle: <strong>${safeTenant}</strong></p>`
+    : "";
+
+  const html = `<!doctype html>
 <html lang="id">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>PunyaSitus — Bootstrap Spike ({classified.surface})</title>
+    <title>PunyaSitus — Bootstrap Spike (${safeSurface})</title>
   </head>
   <body>
-    <main data-surface={classified.surface} data-host={classified.host} data-tenant={classified.tenantHandle ?? ""}>
+    <main data-surface="${safeSurface}" data-host="${safeHost}" data-tenant="${safeTenant}">
       <h1>PunyaSitus Worker Bootstrap</h1>
-      <p>Surface: <strong>{classified.surface}</strong></p>
-      {classified.tenantHandle && <p>Tenant handle: <strong>{classified.tenantHandle}</strong></p>}
+      <p>Surface: <strong>${safeSurface}</strong></p>
+      ${tenantParagraph}
     </main>
   </body>
-</html>
+</html>`;
+
+  return new Response(html, { status, headers });
+}
+
+const deps = buildPublicRouteDepsFromAstro(
+  Astro.locals,
+  env as unknown as Record<string, unknown>,
+);
+let tenantHomeResult: PublicPageRouteResult;
+try {
+  tenantHomeResult = await resolvePublicPageRoute(
+    Astro.request,
+    deps,
+    "",
+    {
+      url: Astro.url,
+    },
+  );
+} catch (err) {
+  const message = err instanceof Error ? err.message : String(err);
+  if (env.APP_ENV === "local" && message.includes("no such table:")) {
+    const safeHost = escapeBootstrapHtml(classified.host);
+    const safeTenant = escapeBootstrapHtml(classified.tenantHandle ?? "");
+    return new Response(
+      `<!doctype html><html lang="id"><head><meta charset="utf-8" /><title>PunyaSitus — Local Unmigrated Tenant (${safeTenant})</title></head><body><main data-surface="tenant" data-host="${safeHost}" data-tenant="${safeTenant}"><h1>PunyaSitus Worker Bootstrap</h1><p>Surface: <strong>tenant</strong></p><p>Tenant handle: <strong>${safeTenant}</strong></p></main></body></html>`,
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": "no-store",
+          "X-Robots-Tag": "noindex, nofollow",
+          "X-PunyaSitus-Surface": "tenant",
+        },
+      },
+    );
+  }
+  throw err;
+}
+
+if (tenantHomeResult.kind === "response") {
+  return tenantHomeResult.response;
+}
+
+applyPublicRouteResponseMeta(Astro.response, tenantHomeResult.http);
+---
+
+{tenantHomeResult.kind === "not_found" ? (
+  <PublicNotFoundView result={tenantHomeResult} />
+) : (
+  <Layout
+    shell={tenantHomeResult.shell}
+    pageTitle={undefined}
+    pageDescription={tenantHomeResult.seoMetadata.description || undefined}
+    layoutMode={tenantHomeResult.layoutMode}
+    currentPath={tenantHomeResult.currentPath}
+    initialCookieHeader={Astro.request.headers.get("cookie")}
+  >
+    <SEOHead
+      slot="head"
+      metadata={tenantHomeResult.seoMetadata}
+      jsonLd={tenantHomeResult.schemaGraph ?? undefined}
+      omitTitle={true}
+      omitDescription={Boolean(tenantHomeResult.seoMetadata.description)}
+    />
+
+    {tenantHomeResult.page && tenantHomeResult.page.sections.length > 0 ? (
+      <SectionRenderer
+        sections={tenantHomeResult.page.sections}
+        themeId={tenantHomeResult.shell.themeId}
+        routePath={tenantHomeResult.currentPath}
+        pageSlug={null}
+        isHomepage={true}
+        mode="published"
+        businessCategory={tenantHomeResult.shell.business.category}
+        heroVariant={tenantHomeResult.shell.themeStyle.variants.heroVariant}
+        primaryOrigin={tenantHomeResult.primaryOrigin}
+        fallbackOfferings={tenantHomeResult.fallbackOfferings}
+        fallbackPosts={tenantHomeResult.fallbackPosts}
+        fallbackBusiness={{
+          address: tenantHomeResult.shell.business.address,
+          weekdayHours: tenantHomeResult.shell.business.weekdayHours,
+          holidayHours: tenantHomeResult.shell.business.holidayHours,
+          phone: tenantHomeResult.shell.business.phone,
+          whatsappE164: tenantHomeResult.shell.business.whatsappE164,
+          email: tenantHomeResult.shell.business.email,
+          mapsUrl: tenantHomeResult.shell.business.mapsUrl,
+        }}
+      />
+    ) : (
+      <section class="ps-archive-section" data-testid="public-page-empty">
+        <div class="ps-container">
+          <div class="ps-state-panel">
+            <h1 class="ps-state-heading">{tenantHomeResult.pageTitle}</h1>
+            <p class="ps-state-body">
+              {tenantHomeResult.shell.business.description ??
+                tenantHomeResult.shell.site.tagline ??
+                "Informasi beranda akan ditampilkan di sini setelah konten diterbitkan."}
+            </p>
+            <div class="ps-actions">
+              {tenantHomeResult.shell.site.catalogEnabled && (
+                <a href="/layanan" class="ps-btn ps-btn--primary">
+                  Lihat Layanan
+                </a>
+              )}
+              {tenantHomeResult.shell.site.blogEnabled && (
+                <a href="/blog" class="ps-btn ps-btn--secondary">
+                  Baca Blog
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+    )}
+
+    {tenantHomeResult.floatingWa.phone && (
+      <FloatingWhatsApp
+        slot="floating"
+        shell={tenantHomeResult.shell}
+        phone={tenantHomeResult.floatingWa.phone}
+        businessName={tenantHomeResult.floatingWa.businessName}
+        greetingMessage={tenantHomeResult.floatingWa.greetingMessage}
+        operatingHours={tenantHomeResult.floatingWa.operatingHours}
+        holidayHours={tenantHomeResult.floatingWa.holidayHours}
+        primaryOrigin={tenantHomeResult.floatingWa.primaryOrigin}
+        canonicalPath={tenantHomeResult.floatingWa.canonicalPath}
+        itemTitle={tenantHomeResult.floatingWa.itemTitle}
+      />
+    )}
+  </Layout>
+)}

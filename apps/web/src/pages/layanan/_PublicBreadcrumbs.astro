@@ -1,0 +1,32 @@
+---
+import type { PublicBreadcrumbItem } from "../../core/public-routes.ts";
+
+export interface Props {
+  readonly items: readonly PublicBreadcrumbItem[];
+}
+
+const { items } = Astro.props;
+---
+
+{items.length > 0 && (
+  <nav class="ps-breadcrumbs" aria-label="Breadcrumb" data-testid="public-breadcrumbs">
+    <ol class="ps-breadcrumbs-list">
+      {items.map((item, idx) => {
+        const isLast = idx === items.length - 1;
+        return (
+          <li class="ps-breadcrumbs-item">
+            {item.href && !isLast ? (
+              <a href={item.href} class="ps-breadcrumbs-link">
+                {item.label}
+              </a>
+            ) : (
+              <span class="ps-breadcrumbs-current" aria-current={isLast ? "page" : undefined}>
+                {item.label}
+              </span>
+            )}
+          </li>
+        );
+      })}
+    </ol>
+  </nav>
+)}

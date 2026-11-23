@@ -1,0 +1,34 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  applyPublicRouteResponseMeta,
+  buildPublicRouteDepsFromAstro,
+  resolveOfferingDetailRoute,
+} from "../../core/public-routes.ts";
+import OfferingDetailView from "./_OfferingDetailView.astro";
+import PublicNotFoundView from "./_PublicNotFoundView.astro";
+
+const deps = buildPublicRouteDepsFromAstro(
+  Astro.locals,
+  env as unknown as Record<string, unknown>,
+);
+const result = await resolveOfferingDetailRoute(
+  Astro.request,
+  deps,
+  "service",
+  Astro.params.slug ?? "",
+  { url: Astro.url },
+);
+
+if (result.kind === "response") {
+  return result.response;
+}
+
+applyPublicRouteResponseMeta(Astro.response, result.http);
+---
+
+{result.kind === "not_found" ? (
+  <PublicNotFoundView result={result} />
+) : (
+  <OfferingDetailView result={result} />
+)}
