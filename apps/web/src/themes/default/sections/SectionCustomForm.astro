@@ -1,0 +1,995 @@
+---
+import "./sections.css";
+import {
+  HEALTH_CATEGORY_UUPDP_WARNING_ID,
+  type CustomFormField,
+  type PublishedFormDefinition,
+} from "@punyasitus/core/forms/index";
+
+/**
+ * Accessible Progressive-Enhanced Tenant Custom Form Section
+ * (`apps/web/src/themes/default/sections/SectionCustomForm.astro`;
+ * REQ-080, PLAN §19.2, DESIGN.md §8, TASK-080).
+ *
+ * Security & Accessibility Invariants:
+ * - Zero React / Base UI / admin CSS; consumes ONLY `--ps-*` public theme tokens.
+ * - Zero `set:html` or raw HTML interpolation — all admin-authored labels, descriptions,
+ *   placeholders, help text, and options are auto-escaped by Astro.
+ * - 100% functional WITHOUT JavaScript via native `<form method="POST" action="/api/leads">`
+ *   (`application/x-www-form-urlencoded`) with `303 See Other` PRG / WhatsApp / URL handoff.
+ * - Tiny progressive-enhancement script handles 1-level `field == value` live visibility,
+ *   JSON `Idempotency-Key` submission, inline validation errors, and 1-click WhatsApp CTA.
+ * - `>= 44px` touch targets, `16px` input font size, zero horizontal overflow at 360px & 1440px.
+ */
+
+export interface Props {
+  readonly id?: string;
+  readonly form: PublishedFormDefinition;
+  readonly eyebrow?: string;
+  readonly businessName?: string;
+  readonly privacyPolicyHref?: string;
+  readonly privacyContact?: string | null;
+  readonly isHealthCategory?: boolean;
+  readonly actionUrl?: string;
+  readonly sourcePath?: string;
+  readonly returnTo?: string;
+  readonly turnstileSiteKey?: string;
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  form,
+  eyebrow,
+  businessName = "kami",
+  privacyPolicyHref = "/kebijakan-privasi",
+  privacyContact = null,
+  isHealthCategory = false,
+  actionUrl = "/api/leads",
+  sourcePath,
+  returnTo,
+  turnstileSiteKey,
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+} = Astro.props;
+
+const sectionId = id ?? `formulir-${form.slug}`;
+const headingId = `section-${sectionId}-heading`;
+const resolvedPath = sourcePath ?? (Astro.url.pathname || "/");
+const resolvedReturnTo = returnTo ?? resolvedPath;
+
+// Read PRG status query parameters (zero visitor PII in URL)
+const leadStatus = Astro.url.searchParams.get("leadStatus");
+const leadNumber = Astro.url.searchParams.get("leadNumber");
+const leadErrorCode = Astro.url.searchParams.get("code");
+const statusFormSlug = Astro.url.searchParams.get("formSlug");
+const matchesThisForm = !statusFormSlug || statusFormSlug === form.slug;
+
+const isAccepted = matchesThisForm && leadStatus === "accepted";
+const isError = matchesThisForm && leadStatus === "error";
+const cleanLeadNumber = leadNumber && /^\d+$/.test(leadNumber) ? leadNumber : null;
+const cleanTurnstileSiteKey = turnstileSiteKey?.trim() || "";
+
+// Carry forward sanitized UTM params if present on the landing URL
+const utmSource = Astro.url.searchParams.get("utm_source")?.slice(0, 100) ?? "";
+const utmMedium = Astro.url.searchParams.get("utm_medium")?.slice(0, 100) ?? "";
+const utmCampaign = Astro.url.searchParams.get("utm_campaign")?.slice(0, 100) ?? "";
+
+const fieldLabelMap = new Map<string, string>(form.fields.map((f) => [f.key, f.label]));
+
+function errorMessageForCode(code: string | null): string {
+  switch (code) {
+    case "RATE_LIMITED":
+      return "Terlalu banyak percobaan pengiriman dalam waktu singkat. Silakan tunggu sebentar lalu coba lagi.";
+    case "TURNSTILE_REQUIRED":
+    case "TURNSTILE_INVALID":
+      return "Verifikasi keamanan belum selesai atau kedaluwarsa. Muat ulang halaman lalu coba kembali.";
+    case "SERVICE_UNAVAILABLE":
+    case "TURNSTILE_NOT_CONFIGURED":
+      return "Layanan pengiriman formulir sedang mengalami gangguan sementara. Silakan coba lagi nanti.";
+    case "FORM_NOT_FOUND":
+      return "Formulir ini sudah tidak aktif atau belum diterbitkan.";
+    case "IDEMPOTENCY_CONFLICT":
+      return "Permintaan sebelumnya berbeda dengan isian formulir ini. Muat ulang halaman untuk mengirim ulang.";
+    case "VALIDATION_ERROR":
+    default:
+      return "Mohon lengkapi seluruh kolom wajib dengan format yang benar serta persetujuan privasi.";
+  }
+}
+
+function conditionHintForField(field: CustomFormField): string | null {
+  if (!field.condition) return null;
+  const targetLabel = fieldLabelMap.get(field.condition.fieldKey) ?? field.condition.fieldKey;
+  return `Diisi jika "${targetLabel}" bernilai "${field.condition.equalsValue}".`;
+}
+---
+
+<section
+  id={sectionId}
+  class:list={["ps-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={sectionId}
+  data-section-type="custom_form"
+  data-form-slug={form.slug}
+  data-form-version={String(form.publishedVersion)}
+  data-testid="section-custom-form"
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header">
+      {eyebrow && <p class="ps-eyebrow">{eyebrow}</p>}
+      {isFirstSection ? (
+        <h1 id={headingId} class="ps-section-title">
+          {form.name}
+        </h1>
+      ) : (
+        <h2 id={headingId} class="ps-section-title">
+          {form.name}
+        </h2>
+      )}
+      {form.description && <p class="ps-section-subtitle">{form.description}</p>}
+    </header>
+
+    <div class="ps-cform-card">
+      {isHealthCategory && (
+        <div
+          class="ps-cform-warning"
+          role="note"
+          data-testid="public-uupdp-health-warning"
+        >
+          <p class="ps-cform-warning-title">Pemberitahuan Privasi Data Kesehatan (UU PDP)</p>
+          <p class="ps-cform-warning-body">{HEALTH_CATEGORY_UUPDP_WARNING_ID}</p>
+        </div>
+      )}
+
+      {isAccepted && (
+        <div
+          class="ps-cform-banner ps-cform-banner--success"
+          role="status"
+          aria-live="polite"
+          data-testid="custom-form-status"
+          data-status="accepted"
+        >
+          <p class="ps-cform-banner-title">Formulir berhasil dikirim</p>
+          <p class="ps-cform-banner-body">
+            {form.afterSubmitConfig.message}{" "}
+            {cleanLeadNumber ? `(Nomor referensi #${cleanLeadNumber})` : ""}
+          </p>
+        </div>
+      )}
+
+      {isError && (
+        <div
+          class="ps-cform-banner ps-cform-banner--error"
+          role="alert"
+          aria-live="assertive"
+          data-testid="custom-form-status"
+          data-status="error"
+          data-error-code={leadErrorCode ?? "VALIDATION_ERROR"}
+        >
+          <p class="ps-cform-banner-title">Formulir belum dapat dikirim</p>
+          <p class="ps-cform-banner-body">{errorMessageForCode(leadErrorCode)}</p>
+        </div>
+      )}
+
+      <div
+        class="ps-cform-banner ps-cform-banner--hidden"
+        role="status"
+        aria-live="polite"
+        data-testid="custom-form-live-status"
+        hidden
+      ></div>
+
+      <form
+        method="POST"
+        action={isPreview ? undefined : actionUrl}
+        enctype="application/x-www-form-urlencoded"
+        class="ps-cform"
+        data-custom-form="true"
+        data-form-slug={form.slug}
+        data-after-submit-action={form.afterSubmitAction}
+        data-testid="public-custom-form"
+        data-preview={isPreview ? "true" : "false"}
+      >
+        {/* Transport fields — zero visitor PII and empty idempotency key in cacheable HTML */}
+        <input type="hidden" name="formSlug" value={form.slug} />
+        <input type="hidden" name="idempotencyKey" value="" />
+        <input type="hidden" name="sourcePath" value={resolvedPath} />
+        <input type="hidden" name="returnTo" value={resolvedReturnTo} />
+        {utmSource && <input type="hidden" name="utm_source" value={utmSource} />}
+        {utmMedium && <input type="hidden" name="utm_medium" value={utmMedium} />}
+        {utmCampaign && <input type="hidden" name="utm_campaign" value={utmCampaign} />}
+
+        {/* Accessible off-screen honeypot trap */}
+        <div class="ps-cform-hp" aria-hidden="true">
+          <label for={`${sectionId}-hp-website`}>Situs Web</label>
+          <input
+            id={`${sectionId}-hp-website`}
+            name="hp_website"
+            type="text"
+            tabindex="-1"
+            autocomplete="off"
+            value=""
+          />
+        </div>
+
+        {form.fields.map((field) => {
+          const inputId = `${sectionId}-f-${field.key}`;
+          const hintId = `${inputId}-hint`;
+          const condHint = conditionHintForField(field);
+          const hasHint = Boolean(field.helpText || condHint);
+          const isConditional = Boolean(field.condition);
+          // Do not block native no-JS form submission for conditional fields; server enforces exact 1-level rule
+          const nativeRequired = field.required && !isConditional;
+
+          return (
+            <div
+              class="ps-cform-field"
+              data-field-key={field.key}
+              data-field-type={field.type}
+              data-field-required={field.required ? "true" : "false"}
+              data-cond-field={field.condition?.fieldKey ?? undefined}
+              data-cond-equals={field.condition?.equalsValue ?? undefined}
+              data-testid={`custom-field-${field.key}`}
+            >
+              {field.type === "radio" ? (
+                <fieldset class="ps-cform-fieldset">
+                  <legend class="ps-cform-label">
+                    {field.label}
+                    {field.required && (
+                      <span class="ps-cform-required" aria-hidden="true"> *</span>
+                    )}
+                  </legend>
+                  <div class="ps-cform-choice-list">
+                    {(field.options ?? []).map((opt, idx) => {
+                      const optId = `${inputId}-opt-${idx}`;
+                      return (
+                        <label class="ps-cform-choice-item" for={optId}>
+                          <input
+                            id={optId}
+                            name={`cf_${field.key}`}
+                            type="radio"
+                            value={opt}
+                            required={nativeRequired && idx === 0}
+                            disabled={isPreview}
+                            class="ps-cform-choice-input"
+                          />
+                          <span>{opt}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              ) : field.type === "checkbox_group" ? (
+                <fieldset class="ps-cform-fieldset">
+                  <legend class="ps-cform-label">
+                    {field.label}
+                    {field.required && (
+                      <span class="ps-cform-required" aria-hidden="true"> *</span>
+                    )}
+                  </legend>
+                  <div class="ps-cform-choice-list">
+                    {(field.options ?? []).map((opt, idx) => {
+                      const optId = `${inputId}-opt-${idx}`;
+                      return (
+                        <label class="ps-cform-choice-item" for={optId}>
+                          <input
+                            id={optId}
+                            name={`cf_${field.key}__${idx}`}
+                            type="checkbox"
+                            value={opt}
+                            disabled={isPreview}
+                            class="ps-cform-choice-input"
+                            data-checkbox-group={field.key}
+                          />
+                          <span>{opt}</span>
+                        </label>
+                      );
+                    })}
+                  </div>
+                </fieldset>
+              ) : field.type === "consent_checkbox" ? (
+                <label class="ps-cform-consent-label" for={inputId}>
+                  <input
+                    id={inputId}
+                    name={`cf_${field.key}`}
+                    type="checkbox"
+                    value="true"
+                    required={nativeRequired}
+                    disabled={isPreview}
+                    class="ps-cform-choice-input"
+                  />
+                  <span>
+                    {field.label}
+                    {field.required && (
+                      <span class="ps-cform-required" aria-hidden="true"> *</span>
+                    )}
+                  </span>
+                </label>
+              ) : (
+                <>
+                  <label for={inputId} class="ps-cform-label">
+                    {field.label}
+                    {field.required ? (
+                      <span class="ps-cform-required" aria-hidden="true"> *</span>
+                    ) : (
+                      <span class="ps-cform-optional"> (Opsional)</span>
+                    )}
+                  </label>
+
+                  {field.type === "short_text" && (
+                    <input
+                      id={inputId}
+                      name={`cf_${field.key}`}
+                      type="text"
+                      required={nativeRequired}
+                      maxlength="200"
+                      placeholder={field.placeholder ?? undefined}
+                      aria-describedby={hasHint ? hintId : undefined}
+                      disabled={isPreview}
+                      class="ps-cform-input"
+                    />
+                  )}
+
+                  {field.type === "long_text" && (
+                    <textarea
+                      id={inputId}
+                      name={`cf_${field.key}`}
+                      rows="4"
+                      required={nativeRequired}
+                      maxlength="2000"
+                      placeholder={field.placeholder ?? undefined}
+                      aria-describedby={hasHint ? hintId : undefined}
+                      disabled={isPreview}
+                      class="ps-cform-textarea"
+                    ></textarea>
+                  )}
+
+                  {field.type === "number" && (
+                    <input
+                      id={inputId}
+                      name={`cf_${field.key}`}
+                      type="number"
+                      inputmode="decimal"
+                      required={nativeRequired}
+                      min={typeof field.min === "number" ? String(field.min) : undefined}
+                      max={typeof field.max === "number" ? String(field.max) : undefined}
+                      placeholder={field.placeholder ?? undefined}
+                      aria-describedby={hasHint ? hintId : undefined}
+                      disabled={isPreview}
+                      class="ps-cform-input"
+                    />
+                  )}
+
+                  {field.type === "email" && (
+                    <input
+                      id={inputId}
+                      name={`cf_${field.key}`}
+                      type="email"
+                      required={nativeRequired}
+                      maxlength="254"
+                      autocomplete="email"
+                      placeholder={field.placeholder ?? "nama@perusahaan.co.id"}
+                      aria-describedby={hasHint ? hintId : undefined}
+                      disabled={isPreview}
+                      class="ps-cform-input"
+                    />
+                  )}
+
+                  {field.type === "phone_id" && (
+                    <input
+                      id={inputId}
+                      name={`cf_${field.key}`}
+                      type="tel"
+                      inputmode="tel"
+                      required={nativeRequired}
+                      maxlength="24"
+                      autocomplete="tel"
+                      placeholder={field.placeholder ?? "0812-3456-7890"}
+                      aria-describedby={hasHint ? hintId : undefined}
+                      disabled={isPreview}
+                      class="ps-cform-input"
+                    />
+                  )}
+
+                  {field.type === "date" && (
+                    <input
+                      id={inputId}
+                      name={`cf_${field.key}`}
+                      type="date"
+                      required={nativeRequired}
+                      aria-describedby={hasHint ? hintId : undefined}
+                      disabled={isPreview}
+                      class="ps-cform-input"
+                    />
+                  )}
+
+                  {field.type === "select" && (
+                    <select
+                      id={inputId}
+                      name={`cf_${field.key}`}
+                      required={nativeRequired}
+                      aria-describedby={hasHint ? hintId : undefined}
+                      disabled={isPreview}
+                      class="ps-cform-select"
+                    >
+                      <option value="">-- Pilih salah satu --</option>
+                      {(field.options ?? []).map((opt) => (
+                        <option value={opt}>{opt}</option>
+                      ))}
+                    </select>
+                  )}
+                </>
+              )}
+
+              {hasHint && (
+                <p id={hintId} class="ps-cform-hint">
+                  {field.helpText ? field.helpText : ""}
+                  {field.helpText && condHint ? " " : ""}
+                  {condHint ? condHint : ""}
+                </p>
+              )}
+            </div>
+          );
+        })}
+
+        {cleanTurnstileSiteKey && !isPreview && (
+          <div class="ps-cform-field" data-testid="custom-form-turnstile-slot">
+            <div
+              class="cf-turnstile"
+              data-sitekey={cleanTurnstileSiteKey}
+              data-action="lead_submit"
+              data-theme="light"
+            ></div>
+            <script
+              is:inline
+              src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+              async
+              defer
+            ></script>
+          </div>
+        )}
+
+        <div class="ps-cform-consent">
+          <label class="ps-cform-consent-label" for={`${sectionId}-privacy-consent`}>
+            <input
+              id={`${sectionId}-privacy-consent`}
+              name="privacyConsent"
+              type="checkbox"
+              value="true"
+              required
+              disabled={isPreview}
+              class="ps-cform-choice-input"
+              data-testid="custom-form-privacy-consent"
+            />
+            <span>
+              Saya menyetujui data pada formulir ini diproses oleh {businessName} sesuai{" "}
+              <a href={isPreview ? undefined : privacyPolicyHref} class="ps-cform-policy-link">
+                Kebijakan Privasi
+              </a>
+              .
+            </span>
+          </label>
+        </div>
+
+        <div class="ps-cform-submit-row">
+          <button
+            type="submit"
+            class:list={["ps-btn ps-btn--primary ps-cform-submit", isPreview && "ps-btn--inert"]}
+            disabled={isPreview}
+            data-testid="custom-form-submit"
+          >
+            {form.submitLabel}
+          </button>
+          <p class="ps-cform-privacy-note">
+            Data Anda hanya digunakan untuk menindaklanjuti permintaan ini.
+            {privacyContact ? ` Kontak privasi: ${privacyContact}.` : ""}
+          </p>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+
+<style>
+  .ps-cform-card {
+    max-width: 44rem;
+    background-color: var(--ps-surface);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-lg, 12px);
+    padding: clamp(1.25rem, 3vw, 2rem);
+  }
+
+  .ps-cform-warning {
+    border-radius: var(--ps-radius, 8px);
+    padding: 0.875rem 1rem;
+    margin-bottom: 1.25rem;
+    background-color: #fef3c7;
+    border: 1px solid #d97706;
+    color: #78350f;
+  }
+
+  .ps-cform-warning-title {
+    margin: 0 0 0.25rem;
+    font-size: 0.875rem;
+    font-weight: 700;
+  }
+
+  .ps-cform-warning-body {
+    margin: 0;
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+
+  .ps-cform-banner {
+    border-radius: var(--ps-radius, 8px);
+    padding: 0.875rem 1rem;
+    margin-bottom: 1.25rem;
+    border: 1px solid var(--ps-border);
+  }
+
+  .ps-cform-banner--hidden {
+    display: none;
+  }
+
+  .ps-cform-banner--success {
+    background-color: #ecfdf5;
+    border-color: #10b981;
+    color: #065f46;
+  }
+
+  .ps-cform-banner--error {
+    background-color: #fef2f2;
+    border-color: #ef4444;
+    color: #991b1b;
+  }
+
+  .ps-cform-card :global(.ps-cform-banner-title) {
+    margin: 0 0 0.25rem;
+    font-size: 0.9375rem;
+    font-weight: 700;
+  }
+
+  .ps-cform-card :global(.ps-cform-banner-body) {
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  .ps-cform-card :global(.ps-cform-wa-cta) {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 0.75rem;
+    min-height: 44px;
+    padding: 0.625rem 1.125rem;
+    border-radius: var(--ps-radius, 8px);
+    background-color: #0b6b3a;
+    color: #ffffff;
+    font-weight: 600;
+    font-size: 0.9375rem;
+    text-decoration: none;
+  }
+
+  .ps-cform-card :global(.ps-cform-wa-cta:hover) {
+    background-color: #095830;
+  }
+
+  .ps-cform-card :global(.ps-cform-wa-cta:focus-visible) {
+    outline: 2px solid #0b6b3a;
+    outline-offset: 2px;
+  }
+
+  .ps-cform {
+    display: flex;
+    flex-direction: column;
+    gap: 1.125rem;
+  }
+
+  .ps-cform-hp {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .ps-cform-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    min-width: 0;
+  }
+
+  .ps-cform-field[hidden] {
+    display: none;
+  }
+
+  .ps-cform-fieldset {
+    border: 0;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .ps-cform-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--ps-ink);
+  }
+
+  .ps-cform-required {
+    color: #b91c1c;
+  }
+
+  .ps-cform-optional {
+    font-weight: 400;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-cform-input,
+  .ps-cform-textarea,
+  .ps-cform-select {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius, 8px);
+    background-color: var(--ps-surface);
+    color: var(--ps-ink);
+    font-family: var(--ps-font-sans);
+    font-size: 1rem;
+    line-height: 1.45;
+  }
+
+  .ps-cform-textarea {
+    min-height: 7.5rem;
+    resize: vertical;
+  }
+
+  .ps-cform-input:focus-visible,
+  .ps-cform-textarea:focus-visible,
+  .ps-cform-select:focus-visible,
+  .ps-cform-choice-input:focus-visible {
+    outline: 2px solid var(--ps-brand-primary);
+    outline-offset: 2px;
+    border-color: var(--ps-brand-primary);
+  }
+
+  .ps-cform-choice-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+  }
+
+  .ps-cform-choice-item,
+  .ps-cform-consent-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    font-size: 0.9375rem;
+    line-height: 1.45;
+    color: var(--ps-ink);
+    cursor: pointer;
+    min-height: 44px;
+    padding-block: 0.375rem;
+  }
+
+  .ps-cform-choice-input {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-top: 0.125rem;
+    flex-shrink: 0;
+    accent-color: var(--ps-brand-primary);
+    cursor: pointer;
+  }
+
+  .ps-cform-hint {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--ps-ink-muted);
+    line-height: 1.4;
+  }
+
+  .ps-cform-consent {
+    padding-top: 0.25rem;
+  }
+
+  .ps-cform-policy-link {
+    color: var(--ps-brand-primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .ps-cform-submit-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    align-items: flex-start;
+  }
+
+  .ps-cform-submit {
+    width: 100%;
+    min-height: 48px;
+  }
+
+  @media (min-width: 640px) {
+    .ps-cform-submit {
+      width: auto;
+      min-width: 12rem;
+    }
+  }
+
+  .ps-cform-privacy-note {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--ps-ink-muted);
+    line-height: 1.45;
+  }
+</style>
+
+<script>
+  // Progressive enhancement only — form submits natively via POST /api/leads when JS is disabled.
+  for (const formEl of document.querySelectorAll<HTMLFormElement>('form[data-custom-form="true"]')) {
+    if (formEl.dataset.preview === "true") continue;
+
+    const card = formEl.closest(".ps-cform-card");
+    const liveStatus = card?.querySelector<HTMLElement>('[data-testid="custom-form-live-status"]');
+    const submitBtn = formEl.querySelector<HTMLButtonElement>('[data-testid="custom-form-submit"]');
+    const formSlug = formEl.dataset.formSlug ?? "";
+
+    function readFieldValue(fieldKey: string): string | string[] | boolean {
+      const container = formEl.querySelector<HTMLElement>(`[data-field-key="${CSS.escape(fieldKey)}"]`);
+      if (!container) return "";
+      const ftype = container.dataset.fieldType;
+      if (ftype === "radio") {
+        const checked = container.querySelector<HTMLInputElement>('input[type="radio"]:checked');
+        return checked ? checked.value : "";
+      }
+      if (ftype === "checkbox_group") {
+        return Array.from(
+          container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]:checked'),
+        ).map((el) => el.value);
+      }
+      if (ftype === "consent_checkbox") {
+        const cb = container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+        return Boolean(cb?.checked);
+      }
+      const ctrl = container.querySelector("input, textarea, select");
+      if (
+        ctrl instanceof HTMLInputElement ||
+        ctrl instanceof HTMLTextAreaElement ||
+        ctrl instanceof HTMLSelectElement
+      ) {
+        return ctrl.value.trim();
+      }
+      return "";
+    }
+
+    function syncConditionalVisibility() {
+      const condContainers = formEl.querySelectorAll<HTMLElement>("[data-cond-field]");
+      for (const el of condContainers) {
+        const targetKey = el.dataset.condField;
+        const expected = el.dataset.condEquals ?? "";
+        if (!targetKey) continue;
+        const val = readFieldValue(targetKey);
+        const visible = Array.isArray(val)
+          ? val.includes(expected)
+          : typeof val === "boolean"
+            ? String(val) === expected
+            : val === expected;
+        el.hidden = !visible;
+        const isReq = el.dataset.fieldRequired === "true";
+        const controls = el.querySelectorAll("input, textarea, select");
+        controls.forEach((ctrl, idx) => {
+          if (
+            !(ctrl instanceof HTMLInputElement) &&
+            !(ctrl instanceof HTMLTextAreaElement) &&
+            !(ctrl instanceof HTMLSelectElement)
+          ) {
+            return;
+          }
+          ctrl.disabled = !visible;
+          if (ctrl instanceof HTMLInputElement && ctrl.type === "radio") {
+            ctrl.required = visible && isReq && idx === 0;
+          } else if (ctrl.dataset.checkboxGroup) {
+            ctrl.required = false;
+          } else {
+            ctrl.required = visible && isReq;
+          }
+        });
+      }
+    }
+
+    syncConditionalVisibility();
+    formEl.addEventListener("change", syncConditionalVisibility);
+    formEl.addEventListener("input", syncConditionalVisibility);
+
+    let lastPayloadSig = "";
+    let cachedKey = "";
+
+    formEl.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      syncConditionalVisibility();
+
+      const answers: Record<string, string | string[] | boolean> = {};
+      const fieldContainers = formEl.querySelectorAll<HTMLElement>("[data-field-key]");
+      for (const container of fieldContainers) {
+        if (container.hidden) continue;
+        const key = container.dataset.fieldKey;
+        if (!key) continue;
+        answers[key] = readFieldValue(key);
+      }
+
+      const hpInput = formEl.querySelector<HTMLInputElement>('input[name="hp_website"]');
+      const sourceInput = formEl.querySelector<HTMLInputElement>('input[name="sourcePath"]');
+      const returnInput = formEl.querySelector<HTMLInputElement>('input[name="returnTo"]');
+      const consentInput = formEl.querySelector<HTMLInputElement>('input[name="privacyConsent"]');
+      const turnstileInput = formEl.querySelector<HTMLInputElement>(
+        'input[name="cf-turnstile-response"]',
+      );
+
+      const payload: Record<string, unknown> = {
+        formSlug,
+        answers,
+        sourcePath: sourceInput?.value || window.location.pathname,
+        returnTo: returnInput?.value || window.location.pathname,
+        hp_website: hpInput?.value ?? "",
+      };
+      if (consentInput) {
+        payload.privacyConsent = consentInput.checked;
+      }
+      if (turnstileInput?.value) {
+        payload["cf-turnstile-response"] = turnstileInput.value;
+      }
+
+      for (const utmName of ["utm_source", "utm_medium", "utm_campaign"]) {
+        const utmEl = formEl.querySelector<HTMLInputElement>(`input[name="${utmName}"]`);
+        if (utmEl?.value) payload[utmName] = utmEl.value;
+      }
+
+      const sig = JSON.stringify({ formSlug, answers });
+      if (sig !== lastPayloadSig || !cachedKey) {
+        cachedKey =
+          typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+            ? `cform_${crypto.randomUUID()}`
+            : `cform_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+        lastPayloadSig = sig;
+      }
+
+      const originalBtnLabel = submitBtn?.textContent ?? "Kirim Formulir";
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = "Mengirim...";
+      }
+
+      try {
+        const res = await fetch(formEl.action || "/api/leads", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "Idempotency-Key": cachedKey,
+          },
+          body: JSON.stringify(payload),
+        });
+        const data = (await res.json().catch(() => null)) as {
+          leadNumber?: number;
+          confirmationMessage?: string;
+          afterSubmit?: {
+            action?: string;
+            message?: string;
+            whatsappUrl?: string | null;
+            redirectUrl?: string | null;
+          };
+          error?: { message?: string; fields?: { message?: string }[] };
+        } | null;
+
+        if (!liveStatus) return;
+        liveStatus.hidden = false;
+        liveStatus.classList.remove(
+          "ps-cform-banner--hidden",
+          "ps-cform-banner--success",
+          "ps-cform-banner--error",
+        );
+        liveStatus.replaceChildren();
+
+        if (res.ok && data) {
+          liveStatus.classList.add("ps-cform-banner--success");
+          liveStatus.setAttribute("role", "status");
+          liveStatus.dataset.status = "accepted";
+
+          const titleEl = document.createElement("p");
+          titleEl.className = "ps-cform-banner-title";
+          titleEl.textContent = "Formulir berhasil dikirim";
+          liveStatus.appendChild(titleEl);
+
+          const bodyEl = document.createElement("p");
+          bodyEl.className = "ps-cform-banner-body";
+          const refNote = data.leadNumber ? ` (Nomor referensi #${data.leadNumber})` : "";
+          bodyEl.textContent = `${data.afterSubmit?.message || data.confirmationMessage || "Terima kasih! Formulir Anda telah kami terima."}${refNote}`;
+          liveStatus.appendChild(bodyEl);
+
+          const waUrl = data.afterSubmit?.whatsappUrl;
+          if (
+            data.afterSubmit?.action === "whatsapp" &&
+            typeof waUrl === "string" &&
+            waUrl.startsWith("https://wa.me/")
+          ) {
+            const waLink = document.createElement("a");
+            waLink.href = waUrl;
+            waLink.target = "_blank";
+            waLink.rel = "noopener noreferrer";
+            waLink.className = "ps-cform-wa-cta";
+            waLink.dataset.testid = "custom-form-wa-cta";
+            waLink.textContent = "Lanjut ke WhatsApp";
+            liveStatus.appendChild(waLink);
+          } else if (
+            data.afterSubmit?.action === "url" &&
+            typeof data.afterSubmit.redirectUrl === "string" &&
+            (data.afterSubmit.redirectUrl.startsWith("https://") ||
+              data.afterSubmit.redirectUrl.startsWith("/"))
+          ) {
+            const urlLink = document.createElement("a");
+            urlLink.href = data.afterSubmit.redirectUrl;
+            if (data.afterSubmit.redirectUrl.startsWith("https://")) {
+              urlLink.target = "_blank";
+              urlLink.rel = "noopener noreferrer";
+            }
+            urlLink.className = "ps-cform-wa-cta";
+            urlLink.dataset.testid = "custom-form-redirect-cta";
+            urlLink.textContent = "Lanjutkan";
+            liveStatus.appendChild(urlLink);
+          }
+
+          formEl.reset();
+          syncConditionalVisibility();
+          lastPayloadSig = "";
+          cachedKey = "";
+        } else {
+          liveStatus.classList.add("ps-cform-banner--error");
+          liveStatus.setAttribute("role", "alert");
+          liveStatus.dataset.status = "error";
+
+          const titleEl = document.createElement("p");
+          titleEl.className = "ps-cform-banner-title";
+          titleEl.textContent = "Formulir belum dapat dikirim";
+          liveStatus.appendChild(titleEl);
+
+          const bodyEl = document.createElement("p");
+          bodyEl.className = "ps-cform-banner-body";
+          const firstFieldMsg = data?.error?.fields?.[0]?.message;
+          bodyEl.textContent =
+            firstFieldMsg ||
+            data?.error?.message ||
+            "Mohon periksa kembali isian formulir Anda lalu coba lagi.";
+          liveStatus.appendChild(bodyEl);
+        }
+      } catch {
+        if (liveStatus) {
+          liveStatus.hidden = false;
+          liveStatus.classList.remove("ps-cform-banner--hidden", "ps-cform-banner--success");
+          liveStatus.classList.add("ps-cform-banner--error");
+          liveStatus.setAttribute("role", "alert");
+          liveStatus.textContent =
+            "Koneksi terganggu. Silakan periksa jaringan Anda lalu coba kirim kembali.";
+        }
+      } finally {
+        if (submitBtn) {
+          submitBtn.disabled = false;
+          submitBtn.textContent = originalBtnLabel;
+        }
+      }
+    });
+  }
+</script>

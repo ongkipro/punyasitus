@@ -1,0 +1,77 @@
+---
+import { canPerform } from "@punyasitus/auth";
+import { listFormVerticalTemplates } from "@punyasitus/core/forms/index";
+import { listTenantForms } from "@punyasitus/db/forms/index";
+import { ShieldAlertIcon } from "lucide-react";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { FormsListClient } from "./_FormsListClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const canReadForms = canPerform(ctx.permissions.role, "settings:read");
+const canWriteForms =
+  canPerform(ctx.permissions.role, "settings:write") && !ctx.permissions.isLocked;
+const canPublishForms =
+  canPerform(ctx.permissions.role, "settings:publish") && !ctx.permissions.isLocked;
+
+if (!canReadForms) {
+  Astro.response.status = 403;
+}
+
+const formsData = canReadForms ? await listTenantForms(ctx.tenantDb) : null;
+const templates = listFormVerticalTemplates();
+---
+
+<DashboardLayout
+  title={`Formulir Kustom — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="pages"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  {!canReadForms || !formsData ? (
+    <div class="space-y-4" data-testid="forms-permission-denied">
+      <div class="space-y-1">
+        <h1 class="text-2xl font-bold tracking-[-0.02em] text-foreground">Formulir Kustom</h1>
+        <p class="text-sm text-muted-foreground">
+          Pengelolaan formulir kustom dibatasi untuk Pemilik Situs dan Admin.
+        </p>
+      </div>
+      <Alert variant="destructive">
+        <ShieldAlertIcon className="size-4" aria-hidden="true" />
+        <AlertTitle>Akses Ditolak</AlertTitle>
+        <AlertDescription>
+          Peran <strong>Editor</strong> tidak memiliki izin untuk mengelola formulir kustom atau
+          pengaturan pengumpulan data pengunjung.
+        </AlertDescription>
+      </Alert>
+    </div>
+  ) : (
+    <FormsListClient
+      client:load
+      tenantId={ctx.tenantId}
+      handle={ctx.handle}
+      basePath={ctx.basePath}
+      canWrite={canWriteForms}
+      canPublish={canPublishForms}
+      isLocked={ctx.permissions.isLocked}
+      initialItems={formsData.items}
+      compliance={formsData.compliance}
+      templates={templates}
+    />
+  )}
+</DashboardLayout>

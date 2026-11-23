@@ -1,0 +1,149 @@
+---
+import { canPerform } from "@punyasitus/auth";
+import {
+  DEFAULT_CONFIRMATION_MESSAGE_ID,
+  DEFAULT_SUBMIT_LABEL_ID,
+  getFormVerticalTemplate,
+  listFormVerticalTemplates,
+} from "@punyasitus/core/forms/index";
+import { getTenantFormComplianceContext } from "@punyasitus/db/forms/index";
+import { ShieldAlertIcon } from "lucide-react";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { FormBuilderClient, type FormBuilderInitialState } from "./_FormBuilderClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const canWriteForms =
+  canPerform(ctx.permissions.role, "settings:write") && !ctx.permissions.isLocked;
+const canPublishForms =
+  canPerform(ctx.permissions.role, "settings:publish") && !ctx.permissions.isLocked;
+
+if (!canWriteForms) {
+  Astro.response.status = 403;
+}
+
+const compliance = await getTenantFormComplianceContext(ctx.tenantDb);
+const templates = listFormVerticalTemplates();
+const requestedTemplateKey = Astro.url.searchParams.get("template") ?? "";
+const selectedTemplate = requestedTemplateKey
+  ? getFormVerticalTemplate(requestedTemplateKey)
+  : null;
+
+const initialForm: FormBuilderInitialState = selectedTemplate
+  ? {
+      id: null,
+      slug: selectedTemplate.defaultSlug,
+      name: selectedTemplate.defaultName,
+      description: selectedTemplate.defaultDescription,
+      submitLabel: selectedTemplate.submitLabel,
+      templateKey: selectedTemplate.key,
+      fields: selectedTemplate.fields,
+      afterSubmitAction: selectedTemplate.afterSubmitAction,
+      afterSubmitConfig: {
+        message: selectedTemplate.afterSubmitConfig.message,
+        whatsappPhoneOverride: selectedTemplate.afterSubmitConfig.whatsappPhoneOverride ?? "",
+        whatsappIntro: selectedTemplate.afterSubmitConfig.whatsappIntro ?? "",
+        redirectUrl: selectedTemplate.afterSubmitConfig.redirectUrl ?? "",
+      },
+      isPublished: false,
+      publishedVersion: 0,
+      hasUnpublishedChanges: true,
+      active: true,
+      version: 1,
+    }
+  : {
+      id: null,
+      slug: "",
+      name: "",
+      description: "",
+      submitLabel: DEFAULT_SUBMIT_LABEL_ID,
+      templateKey: null,
+      fields: [
+        {
+          key: "nama_lengkap",
+          type: "short_text",
+          label: "Nama Lengkap",
+          required: true,
+          placeholder: "Contoh: Budi Santoso",
+          helpText: null,
+          condition: null,
+        },
+        {
+          key: "no_whatsapp",
+          type: "phone_id",
+          label: "Nomor WhatsApp",
+          required: true,
+          placeholder: "0812-3456-7890",
+          helpText: null,
+          condition: null,
+        },
+        {
+          key: "persetujuan_privasi",
+          type: "consent_checkbox",
+          label: "Saya menyetujui data kontak di atas diproses untuk menindaklanjuti permintaan ini.",
+          required: true,
+          placeholder: null,
+          helpText: null,
+          condition: null,
+        },
+      ],
+      afterSubmitAction: "text",
+      afterSubmitConfig: {
+        message: DEFAULT_CONFIRMATION_MESSAGE_ID,
+        whatsappPhoneOverride: "",
+        whatsappIntro: "",
+        redirectUrl: "",
+      },
+      isPublished: false,
+      publishedVersion: 0,
+      hasUnpublishedChanges: true,
+      active: true,
+      version: 1,
+    };
+---
+
+<DashboardLayout
+  title={`Buat Formulir Kustom — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="pages"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  {!canWriteForms ? (
+    <div class="space-y-4" data-testid="forms-permission-denied">
+      <Alert variant="destructive">
+        <ShieldAlertIcon className="size-4" aria-hidden="true" />
+        <AlertTitle>Akses Ditolak</AlertTitle>
+        <AlertDescription>
+          Anda tidak memiliki izin untuk membuat formulir kustom pada situs ini.
+        </AlertDescription>
+      </Alert>
+    </div>
+  ) : (
+    <FormBuilderClient
+      client:load
+      handle={ctx.handle}
+      basePath={ctx.basePath}
+      canWrite={canWriteForms}
+      canPublish={canPublishForms}
+      isLocked={ctx.permissions.isLocked}
+      compliance={compliance}
+      templates={templates}
+      initialForm={initialForm}
+    />
+  )}
+</DashboardLayout>
