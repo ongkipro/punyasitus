@@ -15,6 +15,12 @@ import {
 } from "@punyasitus/core/content/index";
 import { ThemeIdSchema } from "@punyasitus/core/schemas/common";
 import {
+  ALL_OFFERING_TYPES,
+  extractGroupedSettingsExtension,
+  filterPublicNavigationForSettings,
+  type PublicReadingDefaults,
+} from "@punyasitus/core/settings/index";
+import {
   computeContrastRatio,
   ensureAccessibleBrandColor,
   hasDangerousCssSyntax,
@@ -872,6 +878,37 @@ function parsePreviewOverride<T>(
  * - Corrupt/malicious stored `theme_config` falls back cleanly to WCAG-AA theme defaults.
  * - Bounded, pre-validated draft DTO overrides are applied ONLY when `options.previewMode === true`.
  */
+async function loadPublishedGroupedReadingDefaults(
+  tenantDb: D1Database,
+): Promise<{ readonly enabledOfferingTypes: PublicReadingDefaults["enabledOfferingTypes"] } | null> {
+  try {
+    const tableRow = await tenantDb
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'site_settings_grouped' LIMIT 1`,
+      )
+      .first<{ readonly name: string }>();
+    if (tableRow?.name === "site_settings_grouped") {
+      const groupedRow = await tenantDb
+        .prepare("SELECT published_json FROM site_settings_grouped WHERE id = 1 LIMIT 1")
+        .first<{ readonly published_json: string | null }>();
+      if (groupedRow?.published_json) {
+        const ext = extractGroupedSettingsExtension(groupedRow.published_json);
+        return { enabledOfferingTypes: ext.reading.enabledOfferingTypes };
+      }
+    }
+    const siteRow = await tenantDb
+      .prepare("SELECT published_json FROM site_settings WHERE id = 1 LIMIT 1")
+      .first<{ readonly published_json: string | null }>();
+    if (siteRow?.published_json) {
+      const ext = extractGroupedSettingsExtension(siteRow.published_json);
+      return { enabledOfferingTypes: ext.reading.enabledOfferingTypes };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function loadPublishedTenantShellData(
   tenantDb: D1Database | null | undefined,
   options: LoadPublishedTenantShellOptions = {},
@@ -886,20 +923,25 @@ export async function loadPublishedTenantShellData(
   let publishedFooterMenu: PublishedResourceDto<"menu"> | null = null;
   let publishedMobileMenu: PublishedResourceDto<"menu"> | null = null;
   let publishedPage: PublishedResourceDto<"page"> | null = null;
+  let publishedGroupedReading: {
+    readonly enabledOfferingTypes: PublicReadingDefaults["enabledOfferingTypes"];
+  } | null = null;
 
   if (tenantDb) {
-    const [settingsRes, profileRes, headerRes, footerRes, mobileRes, pageDto] = await Promise.all([
-      safeGetPublishedResource(tenantDb, { resourceType: "site_settings" }),
-      safeGetPublishedResource(tenantDb, { resourceType: "business_profile" }),
-      safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "header" }),
-      safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "footer" }),
-      safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "mobile" }),
-      options.pageSlug
-        ? safeGetPublishedResource(tenantDb, { resourceType: "page", slug: options.pageSlug }).then(
-            (r) => r.dto,
-          )
-        : loadPublishedHomepage(tenantDb),
-    ]);
+    const [settingsRes, profileRes, headerRes, footerRes, mobileRes, pageDto, groupedReading] =
+      await Promise.all([
+        safeGetPublishedResource(tenantDb, { resourceType: "site_settings" }),
+        safeGetPublishedResource(tenantDb, { resourceType: "business_profile" }),
+        safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "header" }),
+        safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "footer" }),
+        safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "mobile" }),
+        options.pageSlug
+          ? safeGetPublishedResource(tenantDb, { resourceType: "page", slug: options.pageSlug }).then(
+              (r) => r.dto,
+            )
+          : loadPublishedHomepage(tenantDb),
+        loadPublishedGroupedReadingDefaults(tenantDb),
+      ]);
 
     publishedSettings = settingsRes.dto;
     publishedProfile = profileRes.dto;
@@ -907,6 +949,7 @@ export async function loadPublishedTenantShellData(
     publishedFooterMenu = footerRes.dto;
     publishedMobileMenu = mobileRes.dto;
     publishedPage = pageDto;
+    publishedGroupedReading = groupedReading;
   }
 
   let effectiveSettings: SiteSettingsSnapshot | null = publishedSettings?.data ?? null;
@@ -989,6 +1032,26 @@ export async function loadPublishedTenantShellData(
   const siteTitle = effectiveSettings?.siteTitle ?? fallbackSiteTitle;
   const businessName = effectiveProfile?.businessName ?? effectiveSettings?.siteTitle ?? fallbackBusinessName;
 
+  const effectiveBlogEnabled = effectiveSettings?.blogEnabled ?? true;
+  const effectiveCatalogEnabled = effectiveSettings?.catalogEnabled ?? true;
+  const effectiveEnabledOfferingTypes = effectiveCatalogEnabled
+    ? (publishedGroupedReading?.enabledOfferingTypes ?? [...ALL_OFFERING_TYPES])
+    : [];
+
+  const sanitizedHeader = sanitizePublicMenuItems(effectiveHeaderItems);
+  const sanitizedFooter = sanitizePublicMenuItems(effectiveFooterItems);
+  const sanitizedMobile = sanitizePublicMenuItems(effectiveMobileItems);
+
+  // Published navigation filtering (PLAN §11.2, TASK-040): hide disabled `/blog` and catalog/offering
+  // links automatically on published public SSR renders; never mutate draft preview unless previewing
+  // an explicit siteSettings draft override.
+  const shouldFilterNavigation = !isPreview || Boolean(override?.siteSettings);
+  const navReadingFilter = {
+    blogEnabled: effectiveBlogEnabled,
+    catalogEnabled: effectiveCatalogEnabled,
+    enabledOfferingTypes: effectiveEnabledOfferingTypes,
+  };
+
   return {
     isPreview,
     layoutMode,
@@ -1000,8 +1063,8 @@ export async function loadPublishedTenantShellData(
       tagline: effectiveSettings?.tagline ?? null,
       locale: effectiveSettings?.locale ?? "id-ID",
       timezone: effectiveSettings?.timezone ?? "Asia/Jakarta",
-      blogEnabled: effectiveSettings?.blogEnabled ?? true,
-      catalogEnabled: effectiveSettings?.catalogEnabled ?? true,
+      blogEnabled: effectiveBlogEnabled,
+      catalogEnabled: effectiveCatalogEnabled,
       siteVisibility: effectiveSettings?.siteVisibility ?? "public",
       analyticsConfig: effectiveSettings?.analyticsConfig ?? null,
     },
@@ -1022,9 +1085,15 @@ export async function loadPublishedTenantShellData(
       socialLinks: effectiveProfile?.socialLinks ?? [],
     },
     menus: {
-      header: sanitizePublicMenuItems(effectiveHeaderItems),
-      footer: sanitizePublicMenuItems(effectiveFooterItems),
-      mobile: sanitizePublicMenuItems(effectiveMobileItems),
+      header: shouldFilterNavigation
+        ? filterPublicNavigationForSettings(sanitizedHeader, navReadingFilter)
+        : sanitizedHeader,
+      footer: shouldFilterNavigation
+        ? filterPublicNavigationForSettings(sanitizedFooter, navReadingFilter)
+        : sanitizedFooter,
+      mobile: shouldFilterNavigation
+        ? filterPublicNavigationForSettings(sanitizedMobile, navReadingFilter)
+        : sanitizedMobile,
     },
     page: effectivePage,
     revisions: {
