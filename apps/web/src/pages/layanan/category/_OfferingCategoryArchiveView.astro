@@ -1,7 +1,8 @@
 ---
 import "../../../themes/default/sections/sections.css";
 import "../_public-pages.css";
-import SEOHead from "../../../components/SEOHead.astro";
+import PublicSeoHead from "../../../components/seo/PublicSeoHead.astro";
+import type { PublicSeoHeadProps } from "../../../components/seo/public-seo-context.ts";
 import FloatingWhatsApp from "../../../themes/default/components/FloatingWhatsApp.astro";
 import Layout from "../../../themes/default/Layout.astro";
 import type { PublicOfferingCategoryArchiveRenderResult } from "../../blog/category/_archive-resolver.ts";
@@ -10,9 +11,10 @@ import PublicPagination from "../_PublicPagination.astro";
 
 export interface Props {
   readonly result: PublicOfferingCategoryArchiveRenderResult;
+  readonly headProps?: PublicSeoHeadProps | null;
 }
 
-const { result } = Astro.props;
+const { result, headProps = null } = Astro.props;
 const { descriptor, items, pagination, taxonomy, childCategories } = result;
 
 function statusBadgeClass(status: string | null | undefined): string {
@@ -26,15 +28,20 @@ function statusBadgeClass(status: string | null | undefined): string {
   shell={result.shell}
   pageTitle={result.pageTitle}
   pageDescription={result.seoMetadata.description || undefined}
+  managedHead={true}
   currentPath={result.currentPath}
   initialCookieHeader={Astro.request.headers.get("cookie")}
 >
-  <SEOHead
+  <PublicSeoHead
     slot="head"
-    metadata={result.seoMetadata}
-    jsonLd={result.schemaGraph ?? undefined}
-    omitTitle={true}
-    omitDescription={Boolean(result.seoMetadata.description)}
+    metadata={headProps?.metadata ?? result.seoMetadata}
+    schemaGraph={headProps?.schemaGraph ?? result.schemaGraph}
+    seoAutopilotEnabled={headProps?.seoAutopilotEnabled ?? true}
+    publishedVerificationTokens={headProps?.publishedVerificationTokens ?? null}
+    blogEnabled={headProps?.blogEnabled ?? result.shell.site.blogEnabled}
+    siteName={headProps?.siteName ?? result.shell.site.title}
+    searchAppearance={headProps?.searchAppearance ?? null}
+    templateValues={headProps?.templateValues}
   />
 
   <section

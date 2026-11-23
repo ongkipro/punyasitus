@@ -39,6 +39,7 @@ import {
   type PublishedSeoDecisionInput,
   type SeoRouteKind,
 } from "./seo/index.ts";
+import { resolvePublishSafeSchemaType } from "./seo/editor.ts";
 
 /**
  * Schema.org Structured Data (`@graph` JSON-LD) Generator
@@ -276,6 +277,10 @@ export interface SchemaArticleInput {
   readonly dateModified?: string | number | Date | null;
   readonly authorName?: string | null;
   readonly authorRoleTitle?: string | null;
+  /** Visible public author bio (capped at 300 chars per PLAN §15.7). */
+  readonly authorBio?: string | null;
+  /** Verified ready tenant author avatar image (PLAN §15.7). */
+  readonly authorAvatar?: SchemaImageInput | null;
   readonly authorUrl?: string | null;
   readonly authorSameAs?: readonly string[] | null;
   readonly image?: SchemaImageInput | null;
@@ -1457,10 +1462,13 @@ function buildArticleNode(params: {
     return null;
   }
   const requestedType = params.article.schemaType
-    ? sanitizeSeoText(params.article.schemaType, { maxLength: 64 }).toLowerCase()
+    ? sanitizeSeoText(params.article.schemaType, { maxLength: 64 })
     : "";
+  const safeArticleType = resolvePublishSafeSchemaType(requestedType || null, {
+    resourceKind: "post",
+  }).schemaType;
   const articleType: AllowedArticleSchemaType =
-    ARTICLE_TYPE_BY_LOWER.get(requestedType) ?? "BlogPosting";
+    ARTICLE_TYPE_BY_LOWER.get((safeArticleType ?? requestedType).toLowerCase()) ?? "BlogPosting";
 
   const description = params.article.description
     ? sanitizeSeoText(params.article.description, { maxLength: 500 })
@@ -1473,8 +1481,15 @@ function buildArticleNode(params: {
   const authorRole = params.article.authorRoleTitle
     ? sanitizeSeoText(params.article.authorRoleTitle, { maxLength: 120 })
     : "";
+  const authorBio = params.article.authorBio
+    ? sanitizeSeoText(params.article.authorBio, { maxLength: 300 })
+    : "";
+  const authorAvatar = resolveValidatedSchemaImage(params.article.authorAvatar, {
+    tenantId: params.tenantId,
+    allowedOrigins: params.allowedOrigins,
+  });
   const authorUrl = validatePublicHttpsUrl(params.article.authorUrl);
-  const authorSameAs = collectValidatedSameAs(null, params.article.authorSameAs);
+  const authorSameAs = collectValidatedSameAs(null, params.article.authorSameAs).slice(0, 5);
 
   const image = resolveValidatedSchemaImage(params.article.image, {
     tenantId: params.tenantId,
@@ -1495,6 +1510,8 @@ function buildArticleNode(params: {
         "@type": "Person",
         name: authorName,
         ...(authorRole ? { jobTitle: authorRole } : {}),
+        ...(authorBio ? { description: authorBio } : {}),
+        ...(authorAvatar ? { image: toImageObject(authorAvatar) } : {}),
         ...(authorUrl ? { url: authorUrl } : {}),
         ...(authorSameAs.length > 0 ? { sameAs: authorSameAs } : {}),
       }
@@ -1615,6 +1632,7 @@ function collectOfferingImageUrls(
 
 function buildOfferingNode(params: {
   readonly offering: SchemaOfferingInput;
+  readonly requestedSchemaType?: string | null;
   readonly verifiedOrigin: string;
   readonly canonicalUrl: string;
   readonly tenantId: string | null;
@@ -1638,6 +1656,42 @@ function buildOfferingNode(params: {
     allowedOrigins: params.allowedOrigins,
   });
   const attrs = offering.attributes ?? {};
+
+  // Gate explicit editor schemaType overrides strictly against visible facts via TASK-052
+  // `resolvePublishSafeSchemaType` (REQ-054, PLAN §15.4 & §15.7):
+  // - `Product` requires visible `fixed`/`from` numeric price (downgrades to `Service` otherwise).
+  // - `TouristTrip` requires visible itinerary or destination (downgrades to `Service` otherwise).
+  // - `service` ALWAYS emits `Service` (never `Product` or `Offer`).
+  const hasVisibleItinerary =
+    (Array.isArray(attrs.itinerary) && attrs.itinerary.length > 0) ||
+    (typeof attrs.destination === "string" && sanitizeSeoText(attrs.destination, { maxLength: 160 }).length > 0);
+
+  if (params.requestedSchemaType) {
+    const safeResolution = resolvePublishSafeSchemaType(params.requestedSchemaType, {
+      resourceKind: "offering",
+      offeringType: offering.offeringType,
+      priceMode: offering.priceMode ?? null,
+      price: offering.price ?? null,
+      hasVisibleItinerary,
+    });
+    if (safeResolution.schemaType === "Service") {
+      const serviceArea =
+        typeof attrs.serviceArea === "string"
+          ? sanitizeSeoText(attrs.serviceArea, { maxLength: 160 })
+          : "";
+      return {
+        "@type": "Service",
+        "@id": `${params.canonicalUrl}${SCHEMA_ENTITY_FRAGMENTS.service}`,
+        name,
+        url: params.canonicalUrl,
+        ...(description ? { description } : {}),
+        provider: { "@id": `${params.verifiedOrigin}/${SCHEMA_ENTITY_FRAGMENTS.organization}` },
+        ...(imageUrls.length > 0 ? { image: imageUrls } : {}),
+        ...(category ? { serviceType: category } : {}),
+        ...(serviceArea ? { areaServed: serviceArea } : {}),
+      };
+    }
+  }
 
   switch (offering.offeringType) {
     case "product": {
@@ -2008,6 +2062,7 @@ export function generateSchemaGraph(input: GenerateSchemaInput): SchemaGeneratio
   const offeringNode = input.offering
     ? buildOfferingNode({
         offering: input.offering,
+        requestedSchemaType: input.seo.resourceSeo?.schemaType ?? null,
         verifiedOrigin,
         canonicalUrl,
         tenantId,
@@ -2045,10 +2100,20 @@ export function generateSchemaGraph(input: GenerateSchemaInput): SchemaGeneratio
     (faqNode?.["@id"] as string | undefined) ??
     (input.seo.routeKind === "homepage" && orgResult.personId ? orgResult.personId : null);
 
-  const effectivePageSchemaType =
+  const rawRequestedPageType =
     input.pageSchemaType ??
     input.seo.resourceSeo?.schemaType ??
     (input.seo.routeKind === "homepage" && orgResult.personId ? "ProfilePage" : null);
+
+  const effectivePageSchemaType =
+    rawRequestedPageType && rawRequestedPageType.toLowerCase() === "profilepage"
+      ? "ProfilePage"
+      : rawRequestedPageType
+        ? resolvePublishSafeSchemaType(rawRequestedPageType, {
+            resourceKind: "page",
+            hasVisibleFaqBlock: faqNode !== null,
+          }).schemaType
+        : null;
 
   const webPageNode = buildWebPageNode({
     routeKind: input.seo.routeKind,
@@ -2105,6 +2170,11 @@ export interface GeneratePublishedResourceSchemaInput extends PublishedResourceS
   readonly tenantId?: string | null;
   readonly fallbackSiteTitle?: string;
   readonly businessProfile?: BusinessProfileSnapshot | null;
+  readonly businessLegalName?: string | null;
+  readonly businessPrivacyContact?: string | null;
+  readonly businessPersonRoleTitle?: string | null;
+  readonly businessAffiliatedOrgName?: string | null;
+  readonly businessCredentials?: IndonesianBusinessCredentials | null;
   readonly businessLogo?: SchemaImageInput | null;
   readonly businessBranches?: readonly SchemaBranchInput[] | null;
   readonly breadcrumbs?: readonly SchemaBreadcrumbItemInput[] | null;
@@ -2113,6 +2183,9 @@ export interface GeneratePublishedResourceSchemaInput extends PublishedResourceS
   readonly galleryImages?: readonly (SchemaImageInput | null | undefined)[] | null;
   readonly articleAuthorName?: string | null;
   readonly articleAuthorRoleTitle?: string | null;
+  readonly articleAuthorBio?: string | null;
+  readonly articleAuthorAvatar?: SchemaImageInput | null;
+  readonly articleAuthorSameAs?: readonly string[] | null;
   readonly articleSection?: string | null;
   readonly articleTags?: readonly string[] | null;
   readonly offeringCategoryName?: string | null;
@@ -2125,18 +2198,29 @@ function mapBusinessProfileSnapshot(
   profile: BusinessProfileSnapshot | null | undefined,
   logo?: SchemaImageInput | null,
   branches?: readonly SchemaBranchInput[] | null,
+  structured?: {
+    readonly legalName?: string | null;
+    readonly privacyContact?: string | null;
+    readonly personRoleTitle?: string | null;
+    readonly affiliatedOrgName?: string | null;
+    readonly credentials?: IndonesianBusinessCredentials | null;
+  },
 ): SchemaBusinessProfileInput | null {
   if (!profile) {
     return null;
   }
   return {
     businessName: profile.businessName,
+    legalName: structured?.legalName ?? null,
     businessCategory: profile.businessCategory,
     description: profile.description ?? null,
     logo: logo ?? null,
     phone: profile.phone ?? null,
     whatsappE164: profile.whatsappE164 ?? null,
     publicEmail: profile.email ?? null,
+    privacyContact: structured?.privacyContact ?? null,
+    personRoleTitle: structured?.personRoleTitle ?? null,
+    affiliatedOrgName: structured?.affiliatedOrgName ?? null,
     address: profile.address ?? null,
     city: profile.city ?? null,
     province: profile.province ?? null,
@@ -2148,6 +2232,7 @@ function mapBusinessProfileSnapshot(
     holidayHours: profile.holidayHours ?? null,
     serviceAreas: profile.serviceAreas,
     socialLinks: profile.socialLinks,
+    credentials: structured?.credentials ?? null,
     branches: branches ?? null,
   };
 }
@@ -2170,6 +2255,13 @@ export function generatePublishedResourceSchema(
     input.businessProfile,
     input.businessLogo,
     input.businessBranches,
+    {
+      legalName: input.businessLegalName ?? null,
+      privacyContact: input.businessPrivacyContact ?? null,
+      personRoleTitle: input.businessPersonRoleTitle ?? null,
+      affiliatedOrgName: input.businessAffiliatedOrgName ?? null,
+      credentials: input.businessCredentials ?? null,
+    },
   );
 
   const resource: PublishedContentDto | null = input.resource;
@@ -2227,6 +2319,9 @@ export function generatePublishedResourceSchema(
       dateModified: resource.contentModifiedAt,
       authorName: input.articleAuthorName ?? post.authorName ?? null,
       authorRoleTitle: input.articleAuthorRoleTitle ?? null,
+      authorBio: input.articleAuthorBio ?? null,
+      authorAvatar: input.articleAuthorAvatar ?? null,
+      authorSameAs: input.articleAuthorSameAs ?? null,
       image: input.primaryImage ?? null,
       section: input.articleSection ?? null,
       tags: input.articleTags ?? null,

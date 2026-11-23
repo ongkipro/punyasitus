@@ -3,7 +3,8 @@ import { env } from "cloudflare:workers";
 import { classifySurfaceHost } from "@punyasitus/core";
 import "../themes/default/sections/sections.css";
 import "./layanan/_public-pages.css";
-import SEOHead from "../components/SEOHead.astro";
+import PublicSeoHead from "../components/seo/PublicSeoHead.astro";
+import { enrichPublicPageRouteResult } from "../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
@@ -12,6 +13,7 @@ import {
 } from "../core/public-routes.ts";
 import FloatingWhatsApp from "../themes/default/components/FloatingWhatsApp.astro";
 import Layout from "../themes/default/Layout.astro";
+import SectionBranches from "../themes/default/sections/SectionBranches.astro";
 import SectionRenderer from "../themes/default/sections/SectionRenderer.astro";
 import PublicNotFoundView from "./layanan/_PublicNotFoundView.astro";
 
@@ -117,6 +119,10 @@ if (tenantHomeResult.kind === "response") {
 }
 
 applyPublicRouteResponseMeta(Astro.response, tenantHomeResult.http);
+const enriched =
+  tenantHomeResult.kind === "page"
+    ? await enrichPublicPageRouteResult(tenantHomeResult, deps)
+    : null;
 
 // Tenant-host cookie isolation (TASK-003 / PLAN §3.2): pass ONLY `__Host-ps_consent` to Layout.
 const rawCookieHeader = Astro.request.headers.get("cookie") ?? "";
@@ -134,16 +140,21 @@ const consentCookieHeader =
     shell={tenantHomeResult.shell}
     pageTitle={undefined}
     pageDescription={tenantHomeResult.seoMetadata.description || undefined}
+    managedHead={true}
     layoutMode={tenantHomeResult.layoutMode}
     currentPath={tenantHomeResult.currentPath}
     initialCookieHeader={consentCookieHeader}
   >
-    <SEOHead
+    <PublicSeoHead
       slot="head"
-      metadata={tenantHomeResult.seoMetadata}
-      jsonLd={tenantHomeResult.schemaGraph ?? undefined}
-      omitTitle={true}
-      omitDescription={Boolean(tenantHomeResult.seoMetadata.description)}
+      metadata={enriched?.head.metadata ?? tenantHomeResult.seoMetadata}
+      schemaGraph={enriched?.head.schemaGraph ?? tenantHomeResult.schemaGraph}
+      seoAutopilotEnabled={enriched?.head.seoAutopilotEnabled ?? false}
+      publishedVerificationTokens={enriched?.head.publishedVerificationTokens ?? null}
+      blogEnabled={enriched?.head.blogEnabled ?? tenantHomeResult.shell.site.blogEnabled}
+      siteName={enriched?.head.siteName ?? tenantHomeResult.shell.site.title}
+      searchAppearance={enriched?.head.searchAppearance ?? null}
+      templateValues={enriched?.head.templateValues}
     />
 
     {tenantHomeResult.page && tenantHomeResult.page.sections.length > 0 ? (
@@ -159,8 +170,13 @@ const consentCookieHeader =
         primaryOrigin={tenantHomeResult.primaryOrigin}
         fallbackOfferings={tenantHomeResult.fallbackOfferings}
         fallbackPosts={tenantHomeResult.fallbackPosts}
+        fallbackBranches={enriched?.activeBranches ?? []}
+        businessName={tenantHomeResult.shell.business.name}
         fallbackBusiness={{
           address: tenantHomeResult.shell.business.address,
+          city: tenantHomeResult.shell.business.city,
+          province: tenantHomeResult.shell.business.province,
+          postalCode: tenantHomeResult.shell.business.postalCode,
           weekdayHours: tenantHomeResult.shell.business.weekdayHours,
           holidayHours: tenantHomeResult.shell.business.holidayHours,
           phone: tenantHomeResult.shell.business.phone,
@@ -194,6 +210,27 @@ const consentCookieHeader =
           </div>
         </div>
       </section>
+    )}
+
+    {enriched?.shouldRenderStandaloneBranches && (
+      <SectionBranches
+        id="lokasi-cabang"
+        businessName={tenantHomeResult.shell.business.name}
+        headOffice={{
+          name: tenantHomeResult.shell.business.name,
+          address: tenantHomeResult.shell.business.address,
+          city: tenantHomeResult.shell.business.city,
+          province: tenantHomeResult.shell.business.province,
+          postalCode: tenantHomeResult.shell.business.postalCode,
+          phone: tenantHomeResult.shell.business.phone,
+          whatsappE164: tenantHomeResult.shell.business.whatsappE164,
+          mapsUrl: tenantHomeResult.shell.business.mapsUrl,
+          weekdayHours: tenantHomeResult.shell.business.weekdayHours,
+          holidayHours: tenantHomeResult.shell.business.holidayHours,
+        }}
+        branches={enriched.activeBranches}
+        surfaceTone="muted"
+      />
     )}
 
     {tenantHomeResult.floatingWa.phone && (

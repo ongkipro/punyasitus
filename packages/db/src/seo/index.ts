@@ -1,11 +1,23 @@
 import { PLATFORM_HOSTS } from "@punyasitus/core";
+import type { BranchRecord } from "@punyasitus/core/branches/index";
+import { getOfferingPublicPath } from "@punyasitus/core/catalog/index";
 import {
   htmlToRestrictedRichTextDoc,
   type PageSnapshot,
   type PostSnapshot,
   type RestrictedRichTextDoc,
 } from "@punyasitus/core/content/index";
+import {
+  assertTenantR2Key,
+  type MediaVariantsManifest,
+} from "@punyasitus/core/media/index";
+import {
+  DEFAULT_MEDIA_CDN_ORIGIN,
+  validateTrustedMediaOrigin,
+} from "@punyasitus/core/og-generator";
+import type { SchemaImageInput } from "@punyasitus/core/schema-generator";
 import type { OfferingType, TenantStatus } from "@punyasitus/core/schemas";
+import { getTaxonomyPublicBasePath } from "@punyasitus/core/taxonomy/index";
 import {
   buildDirectoryListingCopyText,
   createDefaultTenantSeoEditorSettingsState,
@@ -46,6 +58,11 @@ import {
   type SiteVisibility,
   type VerifiedTenantHostInput,
 } from "@punyasitus/core/seo/index";
+import { listActiveBranchesForPublic } from "../branches/index.ts";
+import {
+  getPublishedStructuredBusinessProfile,
+  type PublishedStructuredBusinessProfileDto,
+} from "../business-profile/index.ts";
 import { bumpTenantCacheVersion, getPublishedResource } from "../publication/index.ts";
 import { computeEffectiveTenantStatus } from "../routing/index.ts";
 import { applyTenantSeoEditorMigration } from "./migrations.ts";
@@ -2764,4 +2781,371 @@ export async function updateResourceSeoOverrides(
     saasZone: input.saasZone,
     nowMs,
   });
+}
+
+// ---------------------------------------------------------------------------
+// 4. Published-Only Public SEO & Local Entity Context Loader (`TASK-053`, `REQ-054`)
+// ---------------------------------------------------------------------------
+
+export interface PublishedPublicSeoContext {
+  readonly seoAutopilotEnabled: boolean;
+  readonly publishedSettings: TenantSeoEditorSettingsState | null;
+  readonly structuredBusiness: PublishedStructuredBusinessProfileDto | null;
+  readonly activeBranches: readonly BranchRecord[];
+  readonly publishedLogo: SchemaImageInput | null;
+}
+
+async function resolvePublishedLogoSchemaImage(
+  tenantDb: D1Database,
+  logoMediaId: number | null | undefined,
+  options: { readonly tenantId?: string | null; readonly mediaBaseOrigin?: string | null },
+): Promise<SchemaImageInput | null> {
+  if (typeof logoMediaId !== "number" || !Number.isSafeInteger(logoMediaId) || logoMediaId < 1) {
+    return null;
+  }
+  const row = await tenantDb
+    .prepare(`SELECT * FROM media_items WHERE id = ? LIMIT 1`)
+    .bind(logoMediaId)
+    .first<{
+      readonly id: number;
+      readonly kind: string;
+      readonly r2_key: string;
+      readonly width: number | null;
+      readonly height: number | null;
+      readonly alt_text: string;
+      readonly variants_json: string | null;
+      readonly status: string;
+      readonly deleted_at?: number | null;
+    }>()
+    .catch(() => null);
+
+  if (!row || row.kind !== "image" || row.status !== "ready" || row.deleted_at) {
+    return null;
+  }
+
+  let preferredKey = row.r2_key;
+  let width = row.width ?? undefined;
+  let height = row.height ?? undefined;
+
+  if (row.variants_json) {
+    const parsed = safeJsonParse(row.variants_json) as Partial<MediaVariantsManifest> | null;
+    const chosen = parsed?.w640 ?? parsed?.master ?? parsed?.w1280 ?? parsed?.og ?? null;
+    if (chosen?.key) {
+      preferredKey = chosen.key;
+      width = chosen.width ?? width;
+      height = chosen.height ?? height;
+    }
+  }
+
+  if (!preferredKey) return null;
+
+  let verifiedKey = preferredKey.replace(/^\/+/, "");
+  if (options.tenantId) {
+    try {
+      verifiedKey = assertTenantR2Key(options.tenantId, preferredKey, ["media"]).replace(/^\/+/, "");
+    } catch {
+      return null;
+    }
+  }
+
+  const origin =
+    (options.mediaBaseOrigin ? validateTrustedMediaOrigin(options.mediaBaseOrigin) : null) ??
+    DEFAULT_MEDIA_CDN_ORIGIN;
+
+  return {
+    url: `${origin}/${verifiedKey}`,
+    width: width ?? null,
+    height: height ?? null,
+    alt: row.alt_text || null,
+    tenantId: options.tenantId ?? null,
+    status: "ready",
+  };
+}
+
+async function readSeoAutopilotEnabledStrict(tenantDb: D1Database): Promise<boolean> {
+  try {
+    const row = await tenantDb
+      .prepare(`SELECT enabled FROM installed_plugins WHERE plugin_id = ? LIMIT 1`)
+      .bind(SEO_AI_AUTOPILOT_PLUGIN_ID)
+      .first<{ readonly enabled: number }>();
+    if (!row) return true;
+    return Number(row.enabled) !== 0;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.toLowerCase().includes("no such table")) {
+      return true;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Public-safe loader returning ONLY published SEO autopilot settings, structured business
+ * profile (TASK-091), active branches (TASK-088), and verified published logo.
+ *
+ * Hard Invariant:
+ * - NEVER reads `draft_json` from `plg_seo_ai_autopilot__settings`,
+ *   `site_settings_grouped`, `business_profile_structured`, or `site_settings`.
+ * - Rethrows DB failures when checking `installed_plugins` so callers fail CLOSED
+ *   (`seoAutopilotEnabled: false`) instead of leaking autopilot head tags on DB outages.
+ */
+export async function getPublishedPublicSeoContext(
+  tenantDb: D1Database,
+  options: {
+    readonly tenantId?: string | null;
+    readonly mediaBaseOrigin?: string | null;
+  } = {},
+): Promise<PublishedPublicSeoContext> {
+  const seoAutopilotEnabled = await readSeoAutopilotEnabledStrict(tenantDb);
+
+  const [hasSeoTable, hasGroupedTable, structuredBusiness, activeBranches] = await Promise.all([
+    tableExists(tenantDb, SEO_SETTINGS_TABLE),
+    tableExists(tenantDb, "site_settings_grouped"),
+    getPublishedStructuredBusinessProfile(tenantDb).catch(() => null),
+    listActiveBranchesForPublic(tenantDb).catch(() => [] as readonly BranchRecord[]),
+  ]);
+
+  let publishedSettings: TenantSeoEditorSettingsState | null = null;
+
+  if (hasSeoTable) {
+    const row = await tenantDb
+      .prepare(`SELECT published_json FROM ${SEO_SETTINGS_TABLE} WHERE id = 1 LIMIT 1`)
+      .first<{ readonly published_json: string | null }>()
+      .catch(() => null);
+    if (row?.published_json) {
+      publishedSettings = normalizeStoredSeoSettingsState(safeJsonParse(row.published_json));
+    }
+  }
+
+  if (!publishedSettings && hasGroupedTable) {
+    const groupedRow = await tenantDb
+      .prepare(`SELECT published_json FROM site_settings_grouped WHERE id = 1 LIMIT 1`)
+      .first<{ readonly published_json: string | null }>()
+      .catch(() => null);
+    if (groupedRow?.published_json) {
+      const pubParsed = safeJsonParse(groupedRow.published_json) as Record<string, unknown> | null;
+      const pubSeo =
+        pubParsed?.seo && typeof pubParsed.seo === "object"
+          ? (pubParsed.seo as Record<string, unknown>)
+          : null;
+      if (pubSeo) {
+        const base = createDefaultTenantSeoEditorSettingsState();
+        publishedSettings = {
+          ...base,
+          verificationTokens: {
+            google: sanitizeSeededToken("google", pubSeo.googleSiteVerification),
+            bing: sanitizeSeededToken("bing", pubSeo.bingSiteVerification),
+            yandex: null,
+          },
+        };
+      }
+    }
+  }
+
+  const publishedLogo = await resolvePublishedLogoSchemaImage(
+    tenantDb,
+    structuredBusiness?.siteSettings.logoMediaId ?? null,
+    options,
+  );
+
+  return {
+    seoAutopilotEnabled,
+    publishedSettings,
+    structuredBusiness,
+    activeBranches,
+    publishedLogo,
+  };
+}
+
+function extractPublishedPostTaxonomyIds(
+  rawJson: string | null | undefined,
+): { readonly categoryIds: readonly number[]; readonly tagIds: readonly number[] } {
+  const parsed = safeJsonParse(rawJson);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { categoryIds: [], tagIds: [] };
+  }
+  const obj = parsed as Record<string, unknown>;
+  const data =
+    obj.data && typeof obj.data === "object" && !Array.isArray(obj.data)
+      ? (obj.data as Record<string, unknown>)
+      : obj;
+
+  const categoryIds = new Set<number>();
+  if (typeof data.primaryCategoryId === "number" && Number.isSafeInteger(data.primaryCategoryId)) {
+    categoryIds.add(data.primaryCategoryId);
+  }
+  if (Array.isArray(data.categoryIds)) {
+    for (const v of data.categoryIds) {
+      if (typeof v === "number" && Number.isSafeInteger(v)) categoryIds.add(v);
+    }
+  }
+
+  const tagIds = new Set<number>();
+  if (Array.isArray(data.tagIds)) {
+    for (const v of data.tagIds) {
+      if (typeof v === "number" && Number.isSafeInteger(v)) tagIds.add(v);
+    }
+  }
+
+  return { categoryIds: Array.from(categoryIds), tagIds: Array.from(tagIds) };
+}
+
+function extractPublishedOfferingCategoryIds(rawJson: string | null | undefined): readonly number[] {
+  const parsed = safeJsonParse(rawJson);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+  const obj = parsed as Record<string, unknown>;
+  const data =
+    obj.data && typeof obj.data === "object" && !Array.isArray(obj.data)
+      ? (obj.data as Record<string, unknown>)
+      : obj;
+  if (!Array.isArray(data.categoryIds)) return [];
+  const out = new Set<number>();
+  for (const v of data.categoryIds) {
+    if (typeof v === "number" && Number.isSafeInteger(v)) out.add(v);
+  }
+  return Array.from(out);
+}
+
+/**
+ * Loads the strict set of currently-published, enabled, non-empty tenant-local public URL paths
+ * for internal-link verification and audit (`PLAN §15.4`, `REQ-054`, `TASK-053`):
+ * - `/kebijakan-privasi` is included ONLY if a published page with slug `kebijakan-privasi` exists.
+ * - `/blog`, `/blog/{slug}`, and blog taxonomy archives are included ONLY when `blogEnabled === true`
+ *   and (for taxonomy archives) `>= 1` published post references that taxonomy.
+ * - Catalog base paths (`/layanan`, `/produk`, `/tour`, `/kendaraan`), offering details, and
+ *   offering category archives are included ONLY when `catalogEnabled === true` AND matching
+ *   published offerings exist (`>= 1` published offering for the offering type / taxonomy).
+ */
+export async function loadPublishedTenantInternalLinkTargets(
+  tenantDb: D1Database,
+): Promise<ReadonlySet<string>> {
+  const paths = new Set<string>(["/"]);
+
+  const [publishedSite, fallbackSiteRow, pagesRes, postsRes, offeringsRes, taxonomiesRes] =
+    await Promise.all([
+      getPublishedResource(tenantDb, { resourceType: "site_settings", resourceId: 1 }).catch(
+        () => null,
+      ),
+      tenantDb
+        .prepare(`SELECT blog_enabled, catalog_enabled FROM site_settings WHERE id = 1 LIMIT 1`)
+        .first<{ readonly blog_enabled: number; readonly catalog_enabled: number }>()
+        .catch(() => null),
+      tenantDb
+        .prepare(
+          `SELECT slug, is_homepage FROM pages
+           WHERE status = 'published' AND deleted_at IS NULL AND published_sections_json IS NOT NULL`,
+        )
+        .all<{ readonly slug: string; readonly is_homepage: number }>()
+        .catch(() => ({ results: [] })),
+      tenantDb
+        .prepare(
+          `SELECT slug, published_body_json FROM posts
+           WHERE status = 'published' AND deleted_at IS NULL AND published_body_json IS NOT NULL`,
+        )
+        .all<{ readonly slug: string; readonly published_body_json: string | null }>()
+        .catch(() => ({ results: [] })),
+      tenantDb
+        .prepare(
+          `SELECT offering_type, slug, published_snapshot_json FROM offerings
+           WHERE status = 'published' AND deleted_at IS NULL AND published_snapshot_json IS NOT NULL`,
+        )
+        .all<{
+          readonly offering_type: OfferingType;
+          readonly slug: string;
+          readonly published_snapshot_json: string | null;
+        }>()
+        .catch(() => ({ results: [] })),
+      tenantDb
+        .prepare(`SELECT id, taxonomy_type, offering_type, slug FROM taxonomies`)
+        .all<{
+          readonly id: number;
+          readonly taxonomy_type: "post_category" | "post_tag" | "offering_category";
+          readonly offering_type: OfferingType | null;
+          readonly slug: string;
+        }>()
+        .catch(() => ({ results: [] })),
+    ]);
+
+  const blogEnabled =
+    publishedSite?.data.blogEnabled ??
+    (fallbackSiteRow ? Number(fallbackSiteRow.blog_enabled) !== 0 : true);
+  const catalogEnabled =
+    publishedSite?.data.catalogEnabled ??
+    (fallbackSiteRow ? Number(fallbackSiteRow.catalog_enabled) !== 0 : true);
+
+  for (const row of pagesRes.results) {
+    if (Number(row.is_homepage) === 1) {
+      paths.add("/");
+    } else if (row.slug) {
+      paths.add(`/${row.slug.toLowerCase()}`);
+    }
+  }
+
+  const usedPostCategoryIds = new Set<number>();
+  const usedPostTagIds = new Set<number>();
+  if (blogEnabled) {
+    paths.add("/blog");
+    for (const row of postsRes.results) {
+      if (row.slug) paths.add(`/blog/${row.slug.toLowerCase()}`);
+      const taxIds = extractPublishedPostTaxonomyIds(row.published_body_json);
+      for (const cid of taxIds.categoryIds) usedPostCategoryIds.add(cid);
+      for (const tid of taxIds.tagIds) usedPostTagIds.add(tid);
+    }
+  }
+
+  const usedOfferingCatIdsByType = new Map<OfferingType, Set<number>>();
+  if (catalogEnabled) {
+    for (const row of offeringsRes.results) {
+      const base =
+        row.offering_type === "service"
+          ? "/layanan"
+          : row.offering_type === "product"
+            ? "/produk"
+            : row.offering_type === "tour"
+              ? "/tour"
+              : "/kendaraan";
+      paths.add(base);
+      paths.add(getOfferingPublicPath(row.offering_type, row.slug.toLowerCase()));
+
+      const catIds = extractPublishedOfferingCategoryIds(row.published_snapshot_json);
+      if (catIds.length > 0) {
+        let bucket = usedOfferingCatIdsByType.get(row.offering_type);
+        if (!bucket) {
+          bucket = new Set<number>();
+          usedOfferingCatIdsByType.set(row.offering_type, bucket);
+        }
+        for (const cid of catIds) bucket.add(cid);
+      }
+    }
+  }
+
+  for (const row of taxonomiesRes.results) {
+    const taxId = Number(row.id);
+    const slug = row.slug?.toLowerCase();
+    if (!slug) continue;
+
+    if (row.taxonomy_type === "post_category") {
+      if (blogEnabled && usedPostCategoryIds.has(taxId)) {
+        paths.add(getTaxonomyPublicBasePath("post_category", slug));
+      }
+    } else if (row.taxonomy_type === "post_tag") {
+      if (blogEnabled && usedPostTagIds.has(taxId)) {
+        paths.add(getTaxonomyPublicBasePath("post_tag", slug));
+      }
+    } else if (row.taxonomy_type === "offering_category" && catalogEnabled) {
+      if (row.offering_type) {
+        if (usedOfferingCatIdsByType.get(row.offering_type)?.has(taxId)) {
+          paths.add(getTaxonomyPublicBasePath("offering_category", slug, row.offering_type));
+        }
+      } else {
+        for (const [offeringType, usedIds] of usedOfferingCatIdsByType.entries()) {
+          if (usedIds.has(taxId)) {
+            paths.add(getTaxonomyPublicBasePath("offering_category", slug, offeringType));
+          }
+        }
+      }
+    }
+  }
+
+  return paths;
 }

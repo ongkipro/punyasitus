@@ -2,7 +2,8 @@
 import { env } from "cloudflare:workers";
 import "../themes/default/sections/sections.css";
 import "./layanan/_public-pages.css";
-import SEOHead from "../components/SEOHead.astro";
+import PublicSeoHead from "../components/seo/PublicSeoHead.astro";
+import { enrichPublicPageRouteResult } from "../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
@@ -10,7 +11,9 @@ import {
 } from "../core/public-routes.ts";
 import FloatingWhatsApp from "../themes/default/components/FloatingWhatsApp.astro";
 import Layout from "../themes/default/Layout.astro";
+import SectionBranches from "../themes/default/sections/SectionBranches.astro";
 import SectionRenderer from "../themes/default/sections/SectionRenderer.astro";
+import PublicBreadcrumbs from "./layanan/_PublicBreadcrumbs.astro";
 import PublicNotFoundView from "./layanan/_PublicNotFoundView.astro";
 
 const deps = buildPublicRouteDepsFromAstro(
@@ -26,6 +29,8 @@ if (result.kind === "response") {
 }
 
 applyPublicRouteResponseMeta(Astro.response, result.http);
+const enriched =
+  result.kind === "page" ? await enrichPublicPageRouteResult(result, deps) : null;
 ---
 
 {result.kind === "not_found" ? (
@@ -35,17 +40,30 @@ applyPublicRouteResponseMeta(Astro.response, result.http);
     shell={result.shell}
     pageTitle={result.isHomepage ? undefined : result.pageTitle}
     pageDescription={result.seoMetadata.description || undefined}
+    managedHead={true}
     layoutMode={result.layoutMode}
     currentPath={result.currentPath}
     initialCookieHeader={Astro.request.headers.get("cookie")}
   >
-    <SEOHead
+    <PublicSeoHead
       slot="head"
-      metadata={result.seoMetadata}
-      jsonLd={result.schemaGraph ?? undefined}
-      omitTitle={true}
-      omitDescription={Boolean(result.seoMetadata.description)}
+      metadata={enriched?.head.metadata ?? result.seoMetadata}
+      schemaGraph={enriched?.head.schemaGraph ?? result.schemaGraph}
+      seoAutopilotEnabled={enriched?.head.seoAutopilotEnabled ?? false}
+      publishedVerificationTokens={enriched?.head.publishedVerificationTokens ?? null}
+      blogEnabled={enriched?.head.blogEnabled ?? result.shell.site.blogEnabled}
+      siteName={enriched?.head.siteName ?? result.shell.site.title}
+      searchAppearance={enriched?.head.searchAppearance ?? null}
+      templateValues={enriched?.head.templateValues}
     />
+
+    {!result.isHomepage && result.layoutMode !== "focused" && result.breadcrumbs.length > 0 && (
+      <div class="ps-page-breadcrumbs-bar">
+        <div class="ps-container">
+          <PublicBreadcrumbs items={result.breadcrumbs} />
+        </div>
+      </div>
+    )}
 
     {result.page && result.page.sections.length > 0 ? (
       <SectionRenderer
@@ -60,8 +78,13 @@ applyPublicRouteResponseMeta(Astro.response, result.http);
         primaryOrigin={result.primaryOrigin}
         fallbackOfferings={result.fallbackOfferings}
         fallbackPosts={result.fallbackPosts}
+        fallbackBranches={enriched?.activeBranches ?? []}
+        businessName={result.shell.business.name}
         fallbackBusiness={{
           address: result.shell.business.address,
+          city: result.shell.business.city,
+          province: result.shell.business.province,
+          postalCode: result.shell.business.postalCode,
           weekdayHours: result.shell.business.weekdayHours,
           holidayHours: result.shell.business.holidayHours,
           phone: result.shell.business.phone,
@@ -95,6 +118,27 @@ applyPublicRouteResponseMeta(Astro.response, result.http);
           </div>
         </div>
       </section>
+    )}
+
+    {enriched?.shouldRenderStandaloneBranches && (
+      <SectionBranches
+        id="lokasi-cabang"
+        businessName={result.shell.business.name}
+        headOffice={{
+          name: result.shell.business.name,
+          address: result.shell.business.address,
+          city: result.shell.business.city,
+          province: result.shell.business.province,
+          postalCode: result.shell.business.postalCode,
+          phone: result.shell.business.phone,
+          whatsappE164: result.shell.business.whatsappE164,
+          mapsUrl: result.shell.business.mapsUrl,
+          weekdayHours: result.shell.business.weekdayHours,
+          holidayHours: result.shell.business.holidayHours,
+        }}
+        branches={enriched.activeBranches}
+        surfaceTone="muted"
+      />
     )}
 
     {result.floatingWa.phone && (

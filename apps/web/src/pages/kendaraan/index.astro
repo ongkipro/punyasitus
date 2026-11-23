@@ -1,5 +1,6 @@
 ---
 import { env } from "cloudflare:workers";
+import { enrichPublicOfferingListingResult } from "../../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
@@ -21,10 +22,14 @@ if (result.kind === "response") {
 }
 
 applyPublicRouteResponseMeta(Astro.response, result.http);
+const enriched =
+  result.kind === "offering_listing"
+    ? await enrichPublicOfferingListingResult(result, deps)
+    : null;
 ---
 
 {result.kind === "not_found" ? (
   <PublicNotFoundView result={result} />
 ) : (
-  <OfferingListingView result={result} />
+  <OfferingListingView result={result} headProps={enriched?.head ?? null} />
 )}

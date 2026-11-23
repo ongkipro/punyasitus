@@ -2,7 +2,8 @@
 import { env } from "cloudflare:workers";
 import "../../themes/default/sections/sections.css";
 import "../layanan/_public-pages.css";
-import SEOHead from "../../components/SEOHead.astro";
+import PublicSeoHead from "../../components/seo/PublicSeoHead.astro";
+import { enrichPublicBlogListingResult } from "../../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
@@ -25,6 +26,8 @@ if (result.kind === "response") {
 }
 
 applyPublicRouteResponseMeta(Astro.response, result.http);
+const enriched =
+  result.kind === "blog_listing" ? await enrichPublicBlogListingResult(result, deps) : null;
 ---
 
 {result.kind === "not_found" ? (
@@ -34,15 +37,20 @@ applyPublicRouteResponseMeta(Astro.response, result.http);
     shell={result.shell}
     pageTitle={result.pageTitle}
     pageDescription={result.seoMetadata.description || undefined}
+    managedHead={true}
     currentPath={result.currentPath}
     initialCookieHeader={Astro.request.headers.get("cookie")}
   >
-    <SEOHead
+    <PublicSeoHead
       slot="head"
-      metadata={result.seoMetadata}
-      jsonLd={result.schemaGraph ?? undefined}
-      omitTitle={true}
-      omitDescription={Boolean(result.seoMetadata.description)}
+      metadata={enriched?.head.metadata ?? result.seoMetadata}
+      schemaGraph={enriched?.head.schemaGraph ?? result.schemaGraph}
+      seoAutopilotEnabled={enriched?.head.seoAutopilotEnabled ?? false}
+      publishedVerificationTokens={enriched?.head.publishedVerificationTokens ?? null}
+      blogEnabled={enriched?.head.blogEnabled ?? result.shell.site.blogEnabled}
+      siteName={enriched?.head.siteName ?? result.shell.site.title}
+      searchAppearance={enriched?.head.searchAppearance ?? null}
+      templateValues={enriched?.head.templateValues}
     />
 
     <section class="ps-route-hero" data-testid="blog-listing-hero">

@@ -1,5 +1,6 @@
 ---
 import "./sections.css";
+import type { PublicBranchViewInput } from "@punyasitus/core/branches/index";
 import type {
   BlogLatestSectionConfig,
   ContactLocationSectionConfig,
@@ -19,6 +20,7 @@ import {
   type SectionOfferingItem,
 } from "../../../core/section-registry.ts";
 import SectionBlogLatest from "./SectionBlogLatest.astro";
+import SectionBranches from "./SectionBranches.astro";
 import SectionContactLocation from "./SectionContactLocation.astro";
 import SectionCtaBanner from "./SectionCtaBanner.astro";
 import SectionFaq from "./SectionFaq.astro";
@@ -50,8 +52,13 @@ export interface Props {
   readonly primaryOrigin?: string;
   readonly fallbackOfferings?: readonly SectionOfferingItem[];
   readonly fallbackPosts?: BlogLatestSectionConfig["posts"];
+  readonly fallbackBranches?: readonly PublicBranchViewInput[];
+  readonly businessName?: string | null;
   readonly fallbackBusiness?: {
     readonly address?: string | null;
+    readonly city?: string | null;
+    readonly province?: string | null;
+    readonly postalCode?: string | null;
     readonly weekdayHours?: string | null;
     readonly holidayHours?: string | null;
     readonly phone?: string | null;
@@ -73,6 +80,8 @@ const {
   primaryOrigin = "https://situsku.click",
   fallbackOfferings = [],
   fallbackPosts = [],
+  fallbackBranches = [],
+  businessName = null,
   fallbackBusiness,
 } = Astro.props;
 
@@ -204,18 +213,66 @@ const resolvedHeroVariant: HeroVariant =
               isFirstSection={isFirstSection}
             />
           );
-        case "SectionContactLocation":
+        case "SectionContactLocation": {
+          const contactConfig = section.config as ContactLocationSectionConfig;
+          if (section.type === "branches") {
+            const resolvedBranches: readonly PublicBranchViewInput[] =
+              fallbackBranches.length > 0
+                ? fallbackBranches
+                : contactConfig.branches.map((branch, idx) => ({
+                    id: idx + 1,
+                    name: branch.name,
+                    address: branch.address,
+                    whatsappE164: branch.whatsappPhone ?? null,
+                    mapsUrl: branch.mapsUrl ?? null,
+                    weekdayHours: branch.weekdayHours ?? null,
+                    holidayHours: branch.holidayHours ?? null,
+                    active: true,
+                    sortOrder: idx,
+                  }));
+            return (
+              <SectionBranches
+                id={section.id}
+                eyebrow={contactConfig.eyebrow}
+                heading={contactConfig.heading}
+                subheading={contactConfig.subheading}
+                businessName={businessName}
+                headOffice={
+                  fallbackBusiness
+                    ? {
+                        name: businessName,
+                        address: contactConfig.address ?? fallbackBusiness.address,
+                        city: fallbackBusiness.city,
+                        province: fallbackBusiness.province,
+                        postalCode: fallbackBusiness.postalCode,
+                        phone: contactConfig.phone ?? fallbackBusiness.phone,
+                        whatsappE164: contactConfig.whatsappPhone ?? fallbackBusiness.whatsappE164,
+                        mapsUrl: contactConfig.mapsUrl ?? fallbackBusiness.mapsUrl,
+                        weekdayHours: contactConfig.weekdayHours ?? fallbackBusiness.weekdayHours,
+                        holidayHours: contactConfig.holidayHours ?? fallbackBusiness.holidayHours,
+                      }
+                    : null
+                }
+                branches={resolvedBranches}
+                surfaceTone={surfaceTone}
+                isPreview={assembled.isPreview}
+                isFirstSection={isFirstSection}
+                mapsLabel={contactConfig.mapsLabel}
+              />
+            );
+          }
           return (
             <SectionContactLocation
               id={section.id}
               sectionType={section.type}
-              config={section.config as ContactLocationSectionConfig}
+              config={contactConfig}
               fallbackBusiness={fallbackBusiness}
               surfaceTone={surfaceTone}
               isPreview={assembled.isPreview}
               isFirstSection={isFirstSection}
             />
           );
+        }
       }
     })}
   </div>
