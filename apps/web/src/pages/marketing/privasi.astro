@@ -1,0 +1,64 @@
+---
+import { env } from "cloudflare:workers";
+import { createMarketingHostRedirectResponse } from "@punyasitus/core/marketing/index";
+import { loadLiveMarketingPricing } from "@punyasitus/db/marketing/index";
+import MarketingLayout from "../../components/marketing/MarketingLayout.astro";
+
+const redirectRes = createMarketingHostRedirectResponse(Astro.request, {
+  platformDomain: env.PLATFORM_DOMAIN,
+});
+if (redirectRes) {
+  return redirectRes;
+}
+
+Astro.response.headers.set("X-PunyaSitus-Surface", "marketing");
+const pricing = await loadLiveMarketingPricing(env.PLATFORM_DB);
+---
+
+<MarketingLayout
+  title="Kebijakan Privasi & Perlindungan Data Pribadi (UU PDP)"
+  description="Kebijakan privasi PunyaSitus mengacu pada Undang-Undang Nomor 27 Tahun 2022 tentang Pelindungan Data Pribadi (UU PDP)."
+  canonicalPath="/marketing/privasi"
+  currentNav="legal"
+  salesWhatsapp={pricing.salesWhatsapp}
+  supportEmail={pricing.supportEmail}
+  supportHours={pricing.supportHours}
+>
+  <section class="mk-section" data-testid="legal-privacy-page">
+    <div class="mk-container">
+      <article class="mk-prose">
+        <span class="mk-tag">Kepatuhan UU PDP No. 27 Tahun 2022</span>
+        <h1>Kebijakan Privasi PunyaSitus</h1>
+        <p>
+          PunyaSitus menghormati privasi pengunjung situs pemasaran, pemilik situs, anggota tim, serta pengunjung akhir situs pelanggan sesuai prinsip Undang-Undang Nomor 27 Tahun 2022 tentang Pelindungan Data Pribadi (UU PDP).
+        </p>
+
+        <h2>1. Kunjungan Tanpa Cookie Iklan di punyasitus.com</h2>
+        <p>
+          Halaman pemasaran <strong>punyasitus.com</strong> tidak memuat skrip pelacak iklan pihak ketiga dan tidak menetapkan cookie pelacakan pengunjung. Statistik konversi funnel (kunjungan, lihat demo, mulai pendaftaran, hingga pembayaran pertama) dicatat hanya sebagai penghitung agregat harian tanpa alamat IP, tanpa sidik jari perangkat, dan tanpa data pribadi.
+        </p>
+
+        <h2>2. Data Akun &amp; Langganan</h2>
+        <ul>
+          <li>Saat mendaftar di <strong>app.punyasitus.com</strong>, kami menyimpan nama, alamat email terverifikasi, kredensial masuk (atau identitas Google OAuth), serta catatan transaksi pembayaran untuk penerbitan kuitansi layanan bernomor.</li>
+          <li>Cookie sesi autentikasi diisolasi ketat pada host masing-masing (<code>__Host-</code>) dan tidak pernah dibagikan lintas situs pelanggan.</li>
+        </ul>
+
+        <h2>3. Pemisahan Data Antar Situs (Isolasi Tenant)</h2>
+        <p>
+          Setiap situs web pelanggan memiliki ruang penyimpanan basis data terisolasi tersendiri. Operator platform tidak melakukan penyamaran akun (impersonation) ke dalam dashboard pelanggan dan setiap tindakan administratif tercatat pada log audit append-only.
+        </p>
+
+        <h2>4. Retensi, Ekspor &amp; Penghapusan Data</h2>
+        <p>
+          Pemilik situs dapat mengekspor data pesan masuk (CSV) kapan saja, termasuk saat situs dalam status terkunci atau ditangguhkan sebelum tenggat penghapusan (H+45 untuk situs berbayar atau 30 hari setelah uji coba berakhir). Catatan akuntansi/kuitansi dan log audit dipertahankan sesuai kewajiban hukum dengan penghapusan identitas pribadi yang tidak lagi diperlukan.
+        </p>
+
+        <h2>5. Hak Subjek Data &amp; Kontak Privasi</h2>
+        <p>
+          Anda berhak meminta akses, perbaikan, atau penghapusan data pribadi akun Anda melalui email <a href={`mailto:${pricing.supportEmail}`}>{pricing.supportEmail}</a>.
+        </p>
+      </article>
+    </div>
+  </section>
+</MarketingLayout>

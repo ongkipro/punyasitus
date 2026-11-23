@@ -1,0 +1,49 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  createMarketingHostRedirectResponse,
+  getDemoTenantBySlug,
+  guardDemoReadOnlyMethod,
+} from "@punyasitus/core/marketing/index";
+import DemoShowcaseLayout from "../../../components/marketing/DemoShowcaseLayout.astro";
+
+// 1. Strictly enforce `www -> 308 apex` canonical redirect first.
+const redirectRes = createMarketingHostRedirectResponse(Astro.request, {
+  platformDomain: env.PLATFORM_DOMAIN,
+});
+if (redirectRes) {
+  return redirectRes;
+}
+
+// 2. Strictly block all mutations (`POST`/`PUT`/`PATCH`/`DELETE`) with `403 DEMO_READ_ONLY` and zero DB writes.
+const mutationBlocked = guardDemoReadOnlyMethod(Astro.request);
+if (mutationBlocked) {
+  return mutationBlocked;
+}
+
+// 3. Every demo response ALWAYS carries `X-Robots-Tag: noindex, nofollow`.
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+Astro.response.headers.set("X-PunyaSitus-Surface", "marketing");
+Astro.response.headers.set("X-PunyaSitus-Demo", "read-only");
+Astro.response.headers.set("Cache-Control", "public, max-age=300");
+
+const slug = Astro.params.slug ?? "";
+const demo = getDemoTenantBySlug(slug);
+
+if (!demo) {
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>Demo Tema Tidak Ditemukan — PunyaSitus</title></head><body><main><h1>Demo Tema Tidak Ditemukan</h1><p>Tema demo yang diminta tidak tersedia. Silakan kembali ke <a href="/marketing/demo">Galeri 6 Tema Demo</a>.</p></main></body></html>`,
+    {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+        "X-PunyaSitus-Surface": "marketing",
+      },
+    },
+  );
+}
+---
+
+<DemoShowcaseLayout demo={demo} />

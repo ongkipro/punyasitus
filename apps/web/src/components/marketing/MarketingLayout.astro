@@ -1,0 +1,248 @@
+---
+import "./marketing.css";
+import {
+  DEFAULT_MARKETING_CONTACT,
+  MARKETING_URLS,
+  safeJsonLdStringify,
+  type DemoThemeSlug,
+  type FunnelStage,
+} from "@punyasitus/core/marketing/index";
+
+export interface Props {
+  title: string;
+  description: string;
+  canonicalPath: string;
+  noindex?: boolean;
+  currentNav?: "home" | "pricing" | "demo" | "legal";
+  funnelStage?: FunnelStage;
+  funnelThemeSlug?: DemoThemeSlug | "";
+  salesWhatsapp?: string;
+  supportEmail?: string;
+  supportHours?: string;
+}
+
+const {
+  title,
+  description,
+  canonicalPath,
+  noindex = false,
+  currentNav = "home",
+  funnelStage,
+  funnelThemeSlug = "",
+  salesWhatsapp = DEFAULT_MARKETING_CONTACT.salesWhatsapp,
+  supportEmail = DEFAULT_MARKETING_CONTACT.supportEmail,
+  supportHours = DEFAULT_MARKETING_CONTACT.supportHours,
+} = Astro.props;
+
+const canonicalUrl = `${MARKETING_URLS.apexOrigin}${canonicalPath.startsWith("/") ? canonicalPath : `/${canonicalPath}`}`;
+const waHref = `https://wa.me/${encodeURIComponent(salesWhatsapp)}?text=${encodeURIComponent(
+  "Halo tim PunyaSitus, saya ingin konsultasi pembuatan website bisnis.",
+)}`;
+
+const navItems = [
+  { key: "home", href: "/marketing", label: "Beranda" },
+  { key: "demo", href: "/marketing/demo", label: "Demo 6 Tema" },
+  { key: "pricing", href: "/marketing/harga", label: "Harga" },
+] as const;
+
+const organizationSchema = {
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  name: "PunyaSitus",
+  applicationCategory: "BusinessApplication",
+  operatingSystem: "Web",
+  url: MARKETING_URLS.apexOrigin,
+  inLanguage: "id-ID",
+  description,
+};
+---
+
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title} — PunyaSitus</title>
+    <meta name="description" content={description} />
+    <meta name="robots" content={noindex ? "noindex, nofollow" : "index, follow"} />
+    <link rel="canonical" href={canonicalUrl} />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="id_ID" />
+    <meta property="og:site_name" content="PunyaSitus" />
+    <meta property="og:title" content={`${title} — PunyaSitus`} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonicalUrl} />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23176b51'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='700' fill='%23ffffff'%3EPS%3C/text%3E%3C/svg%3E"
+    />
+    {!noindex && (
+      <script type="application/ld+json" set:html={safeJsonLdStringify(organizationSchema)} />
+    )}
+  </head>
+  <body
+    data-funnel-stage={funnelStage ?? ""}
+    data-funnel-theme={funnelThemeSlug}
+  >
+    <a class="mk-skip-link" href="#konten-utama">Lompat ke konten utama</a>
+
+    <header class="mk-header">
+      <div class="mk-container mk-header-inner">
+        <a class="mk-brand" href="/marketing" aria-label="Beranda PunyaSitus">
+          <span class="mk-brand-mark" aria-hidden="true">PS</span>
+          <span>PunyaSitus</span>
+        </a>
+
+        <nav class="mk-nav-desktop" aria-label="Navigasi utama">
+          {navItems.map((item) => (
+            <a
+              href={item.href}
+              class="mk-nav-link"
+              aria-current={currentNav === item.key ? "page" : undefined}
+            >
+              {item.label}
+            </a>
+          ))}
+        </nav>
+
+        <div class="mk-header-actions">
+          <a class="mk-nav-link" href={MARKETING_URLS.appLogin}>Masuk</a>
+          <a
+            class="mk-btn mk-btn-primary"
+            href={MARKETING_URLS.appSignup}
+            data-funnel-cta="signup_start"
+          >
+            Coba Gratis 7 Hari
+          </a>
+        </div>
+
+        <details class="mk-mobile-nav">
+          <summary aria-label="Buka menu navigasi">Menu</summary>
+          <nav class="mk-mobile-panel" aria-label="Navigasi seluler">
+            {navItems.map((item) => (
+              <a
+                href={item.href}
+                aria-current={currentNav === item.key ? "page" : undefined}
+              >
+                {item.label}
+              </a>
+            ))}
+            <a href={MARKETING_URLS.appLogin}>Masuk Dashboard</a>
+            <a
+              class="mk-btn mk-btn-primary"
+              href={MARKETING_URLS.appSignup}
+              data-funnel-cta="signup_start"
+            >
+              Coba Gratis 7 Hari
+            </a>
+          </nav>
+        </details>
+      </div>
+    </header>
+
+    <main id="konten-utama" class="mk-main">
+      <slot />
+    </main>
+
+    <footer class="mk-footer">
+      <div class="mk-container">
+        <div class="mk-footer-grid">
+          <div style="display:flex;flex-direction:column;gap:0.65rem;">
+            <a class="mk-brand" href="/marketing">
+              <span class="mk-brand-mark" aria-hidden="true">PS</span>
+              <span>PunyaSitus</span>
+            </a>
+            <p style="color:var(--mk-ink-muted);font-size:0.9375rem;max-width:40ch;">
+              Platform website bisnis cepat tanpa beban teknis untuk perusahaan B2B, jasa profesional, biro perjalanan, katalog produk, kuliner, dan showroom kendaraan di Indonesia.
+            </p>
+            <p style="color:var(--mk-ink-muted);font-size:0.875rem;">
+              Dukungan: <a href={`mailto:${supportEmail}`}>{supportEmail}</a> · {supportHours}
+            </p>
+          </div>
+
+          <div>
+            <h3 style="font-size:0.9375rem;">Produk &amp; Demo</h3>
+            <ul class="mk-footer-links">
+              <li><a href="/marketing">Beranda</a></li>
+              <li><a href="/marketing/harga">Harga &amp; Paket</a></li>
+              <li><a href="/marketing/demo">Galeri 6 Tema Demo</a></li>
+              <li><a href={waHref} rel="noopener noreferrer" target="_blank">Konsultasi WhatsApp</a></li>
+            </ul>
+          </div>
+
+          <div>
+            <h3 style="font-size:0.9375rem;">Legal &amp; Kebijakan</h3>
+            <ul class="mk-footer-links">
+              <li><a href="/marketing/syarat-ketentuan">Syarat &amp; Ketentuan</a></li>
+              <li><a href="/marketing/privasi">Kebijakan Privasi (UU PDP)</a></li>
+              <li><a href="/marketing/penggunaan-wajar">Kebijakan Penggunaan Wajar</a></li>
+              <li><a href="/marketing/pengembalian-dana">Kebijakan Pengembalian Dana</a></li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="mk-footer-bottom">
+          <span>© {new Date().getUTCFullYear()} PunyaSitus (punyasitus.com). Harga belum termasuk PPN (non-PKP).</span>
+          <span>Tanpa cookie iklan pihak ketiga.</span>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      const body = document.body;
+      const stage = body?.dataset?.funnelStage;
+      const themeSlug = body?.dataset?.funnelTheme || "";
+
+      function resolveChannel() {
+        try {
+          const params = new URLSearchParams(window.location.search);
+          const utm = params.get("utm_source");
+          if (utm) return utm.slice(0, 32);
+          if (params.get("ref")) return "referral";
+          if (document.referrer) {
+            const refHost = new URL(document.referrer).hostname.toLowerCase();
+            if (refHost && refHost !== window.location.hostname.toLowerCase()) {
+              return refHost.slice(0, 32);
+            }
+          }
+        } catch {
+          // ignore malformed referrer
+        }
+        return "direct";
+      }
+
+      function sendFunnel(targetStage: string, targetTheme: string) {
+        try {
+          void fetch("/marketing/api/funnel", {
+            method: "POST",
+            credentials: "omit",
+            keepalive: true,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              stage: targetStage,
+              sourceChannel: resolveChannel(),
+              themeSlug: targetTheme,
+            }),
+          });
+        } catch {
+          // non-blocking
+        }
+      }
+
+      if (stage) {
+        sendFunnel(stage, themeSlug);
+      }
+
+      document.addEventListener("click", (ev) => {
+        const target = ev.target instanceof Element ? ev.target.closest("[data-funnel-cta]") : null;
+        if (!target) return;
+        const ctaStage = target.getAttribute("data-funnel-cta");
+        const ctaTheme = target.getAttribute("data-funnel-theme") || themeSlug;
+        if (ctaStage) {
+          sendFunnel(ctaStage, ctaTheme);
+        }
+      });
+    </script>
+  </body>
+</html>

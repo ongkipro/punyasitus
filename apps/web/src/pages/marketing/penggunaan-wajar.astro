@@ -1,0 +1,61 @@
+---
+import { env } from "cloudflare:workers";
+import { createMarketingHostRedirectResponse } from "@punyasitus/core/marketing/index";
+import { loadLiveMarketingPricing } from "@punyasitus/db/marketing/index";
+import MarketingLayout from "../../components/marketing/MarketingLayout.astro";
+
+const redirectRes = createMarketingHostRedirectResponse(Astro.request, {
+  platformDomain: env.PLATFORM_DOMAIN,
+});
+if (redirectRes) {
+  return redirectRes;
+}
+
+Astro.response.headers.set("X-PunyaSitus-Surface", "marketing");
+const pricing = await loadLiveMarketingPricing(env.PLATFORM_DB);
+---
+
+<MarketingLayout
+  title="Kebijakan Penggunaan Wajar (AUP)"
+  description="Aturan penggunaan wajar dan konten terlarang pada platform website bisnis PunyaSitus."
+  canonicalPath="/marketing/penggunaan-wajar"
+  currentNav="legal"
+  salesWhatsapp={pricing.salesWhatsapp}
+  supportEmail={pricing.supportEmail}
+  supportHours={pricing.supportHours}
+>
+  <section class="mk-section" data-testid="legal-aup-page">
+    <div class="mk-container">
+      <article class="mk-prose">
+        <span class="mk-tag">Acceptable Use Policy</span>
+        <h1>Kebijakan Penggunaan Wajar</h1>
+        <p>
+          Untuk melindungi reputasi domain bersama, keandalan infrastruktur, serta keamanan pengunjung akhir di Indonesia, setiap situs yang beroperasi di PunyaSitus wajib mematuhi batas penggunaan berikut.
+        </p>
+
+        <h2>1. Konten &amp; Aktivitas yang Dilarang Keras</h2>
+        <ul>
+          <li>Perjudian daring, situs slot/togel, tautan pengalihan ke situs perjudian, atau promosi konten ilegal lainnya.</li>
+          <li>Penipuan, phishing, pemalsuan identitas lembaga resmi/bank, investasi bodong, atau pengumpulan kata sandi/OTP pengunjung.</li>
+          <li>Distribusi malware, skrip berbahaya, serangan otomatisasi, atau penyalahgunaan formulir untuk spam massal.</li>
+          <li>Konten yang melanggar hukum Republik Indonesia, hak kekayaan intelektual pihak ketiga, atau aturan profesi/kesehatan yang berlaku.</li>
+        </ul>
+
+        <h2>2. Penegakan &amp; Penangguhan Situs</h2>
+        <p>
+          PunyaSitus menerapkan penyaringan otomatis saat publikasi serta antrean peninjauan laporan penyalahgunaan. Situs yang terbukti melanggar dapat diturunkan kontennya atau ditangguhkan segera oleh operator platform dengan alasan teraudit dan pemberitahuan kepada pemilik akun.
+        </p>
+
+        <h2>3. Batas Sumber Daya Wajar</h2>
+        <p>
+          Penggunaan penyimpanan media (100 MB uji coba; 1 GB berbayar), batas 20 video pendek (maks 10 MB per video), dan trafik situs ditujukan untuk operasi website bisnis normal, bukan penyimpanan berkas massal (file hosting) atau distribusi video streaming jangka panjang.
+        </p>
+
+        <h2>4. Pelaporan Penyalahgunaan</h2>
+        <p>
+          Jika Anda menemukan situs di jaringan PunyaSitus yang melanggar kebijakan ini, kirimkan laporan disertai URL halaman ke <a href={`mailto:${pricing.supportEmail}`}>{pricing.supportEmail}</a>.
+        </p>
+      </article>
+    </div>
+  </section>
+</MarketingLayout>

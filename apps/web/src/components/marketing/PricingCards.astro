@@ -1,0 +1,113 @@
+---
+import { formatIdr, MARKETING_URLS } from "@punyasitus/core/marketing/index";
+import type { LiveMarketingPricing } from "@punyasitus/db/marketing/index";
+
+export interface Props {
+  pricing: LiveMarketingPricing;
+  showDetailLink?: boolean;
+}
+
+const { pricing, showDetailLink = false } = Astro.props;
+const includedFeatures = [
+  "Semua 6 tema vertikal (Compro, Sales, Travel, Catalog, Resto, Dealer) + variasi gaya",
+  "SEO & AI Autopilot gratis (sitemap.xml, robots.txt AI, Schema.org @graph, IndexNow)",
+  "Hingga 2 hostname domain kustom (mis. bisnis.com & www.bisnis.com) dengan SSL otomatis",
+  "Penyimpanan media 1 GB WebP otomatis + hingga 20 video pendek MP4/MOV/WebM",
+  "Hingga 5 anggota tim dengan peran Pemilik, Admin & Editor",
+  "Pembayaran lokal QRIS & Virtual Account bank — tanpa debit otomatis",
+];
+---
+
+<div class="mk-grid-2" data-testid="marketing-pricing-cards">
+  <!-- Monthly Plan -->
+  <article class="mk-card" data-testid="pricing-card-monthly">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem;">
+      <h3>Paket Bulanan</h3>
+      <span class="mk-meta-label">Fleksibel per bulan kalender</span>
+    </div>
+
+    <div style="padding-block:0.35rem;">
+      <p class="mk-price-amount mk-tabular" data-testid="pricing-monthly-amount">
+        {formatIdr(pricing.monthlyPriceIdr)}
+      </p>
+      <p class="mk-price-period">per bulan kalender · 1 situs web lengkap</p>
+    </div>
+
+    <p style="color:var(--mk-ink-muted);font-size:0.9375rem;">
+      Cocok untuk memulai cepat tanpa komitmen tahunan. Mulai dengan uji coba gratis {pricing.trialDays} hari terlebih dahulu.
+    </p>
+
+    <ul class="mk-check-list" style="margin-top:0.35rem;">
+      {includedFeatures.map((feat) => <li>{feat}</li>)}
+    </ul>
+
+    <div class="mk-card-footer" style="padding-top:1rem;">
+      <a
+        class="mk-btn mk-btn-secondary"
+        style="width:100%;"
+        href={`${MARKETING_URLS.appSignup}?plan=monthly`}
+        data-funnel-cta="signup_start"
+      >
+        Mulai Uji Coba {pricing.trialDays} Hari
+      </a>
+    </div>
+  </article>
+
+  <!-- Yearly Plan -->
+  <article class="mk-card mk-card-featured" data-testid="pricing-card-yearly">
+    <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:0.5rem;">
+      <h3>Paket Tahunan</h3>
+      {pricing.yearlySavingsIdr > 0 && (
+        <span class="mk-tag mk-tabular" data-testid="pricing-yearly-savings">
+          Hemat {formatIdr(pricing.yearlySavingsIdr)} / tahun
+        </span>
+      )}
+    </div>
+
+    <div style="padding-block:0.35rem;">
+      <p class="mk-price-amount mk-tabular" data-testid="pricing-yearly-amount">
+        {formatIdr(pricing.yearlyPriceIdr)}
+      </p>
+      <p class="mk-price-period mk-tabular">
+        per 12 bulan kalender (setara {formatIdr(pricing.yearlyEffectiveMonthlyIdr)}/bulan)
+      </p>
+    </div>
+
+    <p style="color:var(--mk-ink-muted);font-size:0.9375rem;">
+      Pilihan paling hemat untuk website bisnis jangka panjang dengan seluruh fitur penuh dan satu kali pembayaran tahunan.
+    </p>
+
+    <ul class="mk-check-list" style="margin-top:0.35rem;">
+      {includedFeatures.map((feat) => <li>{feat}</li>)}
+    </ul>
+
+    <div class="mk-card-footer" style="padding-top:1rem;">
+      <a
+        class="mk-btn mk-btn-primary"
+        style="width:100%;"
+        href={`${MARKETING_URLS.appSignup}?plan=yearly`}
+        data-funnel-cta="signup_start"
+      >
+        Pilih Tahunan — Coba Gratis {pricing.trialDays} Hari
+      </a>
+    </div>
+  </article>
+</div>
+
+<aside class="mk-disclosure-box" aria-label="Ketentuan harga, pajak, dan pengembalian dana">
+  <p>
+    <strong>Pajak &amp; Bukti Bayar:</strong> {pricing.nonPkpDisclosure}
+  </p>
+  <p>
+    <strong>Biaya Kanal Pembayaran:</strong> Biaya admin kanal QRIS / Virtual Account ditanggung pembayar dan ditampilkan terpisah sebelum pembayaran dikonfirmasi.
+  </p>
+  <p>
+    <strong>Kebijakan Pengembalian Dana:</strong> {pricing.noRefundDisclosure}{" "}
+    <a href="/marketing/pengembalian-dana">Baca rincian kebijakan pengembalian dana</a>.
+  </p>
+  {showDetailLink && (
+    <p>
+      <a href="/marketing/harga">Lihat perbandingan lengkap Uji Coba vs Paket Berbayar &rarr;</a>
+    </p>
+  )}
+</aside>
