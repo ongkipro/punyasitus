@@ -1,0 +1,89 @@
+---
+import { canPerform, isActionAllowedForTenantStatus } from "@punyasitus/auth";
+import { isCatalogOfferingType, type CatalogOfferingType } from "@punyasitus/core/catalog/index";
+import { listTaxonomies } from "@punyasitus/db/taxonomy/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import {
+  TaxonomyManagerClient,
+  type TaxonomyItemDto,
+} from "../../posts/categories/_TaxonomyManagerClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const canManageTaxonomy =
+  canPerform(ctx.permissions.role, "taxonomy:manage") &&
+  isActionAllowedForTenantStatus(ctx.permissions.tenantStatus, "taxonomy:manage").allowed;
+
+const rawTypeParam = Astro.url.searchParams.get("type")?.trim();
+const defaultTypeByVertical: CatalogOfferingType =
+  ctx.vertical === "catalog" || ctx.vertical === "resto"
+    ? "product"
+    : ctx.vertical === "travel"
+      ? "tour"
+      : ctx.vertical === "dealer"
+        ? "vehicle"
+        : "service";
+const initialOfferingType: CatalogOfferingType =
+  rawTypeParam && isCatalogOfferingType(rawTypeParam) ? rawTypeParam : defaultTypeByVertical;
+
+const listRes = await listTaxonomies(ctx.tenantDb, {
+  kind: "offering_category",
+  limit: 100,
+  sortOrder: "asc",
+});
+
+const initialItems: TaxonomyItemDto[] = listRes.items.map((item) => ({
+  id: item.id,
+  kind: item.kind,
+  offeringType: item.offeringType,
+  name: item.name,
+  slug: item.slug,
+  publicPath: item.publicPath,
+  description: item.description,
+  parentId: item.parentId,
+  depth: item.depth,
+  sortOrder: item.sortOrder,
+  publishedCount: item.publishedCount,
+  draftCount: item.draftCount,
+  totalUsageCount: item.totalUsageCount,
+  childCount: item.childCount,
+  indexOptIn: item.indexOptIn,
+  hasUsefulIntro: item.hasUsefulIntro,
+  indexable: item.indexable,
+  version: item.version,
+  updatedAt: item.updatedAt,
+}));
+---
+
+<DashboardLayout
+  title={`Kategori Katalog — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="offering"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <TaxonomyManagerClient
+    client:load
+    mode="offering_category"
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    publicSiteHref={ctx.publicSiteHref}
+    permissions={ctx.permissions}
+    canManageTaxonomy={canManageTaxonomy}
+    initialItems={initialItems}
+    initialOfferingType={initialOfferingType}
+  />
+</DashboardLayout>

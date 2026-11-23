@@ -1,0 +1,30 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  applyPublicRouteResponseMeta,
+  buildPublicRouteDepsFromAstro,
+} from "../../../core/public-routes.ts";
+import PublicNotFoundView from "../../layanan/_PublicNotFoundView.astro";
+import { resolveBlogTagArchiveRoute } from "../category/_archive-resolver.ts";
+import BlogTaxonomyArchiveView from "../category/_BlogTaxonomyArchiveView.astro";
+
+const deps = buildPublicRouteDepsFromAstro(
+  Astro.locals,
+  env as unknown as Record<string, unknown>,
+);
+const result = await resolveBlogTagArchiveRoute(Astro.request, deps, Astro.params.slug, {
+  url: Astro.url,
+});
+
+if (result.kind === "response") {
+  return result.response;
+}
+
+applyPublicRouteResponseMeta(Astro.response, result.http);
+---
+
+{result.kind === "not_found" ? (
+  <PublicNotFoundView result={result} />
+) : (
+  <BlogTaxonomyArchiveView result={result} />
+)}

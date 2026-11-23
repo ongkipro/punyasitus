@@ -1,30 +1,32 @@
-import {
-  deleteBlogTaxonomy,
-  getBlogTaxonomyById,
-  updateBlogTaxonomy,
-} from "@punyasitus/db/posts/index";
+import type { CatalogOfferingType } from "@punyasitus/core/catalog/index";
+import { deleteTaxonomy, getTaxonomyById, updateTaxonomy } from "@punyasitus/db/taxonomy/index";
 import type { APIRoute } from "astro";
 import {
   authorizeTenantBlogRequest,
-  blogErrorResponse,
-  blogJsonResponse,
-  blogNoContentResponse,
   buildBlogRuntimeEnv,
   createBlogRequestId,
   extractBlogExpectedVersion,
-  formatTaxonomyRecordResponse,
-  mapBlogDomainErrorToResponse,
+  extractIndexOptInField,
+  extractRequiredDeleteVersion,
+  formatTaxonomyResponse,
+  mapTaxonomyDomainErrorToResponse,
   parseSequentialIdParam,
   parseStrictBlogJsonBody,
+  taxonomyErrorResponse,
+  taxonomyJsonResponse,
+  taxonomyNoContentResponse,
+  withPrivateNoStoreHeaders,
   type TenantBlogHandlerOptions,
   type TenantBlogRuntimeEnv,
-} from "../posts/_shared.ts";
+} from "./_shared.ts";
 
 /**
- * Tenant-scoped single Blog Category item endpoint (`taxonomy_type = 'post_category'`):
+ * Tenant-scoped single Category item endpoint (`post_category` or `offering_category`):
  * - `GET    /api/tenants/:tenantId/categories/:categoryId`
- * - `PATCH  /api/tenants/:tenantId/categories/:categoryId` (optimistic version-guarded)
- * - `DELETE /api/tenants/:tenantId/categories/:categoryId` (optimistic version-guarded, 204)
+ * - `PATCH  /api/tenants/:tenantId/categories/:categoryId` (required version, cycle/depth<=3, atomic audit)
+ * - `DELETE /api/tenants/:tenantId/categories/:categoryId` (required version, 409 children/in-use guard, atomic reassign/detach, 204)
+ *
+ * TASK-006 + TASK-041 (`REQ-045`, `REQ-009`, `REQ-012`, `REQ-034`, `REQ-036`, `REQ-061`).
  */
 
 const UPDATE_CATEGORY_ALLOWED_KEYS = new Set([
@@ -33,7 +35,9 @@ const UPDATE_CATEGORY_ALLOWED_KEYS = new Set([
   "confirmSlugChange",
   "description",
   "parentId",
+  "offeringType",
   "sortOrder",
+  "indexOptIn",
   "indexable",
   "version",
   "expectedVersion",
@@ -43,8 +47,38 @@ const DELETE_CATEGORY_ALLOWED_KEYS = new Set([
   "version",
   "expectedVersion",
   "detach",
+  "reassignToId",
   "reassignToCategoryId",
 ]);
+
+function parseOptionalCategoryKindQuery(
+  url: URL,
+  requestId: string,
+):
+  | { readonly ok: true; readonly kind: "post_category" | "offering_category" | undefined }
+  | { readonly ok: false; readonly response: Response } {
+  const raw = url.searchParams.get("kind")?.trim();
+  if (!raw) return { ok: true, kind: undefined };
+  if (raw !== "post_category" && raw !== "offering_category") {
+    return {
+      ok: false,
+      response: taxonomyErrorResponse(
+        422,
+        "VALIDATION_ERROR",
+        'Parameter kind harus "post_category" atau "offering_category".',
+        requestId,
+        [
+          {
+            field: "kind",
+            code: "INVALID_KIND",
+            message: 'Expected kind "post_category" or "offering_category".',
+          },
+        ],
+      ),
+    };
+  }
+  return { ok: true, kind: raw };
+}
 
 export async function handleTenantCategoryItemRequest(
   tenantId: string,
@@ -61,12 +95,13 @@ export async function handleTenantCategoryItemRequest(
       ...options,
       requestId,
     });
-    if (!auth.ok) return auth.response;
-    return blogErrorResponse(
+    if (!auth.ok) return withPrivateNoStoreHeaders(auth.response);
+    return taxonomyErrorResponse(
       405,
       "BAD_REQUEST",
-      "Metode HTTP tidak diizinkan untuk endpoint kategori blog.",
+      "Metode HTTP tidak diizinkan untuk endpoint kategori.",
       requestId,
+      undefined,
       undefined,
       { Allow: "GET, PATCH, DELETE" },
     );
@@ -80,25 +115,31 @@ export async function handleTenantCategoryItemRequest(
     requiredPermission,
     { ...options, requestId },
   );
-  if (!auth.ok) return auth.response;
+  if (!auth.ok) return withPrivateNoStoreHeaders(auth.response);
 
   const parsedId = parseSequentialIdParam(rawCategoryId, "categoryId", "kategori", requestId);
-  if (!parsedId.ok) return parsedId.response;
+  if (!parsedId.ok) return withPrivateNoStoreHeaders(parsedId.response);
 
-  const { tenantDb } = auth.ctx;
+  const url = new URL(request.url);
+  const kindCheck = parseOptionalCategoryKindQuery(url, requestId);
+  if (!kindCheck.ok) return kindCheck.response;
+
+  const { tenantDb, platformDb, member } = auth.ctx;
 
   try {
+    // Verify record exists and is a category (never expose post_tag on /categories/:id)
+    const existing = await getTaxonomyById(tenantDb, parsedId.id, kindCheck.kind);
+    if (!existing || existing.kind === "post_tag") {
+      return taxonomyErrorResponse(
+        404,
+        "NOT_FOUND",
+        `Kategori #${parsedId.id} tidak ditemukan.`,
+        requestId,
+      );
+    }
+
     if (method === "GET") {
-      const cat = await getBlogTaxonomyById(tenantDb, "post_category", parsedId.id);
-      if (!cat) {
-        return blogErrorResponse(
-          404,
-          "NOT_FOUND",
-          `Kategori #${parsedId.id} tidak ditemukan.`,
-          requestId,
-        );
-      }
-      return blogJsonResponse(200, formatTaxonomyRecordResponse(cat));
+      return taxonomyJsonResponse(200, formatTaxonomyResponse(existing));
     }
 
     if (method === "PATCH") {
@@ -107,14 +148,14 @@ export async function handleTenantCategoryItemRequest(
         UPDATE_CATEGORY_ALLOWED_KEYS,
         requestId,
       );
-      if (!parsedBody.ok) return parsedBody.response;
+      if (!parsedBody.ok) return withPrivateNoStoreHeaders(parsedBody.response);
 
       const body = parsedBody.body;
       const versionCheck = extractBlogExpectedVersion(body, requestId, { required: true });
-      if (!versionCheck.ok) return versionCheck.response;
+      if (!versionCheck.ok) return withPrivateNoStoreHeaders(versionCheck.response);
 
       if (body.confirmSlugChange !== undefined && typeof body.confirmSlugChange !== "boolean") {
-        return blogErrorResponse(
+        return taxonomyErrorResponse(
           422,
           "VALIDATION_ERROR",
           "confirmSlugChange harus berupa boolean.",
@@ -123,22 +164,38 @@ export async function handleTenantCategoryItemRequest(
         );
       }
 
-      const updated = await updateBlogTaxonomy(tenantDb, {
-        kind: "post_category",
-        taxonomyId: parsedId.id,
-        expectedVersion: versionCheck.expectedVersion!,
-        ...(body.name !== undefined ? { name: body.name as string } : {}),
-        ...(body.slug !== undefined ? { slug: body.slug as string } : {}),
-        ...(body.confirmSlugChange !== undefined
-          ? { confirmSlugChange: body.confirmSlugChange as boolean }
-          : {}),
-        ...(body.description !== undefined ? { description: body.description as string | null } : {}),
-        ...(body.parentId !== undefined ? { parentId: body.parentId as number | null } : {}),
-        ...(body.sortOrder !== undefined ? { sortOrder: body.sortOrder as number } : {}),
-        nowMs: options.nowMs,
-      });
+      const optInCheck = extractIndexOptInField(body, requestId);
+      if (!optInCheck.ok) return optInCheck.response;
 
-      return blogJsonResponse(200, formatTaxonomyRecordResponse(updated));
+      const updated = await updateTaxonomy(
+        tenantDb,
+        {
+          kind: existing.kind,
+          taxonomyId: parsedId.id,
+          expectedVersion: versionCheck.expectedVersion!,
+          ...(body.name !== undefined ? { name: body.name as string } : {}),
+          ...(body.slug !== undefined ? { slug: body.slug as string } : {}),
+          ...(body.confirmSlugChange !== undefined
+            ? { confirmSlugChange: body.confirmSlugChange as boolean }
+            : {}),
+          ...(body.description !== undefined ? { description: body.description as string | null } : {}),
+          ...(body.parentId !== undefined ? { parentId: body.parentId as number | null } : {}),
+          ...(body.offeringType !== undefined
+            ? { offeringType: body.offeringType as CatalogOfferingType | null }
+            : {}),
+          ...(body.sortOrder !== undefined ? { sortOrder: body.sortOrder as number } : {}),
+          ...(optInCheck.value !== undefined ? { indexOptIn: optInCheck.value } : {}),
+          nowMs: options.nowMs,
+        },
+        {
+          actorUserId: member.userId,
+          actorRole: member.role,
+          platformDb,
+          tenantId: member.tenantId,
+        },
+      );
+
+      return taxonomyJsonResponse(200, formatTaxonomyResponse(updated));
     }
 
     // DELETE /api/tenants/:tenantId/categories/:categoryId
@@ -148,73 +205,90 @@ export async function handleTenantCategoryItemRequest(
       requestId,
       { allowEmptyBody: true },
     );
-    if (!parsedBody.ok) return parsedBody.response;
+    if (!parsedBody.ok) return withPrivateNoStoreHeaders(parsedBody.response);
 
     const body = parsedBody.body;
-    const versionCheck = extractBlogExpectedVersion(body, requestId);
+    const versionCheck = extractRequiredDeleteVersion(body, url, requestId);
     if (!versionCheck.ok) return versionCheck.response;
 
-    const url = new URL(request.url);
-    let expectedVersion = versionCheck.expectedVersion;
-    if (expectedVersion === undefined) {
-      const queryVersion = url.searchParams.get("version") ?? url.searchParams.get("expectedVersion");
-      if (queryVersion !== null) {
-        if (!/^\d+$/.test(queryVersion)) {
-          return blogErrorResponse(
-            422,
-            "VALIDATION_ERROR",
-            "Parameter query version harus berupa bilangan bulat non-negatif.",
-            requestId,
-            [{ field: "version", code: "INVALID_VERSION", message: "Invalid version query parameter." }],
-          );
-        }
-        expectedVersion = Number(queryVersion);
-      }
-    }
-
     if (body.detach !== undefined && typeof body.detach !== "boolean") {
-      return blogErrorResponse(422, "VALIDATION_ERROR", "detach harus berupa boolean.", requestId, [
+      return taxonomyErrorResponse(422, "VALIDATION_ERROR", "detach harus berupa boolean.", requestId, [
         { field: "detach", code: "INVALID_TYPE", message: "Expected a boolean for detach." },
       ]);
     }
     const detach =
       body.detach !== undefined ? (body.detach as boolean) : url.searchParams.get("detach") === "true";
 
-    let reassignToCategoryId: number | undefined;
-    if (body.reassignToCategoryId !== undefined) {
-      if (typeof body.reassignToCategoryId !== "number") {
-        return blogErrorResponse(
-          422,
-          "VALIDATION_ERROR",
-          "reassignToCategoryId harus berupa bilangan bulat positif.",
-          requestId,
-          [{ field: "reassignToCategoryId", code: "INVALID_TYPE", message: "Expected a positive integer." }],
-        );
-      }
-      reassignToCategoryId = body.reassignToCategoryId;
-    } else if (url.searchParams.get("reassignToCategoryId") !== null) {
-      const parsedTarget = parseSequentialIdParam(
-        url.searchParams.get("reassignToCategoryId") ?? "",
-        "reassignToCategoryId",
-        "kategori pengganti",
+    if (
+      body.reassignToId !== undefined &&
+      body.reassignToCategoryId !== undefined &&
+      body.reassignToId !== body.reassignToCategoryId
+    ) {
+      return taxonomyErrorResponse(
+        422,
+        "VALIDATION_ERROR",
+        "reassignToId dan reassignToCategoryId harus sama jika keduanya dikirim.",
         requestId,
+        [
+          {
+            field: "reassignToId",
+            code: "CONFLICTING_FIELDS",
+            message: "Conflicting reassignToId and reassignToCategoryId values.",
+          },
+        ],
       );
-      if (!parsedTarget.ok) return parsedTarget.response;
-      reassignToCategoryId = parsedTarget.id;
     }
 
-    await deleteBlogTaxonomy(tenantDb, {
-      kind: "post_category",
-      taxonomyId: parsedId.id,
-      expectedVersion,
-      detach,
-      reassignToCategoryId,
-      nowMs: options.nowMs,
-    });
+    let reassignToId: number | undefined;
+    const rawReassignBody =
+      body.reassignToId !== undefined ? body.reassignToId : body.reassignToCategoryId;
+    if (rawReassignBody !== undefined && rawReassignBody !== null) {
+      if (typeof rawReassignBody !== "number" || !Number.isSafeInteger(rawReassignBody)) {
+        return taxonomyErrorResponse(
+          422,
+          "VALIDATION_ERROR",
+          "reassignToId harus berupa bilangan bulat positif.",
+          requestId,
+          [{ field: "reassignToId", code: "INVALID_TYPE", message: "Expected a positive integer." }],
+        );
+      }
+      reassignToId = rawReassignBody;
+    } else {
+      const qTarget =
+        url.searchParams.get("reassignToId") ?? url.searchParams.get("reassignToCategoryId");
+      if (qTarget !== null && qTarget.trim() !== "") {
+        const parsedTarget = parseSequentialIdParam(
+          qTarget,
+          "reassignToId",
+          "kategori pengganti",
+          requestId,
+        );
+        if (!parsedTarget.ok) return withPrivateNoStoreHeaders(parsedTarget.response);
+        reassignToId = parsedTarget.id;
+      }
+    }
 
-    return blogNoContentResponse();
+    await deleteTaxonomy(
+      tenantDb,
+      {
+        kind: existing.kind,
+        taxonomyId: parsedId.id,
+        expectedVersion: versionCheck.expectedVersion,
+        detach,
+        reassignToId,
+        nowMs: options.nowMs,
+      },
+      {
+        actorUserId: member.userId,
+        actorRole: member.role,
+        platformDb,
+        tenantId: member.tenantId,
+      },
+    );
+
+    return taxonomyNoContentResponse();
   } catch (err) {
-    return mapBlogDomainErrorToResponse(err, requestId);
+    return mapTaxonomyDomainErrorToResponse(err, requestId);
   }
 }
 
