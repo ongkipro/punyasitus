@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
 import { listMediaItems, type MediaItemPublicStatus } from "@punyasitus/db/media/index";
+import { getVideoSlotUsage } from "@punyasitus/db/media/video";
 import { getStorageUsageSnapshot } from "@punyasitus/db/storage-usage/index";
 import type { APIRoute } from "astro";
 import {
@@ -85,19 +86,39 @@ export async function handleMediaListGet(
     statusFilter = rawStatus as MediaItemPublicStatus;
   }
 
+  const rawKind = url.searchParams.get("kind");
+  let kindFilter: "image" | "video" | undefined;
+  if (rawKind !== null && rawKind.trim() !== "") {
+    if (rawKind !== "image" && rawKind !== "video") {
+      return createMediaErrorResponse(
+        422,
+        "VALIDATION_ERROR",
+        "Filter jenis media harus berupa image atau video.",
+        auth.requestId,
+      );
+    }
+    kindFilter = rawKind;
+  }
+
   const includeTrashed = url.searchParams.get("includeTrashed") === "true";
 
-  const [listed, storage] = await Promise.all([
+  const [listed, storage, videoSlots] = await Promise.all([
     listMediaItems(auth.tenantDb, {
       cursorId,
       limit,
       includeTrashed,
       status: statusFilter,
+      kind: kindFilter,
     }),
     getStorageUsageSnapshot(auth.tenantDb, {
       tenantStatus: auth.member.tenantStatus,
       nowMs: auth.nowMs,
     }),
+    getVideoSlotUsage(auth.tenantDb, options.maxVideos).catch(() => ({
+      usedSlots: 0,
+      maxSlots: 20,
+      remainingSlots: 20,
+    })),
   ]);
 
   return createMediaJsonResponse(200, {
@@ -114,6 +135,11 @@ export async function handleMediaListGet(
       availableBytes: storage.availableBytes,
       percentUsed: storage.percentUsed,
       warningAt80: storage.warningAt80,
+    },
+    videoSlots: {
+      used: videoSlots.usedSlots,
+      limit: videoSlots.maxSlots,
+      remaining: videoSlots.remainingSlots,
     },
   });
 }

@@ -5,6 +5,7 @@ import {
   slugifyMediaFilename,
   type MediaVariantsManifest,
 } from "@punyasitus/core/media/index";
+import type { VideoMetadataManifest } from "@punyasitus/core/media/video";
 import type { TenantStatus } from "@punyasitus/core/schemas";
 import {
   DEFAULT_UPLOAD_INTENT_TTL_MS,
@@ -71,6 +72,10 @@ export interface MediaItemRecord {
   readonly originalFilename: string | null;
   readonly slug: string | null;
   readonly variants: MediaVariantsManifest | null;
+  readonly videoMetadata?: VideoMetadataManifest | null;
+  readonly durationSeconds?: number | null;
+  readonly posterR2Key?: string | null;
+  readonly captionsR2Key?: string | null;
   readonly status: MediaItemPublicStatus;
   readonly dbStatus: MediaItemDbStatus;
   readonly deletedAt: number | null;
@@ -113,6 +118,9 @@ interface MediaItemSqlRow {
   readonly height: number | null;
   readonly alt_text: string;
   readonly variants_json: string | null;
+  readonly duration_seconds?: number | null;
+  readonly poster_r2_key?: string | null;
+  readonly captions_r2_key?: string | null;
   readonly status: MediaItemDbStatus;
   readonly deleted_at: number | null;
   readonly original_filename: string | null;
@@ -162,8 +170,22 @@ function mapIntentRow(row: MediaIntentSqlRow): MediaUploadIntentRecord {
 function parseVariantsJson(raw: string | null): MediaVariantsManifest | null {
   if (!raw) return null;
   try {
-    const parsed = JSON.parse(raw) as MediaVariantsManifest;
-    return parsed && typeof parsed === "object" ? parsed : null;
+    const parsed = JSON.parse(raw) as Partial<MediaVariantsManifest> & { kind?: string };
+    if (!parsed || typeof parsed !== "object" || parsed.kind === "video") return null;
+    return parsed as MediaVariantsManifest;
+  } catch {
+    return null;
+  }
+}
+
+function parseVideoMetadataJson(raw: string | null): VideoMetadataManifest | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Partial<VideoMetadataManifest>;
+    if (parsed && typeof parsed === "object" && parsed.kind === "video") {
+      return parsed as VideoMetadataManifest;
+    }
+    return null;
   } catch {
     return null;
   }
@@ -185,6 +207,13 @@ function mapMediaRow(row: MediaItemSqlRow): MediaItemRecord {
     originalFilename: row.original_filename ?? null,
     slug: row.slug ?? null,
     variants: parseVariantsJson(row.variants_json),
+    videoMetadata: parseVideoMetadataJson(row.variants_json),
+    durationSeconds:
+      row.duration_seconds === null || row.duration_seconds === undefined
+        ? null
+        : Number(row.duration_seconds),
+    posterR2Key: row.poster_r2_key ?? null,
+    captionsR2Key: row.captions_r2_key ?? null,
     status: deletedAt !== null ? "trashed" : row.status,
     dbStatus: row.status,
     deletedAt,
@@ -1040,8 +1069,9 @@ export async function getMediaItemById(
   const row = await tenantDb
     .prepare(
       `SELECT id, kind, r2_key, mime_type, bytes, sha256, width, height,
-              alt_text, variants_json, status, deleted_at, original_filename,
-              slug, decorative, version, created_at, updated_at
+              alt_text, variants_json, duration_seconds, poster_r2_key, captions_r2_key,
+              status, deleted_at, original_filename, slug, decorative,
+              version, created_at, updated_at
        FROM media_items WHERE id = ? LIMIT 1`,
     )
     .bind(mediaId)
@@ -1054,6 +1084,7 @@ export interface ListMediaItemsOptions {
   readonly limit?: number;
   readonly includeTrashed?: boolean;
   readonly status?: MediaItemPublicStatus;
+  readonly kind?: "image" | "video";
 }
 
 export interface ListMediaItemsResult {
@@ -1072,6 +1103,11 @@ export async function listMediaItems(
   const whereClauses: string[] = [];
   const bindings: (string | number)[] = [];
 
+  if (options.kind === "image" || options.kind === "video") {
+    whereClauses.push("kind = ?");
+    bindings.push(options.kind);
+  }
+
   if (options.status === "trashed") {
     whereClauses.push("deleted_at IS NOT NULL");
   } else if (options.status) {
@@ -1088,8 +1124,9 @@ export async function listMediaItems(
 
   const whereSql = whereClauses.length > 0 ? `WHERE ${whereClauses.join(" AND ")}` : "";
   const query = `SELECT id, kind, r2_key, mime_type, bytes, sha256, width, height,
-                        alt_text, variants_json, status, deleted_at, original_filename,
-                        slug, decorative, version, created_at, updated_at
+                        alt_text, variants_json, duration_seconds, poster_r2_key, captions_r2_key,
+                        status, deleted_at, original_filename, slug, decorative,
+                        version, created_at, updated_at
                  FROM media_items
                  ${whereSql}
                  ORDER BY id DESC
@@ -1507,6 +1544,15 @@ export function collectMediaR2Keys(tenantId: string, media: MediaItemRecord): st
       } catch {
         // Ignore non-tenant keys defensively
       }
+    }
+  }
+  for (const extraKey of [media.posterR2Key, media.captionsR2Key]) {
+    if (!extraKey) continue;
+    try {
+      assertTenantR2Key(tenantId, extraKey, ["media", "trash"]);
+      keys.add(extraKey);
+    } catch {
+      // Ignore non-tenant keys defensively
     }
   }
   return [...keys];

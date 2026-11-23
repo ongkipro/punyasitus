@@ -12,6 +12,7 @@ import {
   openTenantStoreStub,
   type TenantStoreNamespaceLike,
 } from "@punyasitus/db/connections";
+import type { CloudflareImagesBinding } from "@punyasitus/core/media/index";
 import type { MediaItemRecord } from "@punyasitus/db/media/index";
 import {
   resolveAuthEmailPort,
@@ -36,8 +37,10 @@ export const MEDIA_NO_STORE_HEADERS = {
 export interface MediaApiRuntimeEnv extends AuthRuntimeEnv {
   readonly TENANT_STORE?: TenantStoreNamespaceLike | null;
   readonly MEDIA_BUCKET?: MediaWorkerR2BucketLike | null;
+  readonly IMAGES?: CloudflareImagesBinding | null;
   readonly JOBS_QUEUE?: { send(message: JobQueuePayload): Promise<unknown> } | null;
   readonly MEDIA_PUBLIC_BASE_URL?: string;
+  readonly VIDEO_UPLOAD_DISABLED?: string;
 }
 
 export interface MediaApiHandlerOptions {
@@ -50,6 +53,7 @@ export interface MediaApiHandlerOptions {
   readonly hourlyLimit?: number;
   readonly dailyLimit?: number;
   readonly intentTtlMs?: number;
+  readonly maxVideos?: number;
 }
 
 export function createRequestId(): string {
@@ -327,6 +331,19 @@ export function detectForbiddenTenantSelectors(
   return fields;
 }
 
+export function buildPublicMediaKeyUrl(
+  r2Key: string | null | undefined,
+  runtimeEnv: Pick<MediaApiRuntimeEnv, "PLATFORM_DOMAIN" | "MEDIA_PUBLIC_BASE_URL">,
+): string | null {
+  if (!r2Key || !r2Key.includes("/media/") || r2Key.includes("/quarantine/")) {
+    return null;
+  }
+  const base =
+    runtimeEnv.MEDIA_PUBLIC_BASE_URL?.trim().replace(/\/+$/, "") ||
+    `https://media.${(runtimeEnv.PLATFORM_DOMAIN ?? "punyasitus.com").trim().toLowerCase()}`;
+  return `${base}/${r2Key}`;
+}
+
 export function buildPublicMediaUrl(
   media: MediaItemRecord,
   runtimeEnv: Pick<MediaApiRuntimeEnv, "PLATFORM_DOMAIN" | "MEDIA_PUBLIC_BASE_URL">,
@@ -335,20 +352,14 @@ export function buildPublicMediaUrl(
   if (media.status !== "ready" || media.dbStatus !== "ready" || media.deletedAt !== null) {
     return null;
   }
-  if (!media.r2Key.includes("/media/") || media.r2Key.includes("/quarantine/")) {
-    return null;
-  }
-  const base =
-    runtimeEnv.MEDIA_PUBLIC_BASE_URL?.trim().replace(/\/+$/, "") ||
-    `https://media.${(runtimeEnv.PLATFORM_DOMAIN ?? "punyasitus.com").trim().toLowerCase()}`;
-  return `${base}/${media.r2Key}`;
+  return buildPublicMediaKeyUrl(media.r2Key, runtimeEnv);
 }
 
 export function serializeMediaItemRecord(
   media: MediaItemRecord,
   runtimeEnv: Pick<MediaApiRuntimeEnv, "PLATFORM_DOMAIN" | "MEDIA_PUBLIC_BASE_URL">,
 ): Record<string, unknown> {
-  return {
+  const base: Record<string, unknown> = {
     id: media.id,
     kind: media.kind,
     status: media.status,
@@ -360,6 +371,25 @@ export function serializeMediaItemRecord(
     version: media.version,
     createdAt: new Date(media.createdAt).toISOString(),
   };
+
+  if (media.kind === "video") {
+    const isPublicReady =
+      media.status === "ready" && media.dbStatus === "ready" && media.deletedAt === null;
+    base.durationSeconds = media.durationSeconds ?? null;
+    base.posterUrl = isPublicReady
+      ? buildPublicMediaKeyUrl(media.posterR2Key, runtimeEnv)
+      : null;
+    base.captionsUrl = isPublicReady
+      ? buildPublicMediaKeyUrl(media.captionsR2Key, runtimeEnv)
+      : null;
+    base.captionsLang = media.videoMetadata?.captionsLang ?? null;
+    base.captionsLabel = media.videoMetadata?.captionsLabel ?? null;
+    base.processingPath = media.videoMetadata?.processingPath ?? null;
+    base.posterSource = media.videoMetadata?.posterSource ?? null;
+    base.errorCode = media.dbStatus === "failed" ? (media.videoMetadata?.errorCode ?? null) : null;
+  }
+
+  return base;
 }
 
 export function parsePositiveIntParam(raw: string | undefined): number | null {

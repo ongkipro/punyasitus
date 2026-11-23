@@ -5,8 +5,13 @@ import {
   restoreTrashedMediaItem,
   trashMediaItem,
 } from "@punyasitus/db/media/index";
+import {
+  failVideoUploadIntent,
+  prepareFailedVideoRetry,
+} from "@punyasitus/db/media/video";
 import type { APIRoute } from "astro";
 import type { MediaWorkerR2BucketLike } from "../../../../../../worker/queues/media/index.ts";
+import { MEDIA_PROCESS_VIDEO_TOPIC } from "../../../../../../worker/queues/media/video/index.ts";
 import {
   authorizeMediaApiRequest,
   createMediaErrorResponse,
@@ -107,6 +112,84 @@ export async function handleMediaItemActionPost(
     });
   }
 
+  if (action === "retry") {
+    if (!runtimeEnv.MEDIA_BUCKET || !runtimeEnv.JOBS_QUEUE) {
+      return createMediaErrorResponse(
+        503,
+        "SERVICE_UNAVAILABLE",
+        "Layanan penyimpanan atau antrean video sementara tidak tersedia.",
+        auth.requestId,
+        { retryAfterSeconds: 30 },
+      );
+    }
+
+    const prepared = await prepareFailedVideoRetry(auth.tenantDb, {
+      tenantId: auth.member.tenantId,
+      mediaId,
+      maxVideos: options.maxVideos,
+      nowMs: auth.nowMs,
+    });
+    if (!prepared.ok) {
+      return createMediaErrorResponse(
+        prepared.status,
+        prepared.code,
+        prepared.message,
+        auth.requestId,
+      );
+    }
+
+    // Verify quarantine source still exists in R2 before re-enqueuing
+    const existingObj = await runtimeEnv.MEDIA_BUCKET.get(prepared.intent.quarantineR2Key);
+    if (!existingObj) {
+      await failVideoUploadIntent(
+        auth.tenantDb,
+        prepared.intent.id,
+        "RETRY_SOURCE_EXPIRED",
+        auth.nowMs,
+      );
+      return createMediaErrorResponse(
+        409,
+        "RETRY_SOURCE_EXPIRED",
+        "Berkas sumber karantina telah kedaluwarsa. Silakan unggah ulang video.",
+        auth.requestId,
+      );
+    }
+
+    const jobIdempotencyKey = `media-video-retry:${auth.member.tenantId}:${prepared.intent.id}:${auth.nowMs}`;
+    try {
+      await runtimeEnv.JOBS_QUEUE.send({
+        idempotencyKey: jobIdempotencyKey,
+        topic: MEDIA_PROCESS_VIDEO_TOPIC,
+        tenantId: auth.member.tenantId,
+        payload: {
+          intentId: prepared.intent.id,
+          mediaId,
+          quarantineR2Key: prepared.intent.quarantineR2Key,
+          originalFilename: prepared.intent.originalFilename,
+        },
+      });
+    } catch {
+      await failVideoUploadIntent(
+        auth.tenantDb,
+        prepared.intent.id,
+        "QUEUE_ENQUEUE_FAILED",
+        auth.nowMs,
+      );
+      return createMediaErrorResponse(
+        503,
+        "SERVICE_UNAVAILABLE",
+        "Gagal menjadwalkan ulang pemrosesan video.",
+        auth.requestId,
+        { retryAfterSeconds: 15 },
+      );
+    }
+
+    return createMediaJsonResponse(202, {
+      ...serializeMediaItemRecord(prepared.media, runtimeEnv),
+      jobIdempotencyKey,
+    });
+  }
+
   return createMediaErrorResponse(404, "NOT_FOUND", "Aksi media tidak ditemukan.", auth.requestId);
 }
 
@@ -126,6 +209,7 @@ export const POST: APIRoute = ({ params, request }) => {
       PLATFORM_DB: runtimeEnv.PLATFORM_DB,
       TENANT_STORE: runtimeEnv.TENANT_STORE as unknown as TenantStoreNamespaceLike,
       MEDIA_BUCKET: runtimeEnv.MEDIA_BUCKET as unknown as MediaWorkerR2BucketLike,
+      JOBS_QUEUE: runtimeEnv.JOBS_QUEUE,
       AUTH_SECRET: runtimeEnv.AUTH_SECRET,
       CONSOLE_AUTH_SECRET: runtimeEnv.CONSOLE_AUTH_SECRET,
     },

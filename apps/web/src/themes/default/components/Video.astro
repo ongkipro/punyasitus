@@ -1,0 +1,283 @@
+---
+import {
+  MAX_VIDEO_HEIGHT,
+  MAX_VIDEO_WIDTH,
+  sanitizePublicVideoAssetUrl,
+  validateCaptionLanguageTag,
+  validateVideoPlacement,
+} from "@punyasitus/core/media/video";
+
+/**
+ * Self-Hosted Short Video Component (`apps/web/src/themes/default/components/Video.astro`).
+ *
+ * Hard invariants (REQ-062, REQ-039, REQ-040; PLAN §7.3; TASK-060):
+ * - Renders native HTML5 `<video controls preload="none" playsinline poster="..." width="..." height="...">`.
+ * - NEVER renders `autoplay` (strictly forbidden).
+ * - Strictly rejects `placement="hero"` (renders nothing; video is never allowed in hero).
+ * - Sanitizes `src`, `posterUrl`, and `captionsUrl` (rejects `/quarantine/`, `javascript:`, `data:`, traversal).
+ * - Reserves explicit aspect ratio & dimensions to guarantee zero CLS.
+ * - Zero client JS framework runtime, zero `@base-ui/react`, zero admin CSS.
+ * - Stays inert in `isPreview` mode (does not mount playback controls or load video bytes).
+ */
+
+export interface Props {
+  readonly src: string;
+  readonly posterUrl: string;
+  readonly width: number;
+  readonly height: number;
+  readonly title: string;
+  readonly caption?: string | null;
+  readonly captionsUrl?: string | null;
+  readonly captionsLang?: string | null;
+  readonly captionsLabel?: string | null;
+  readonly durationSeconds?: number | null;
+  readonly placement?: "portfolio" | "gallery" | "offering" | "post" | "rich_text" | "hero";
+  readonly mode?: "published" | "preview";
+  readonly isPreview?: boolean;
+  readonly headingLevel?: "h2" | "h3" | "p";
+  readonly testId?: string;
+}
+
+const {
+  src,
+  posterUrl,
+  width,
+  height,
+  title,
+  caption = null,
+  captionsUrl = null,
+  captionsLang = "id",
+  captionsLabel = "Bahasa Indonesia",
+  durationSeconds = null,
+  placement = "portfolio",
+  mode,
+  isPreview = false,
+  headingLevel = "h3",
+  testId = "short-video",
+} = Astro.props;
+
+const placementCheck = validateVideoPlacement(placement);
+const safeSrc = sanitizePublicVideoAssetUrl(src);
+const safePoster = sanitizePublicVideoAssetUrl(posterUrl);
+const safeCaptions = captionsUrl ? sanitizePublicVideoAssetUrl(captionsUrl) : null;
+const safeLang = validateCaptionLanguageTag(captionsLang) ?? "id";
+const safeLabel = captionsLabel?.trim().slice(0, 60) || "Bahasa Indonesia";
+const safeTitle = title.trim() || "Video pendek";
+const safeCaption = caption?.trim() || null;
+const previewMode = mode === "preview" || Boolean(isPreview);
+
+const safeWidth =
+  Number.isFinite(width) && width >= 1 ? Math.min(Math.round(width), MAX_VIDEO_WIDTH) : 1280;
+const safeHeight =
+  Number.isFinite(height) && height >= 1 ? Math.min(Math.round(height), MAX_VIDEO_HEIGHT) : 720;
+
+function formatDuration(sec: number | null): string | null {
+  if (sec === null || !Number.isFinite(sec) || sec <= 0) return null;
+  const total = Math.round(sec);
+  const mins = Math.floor(total / 60);
+  const rem = total % 60;
+  return `${mins}:${String(rem).padStart(2, "0")}`;
+}
+
+const durationLabel = formatDuration(durationSeconds);
+const canRender = placementCheck.ok && Boolean(safeSrc) && Boolean(safePoster);
+---
+
+{canRender && safeSrc && safePoster && (
+  <article
+    class="ps-video-card"
+    data-ps-short-video
+    data-video-placement={placementCheck.ok ? placementCheck.placement : "rejected"}
+    data-video-preview={previewMode ? "true" : undefined}
+    data-testid={testId}
+    aria-label={`Video: ${safeTitle}`}
+  >
+    <div
+      class="ps-video-stage"
+      style={`aspect-ratio: ${safeWidth} / ${safeHeight};`}
+    >
+      {previewMode ? (
+        <div class="ps-video-preview-frame" data-testid={`${testId}-preview`}>
+          <img
+            src={safePoster}
+            alt={`Poster video: ${safeTitle}`}
+            width={safeWidth}
+            height={safeHeight}
+            loading="lazy"
+            decoding="async"
+            class="ps-video-poster-img"
+          />
+          <span class="ps-video-preview-pill" aria-hidden="true">
+            Pratinjau Video (Klik Putar saat Tayang)
+          </span>
+        </div>
+      ) : (
+        <video
+          class="ps-video-player"
+          controls
+          preload="none"
+          playsinline
+          poster={safePoster}
+          width={safeWidth}
+          height={safeHeight}
+          aria-label={safeTitle}
+          data-testid={`${testId}-player`}
+        >
+          <source src={safeSrc} type="video/mp4" />
+          {safeCaptions && (
+            <track
+              kind="captions"
+              src={safeCaptions}
+              srclang={safeLang}
+              label={safeLabel}
+              default
+            />
+          )}
+          <p class="ps-video-fallback">
+            Peramban Anda tidak mendukung pemutar video HTML5.
+          </p>
+        </video>
+      )}
+    </div>
+
+    <div class="ps-video-body">
+      <div class="ps-video-meta">
+        <span class="ps-video-badge">Video MP4</span>
+        <span class="ps-video-specs">
+          {safeWidth}×{safeHeight}
+          {durationLabel ? ` · ${durationLabel}` : ""}
+          {safeCaptions ? " · Takarir" : ""}
+        </span>
+      </div>
+
+      {headingLevel === "h2" ? (
+        <h2 class="ps-video-title">{safeTitle}</h2>
+      ) : headingLevel === "p" ? (
+        <p class="ps-video-title">{safeTitle}</p>
+      ) : (
+        <h3 class="ps-video-title">{safeTitle}</h3>
+      )}
+
+      {safeCaption && <p class="ps-video-caption">{safeCaption}</p>}
+    </div>
+  </article>
+)}
+
+<style>
+  .ps-video-card {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    width: 100%;
+    height: 100%;
+    background-color: var(--ps-surface, #ffffff);
+    color: var(--ps-ink, #111c19);
+    border: 1px solid var(--ps-border, #d8e2dc);
+    border-radius: var(--ps-radius, 8px);
+    overflow: hidden;
+  }
+
+  .ps-video-stage {
+    position: relative;
+    width: 100%;
+    background-color: #132220;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+
+  .ps-video-player,
+  .ps-video-preview-frame,
+  .ps-video-poster-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .ps-video-player:focus-visible {
+    outline: 3px solid var(--ps-focus-ring, #176b51);
+    outline-offset: -3px;
+  }
+
+  .ps-video-preview-frame {
+    position: relative;
+  }
+
+  .ps-video-preview-pill {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 0.5rem 0.9rem;
+    border-radius: 999px;
+    background-color: rgba(17, 28, 25, 0.84);
+    color: #ffffff;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-align: center;
+    max-width: 88%;
+  }
+
+  .ps-video-body {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    gap: 0.4rem;
+    padding: 0.9rem 1rem 1rem;
+    min-width: 0;
+    background-color: var(--ps-surface-muted, #f4f7f5);
+    border-top: 1px solid var(--ps-border, #d8e2dc);
+  }
+
+  .ps-video-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.375rem;
+  }
+
+  .ps-video-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.18rem 0.5rem;
+    border-radius: var(--ps-radius-sm, 6px);
+    border: 1px solid var(--ps-border, #d8e2dc);
+    background-color: var(--ps-surface, #ffffff);
+    color: var(--ps-ink, #111c19);
+    font-size: 0.75rem;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+
+  .ps-video-specs {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--ps-ink-muted, #4b5c55);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ps-video-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.35;
+    color: var(--ps-ink, #111c19);
+    overflow-wrap: anywhere;
+  }
+
+  .ps-video-caption {
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--ps-ink-muted, #4b5c55);
+    overflow-wrap: anywhere;
+  }
+
+  .ps-video-fallback {
+    margin: 0;
+    padding: 1rem;
+    color: #ffffff;
+    font-size: 0.875rem;
+  }
+</style>

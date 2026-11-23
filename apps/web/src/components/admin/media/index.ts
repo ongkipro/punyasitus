@@ -13,9 +13,22 @@ export {
   type TargetDimensions,
 } from "./client-image-processor";
 export {
+  MAX_CLIENT_CAPTION_BYTES,
+  MAX_CLIENT_VIDEO_BYTES,
+  MAX_CLIENT_VIDEOS_PER_SITE,
+  prepareVideoFileForUpload,
+  prepareWebVttCaptionFile,
+  resolveEligibleVideoMime,
+  tryCaptureClientVideoPosterWebp,
+  VideoClientValidationError,
+  type PreparedVideoUpload,
+  type VideoClientValidationErrorKind,
+} from "./client-video-processor";
+export {
   MediaPickerSheet,
   type MediaLibraryItemDto,
   type MediaPickerSheetProps,
+  type VideoSlotsDto,
 } from "./MediaPickerSheet";
 export {
   MediaLibraryManager,

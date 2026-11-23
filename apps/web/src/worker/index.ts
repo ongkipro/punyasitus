@@ -20,6 +20,7 @@ import {
   createMediaJobRegistry,
   sweepAllTenantsExpiredQuarantine,
 } from "./queues/media/index.ts";
+import { createVideoJobRegistry } from "./queues/media/video/index.ts";
 import { createRetentionJobRegistry } from "./queues/retention/index.ts";
 import { createSeoJobRegistry } from "./queues/seo/index.ts";
 
@@ -33,6 +34,7 @@ type AstroCtx = Parameters<typeof handle>[2];
 const WORKER_JOB_REGISTRY: DurableJobRegistry = {
   ...createRetentionJobRegistry(),
   ...createMediaJobRegistry(),
+  ...createVideoJobRegistry(),
   ...createDomainJobRegistry(),
   ...createSeoJobRegistry(),
   [EMAIL_DELIVERY_TOPIC]: createEmailQueueHandler({
