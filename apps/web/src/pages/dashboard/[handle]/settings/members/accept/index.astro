@@ -1,0 +1,47 @@
+---
+import { env } from "cloudflare:workers";
+import "../../../../../../styles/admin/globals.css";
+import { AcceptInvitation } from "../_AcceptInvitation";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const inviteToken = (Astro.url.searchParams.get("inviteToken") ?? "").trim();
+const userEmail = Astro.locals.authUser?.email ?? null;
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+---
+
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Terima Undangan — PunyaSitus</title>
+  </head>
+  <body class="min-h-screen bg-background text-foreground">
+    <main>
+      <AcceptInvitation
+        client:load
+        handle={rawHandle}
+        inviteToken={inviteToken}
+        userEmail={userEmail}
+      />
+    </main>
+  </body>
+</html>

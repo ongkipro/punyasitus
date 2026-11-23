@@ -42,6 +42,8 @@ const CSRF_PROTECTED_API_PREFIXES = [
 ] as const;
 
 const DASHBOARD_HANDLE_RE = /^\/dashboard\/([^/]+)(?:\/|$)/i;
+const DASHBOARD_INVITATION_ACCEPT_RE =
+  /^\/dashboard\/[^/]+\/settings\/members\/accept(?:\/api)?$/i;
 const ENCODED_SLASH_OR_BACKSLASH_RE = /%(?:2f|5c|00)/i;
 
 /**
@@ -518,10 +520,37 @@ export async function executeAuthMiddleware(
 
   // 5. Dashboard handle membership enforcement (`/dashboard/{handle}/**`):
   // - Unauthenticated -> redirect to `/auth/login?next=...` (no handle existence leak)
-  // - Authenticated non-member or unknown handle -> neutral `404` (PLAN §4, TASK-025)
+  // - Narrow exemption for `/dashboard/{handle}/settings/members/accept` (& `/accept/api`):
+  //   requires authenticated session + strict CSRF/Origin on state-changing requests, skips
+  //   existing-membership check so invited non-members can redeem identity-bound tokens.
+  // - Authenticated non-member or unknown handle on all other dashboard routes -> neutral `404`
   const dashboardHandle = extractDashboardHandle(pathname);
   if (dashboardHandle) {
+    const isInvitationAcceptPath = DASHBOARD_INVITATION_ACCEPT_RE.test(pathname);
+
+    if (isInvitationAcceptPath && STATE_CHANGING_METHODS.has(method)) {
+      const expectedAdminOrigin = resolveExpectedAdminOrigin(context.request, {
+        surface,
+        platformDomain: env.PLATFORM_DOMAIN,
+        isLocalLoopback,
+      });
+      if (!expectedAdminOrigin) {
+        return jsonAuthError(404, "NOT_FOUND", "Endpoint tidak ditemukan.");
+      }
+      const csrfResult = assertAdminCsrfAndOrigin(context.request, expectedAdminOrigin);
+      if (!csrfResult.ok) {
+        return jsonAuthError(csrfResult.status, csrfResult.code, csrfResult.reason);
+      }
+    }
+
     if (!context.locals.authUser) {
+      if (isInvitationAcceptPath && pathnameLower.endsWith("/api")) {
+        return jsonAuthError(
+          401,
+          "UNAUTHENTICATED",
+          "Sesi Anda telah berakhir. Silakan masuk kembali.",
+        );
+      }
       const nextTarget = `${pathname}${url.search}`;
       return new Response(null, {
         status: 302,
@@ -531,6 +560,10 @@ export async function executeAuthMiddleware(
           "X-Robots-Tag": "noindex, nofollow",
         },
       });
+    }
+
+    if (isInvitationAcceptPath) {
+      return next();
     }
 
     if (!env.PLATFORM_DB) {
