@@ -1,5 +1,6 @@
 import * as React from "react";
 import {
+  ActivityIcon,
   AlertCircleIcon,
   BellIcon,
   BellOffIcon,
@@ -11,6 +12,7 @@ import {
   MessageCircleIcon,
   RefreshCwIcon,
   SearchIcon,
+  Trash2Icon,
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -75,6 +77,7 @@ export interface LeadsInboxProps {
   readonly tenantName: string;
   readonly lifecycleStatus: string;
   readonly canUpdate: boolean;
+  readonly canDelete?: boolean;
   readonly canExportCsv: boolean;
   readonly initialItems: readonly LeadInboxItemDto[];
   readonly initialCounts: LeadStatusCountsDto;
@@ -132,6 +135,7 @@ export function LeadsInbox({
   tenantName,
   lifecycleStatus,
   canUpdate,
+  canDelete = false,
   canExportCsv,
   initialItems,
   initialCounts,
@@ -171,6 +175,9 @@ export function LeadsInbox({
     readonly message: string;
   } | null>(null);
   const [drawerSuccess, setDrawerSuccess] = React.useState<string | null>(null);
+  const [confirmingDelete, setConfirmingDelete] = React.useState(false);
+  const [deletingLead, setDeletingLead] = React.useState(false);
+  const [deletedBanner, setDeletedBanner] = React.useState<string | null>(null);
 
   const isLocked = lifecycleStatus === "locked";
   const isSuspended = lifecycleStatus === "suspended";
@@ -234,6 +241,58 @@ export function LeadsInbox({
     setDraftNotes(lead.internalNotes ?? "");
     setDrawerError(null);
     setDrawerSuccess(null);
+    setConfirmingDelete(false);
+  }
+
+  async function handleDeleteSelectedLead() {
+    if (!selectedLead || !canDelete || deletingLead) return;
+    setDeletingLead(true);
+    setDrawerError(null);
+    setDrawerSuccess(null);
+
+    try {
+      const target = selectedLead;
+      const res = await fetch(`${apiBase}/${target.id}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+        },
+        body: JSON.stringify({ expectedVersion: target.version }),
+      });
+
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as {
+          error?: { code?: string; message?: string };
+        } | null;
+        setDrawerError({
+          code: data?.error?.code ?? "DELETE_FAILED",
+          message:
+            data?.error?.message ?? "Gagal menghapus pesan masuk secara permanen. Silakan coba lagi.",
+        });
+        return;
+      }
+
+      setItems((prev) => prev.filter((it) => it.id !== target.id));
+      setCounts((prev) => ({
+        ...prev,
+        all: Math.max(0, prev.all - 1),
+        [target.status]: Math.max(0, prev[target.status] - 1),
+      }));
+      setSelectedLead(null);
+      setConfirmingDelete(false);
+      setDeletedBanner(
+        `Pesan #${target.id} telah dihapus secara permanen beserta data jawabannya dan dicatat di log aktivitas.`,
+      );
+    } catch {
+      setDrawerError({
+        code: "NETWORK_ERROR",
+        message: "Koneksi terputus saat menghapus pesan masuk. Silakan coba lagi.",
+      });
+    } finally {
+      setDeletingLead(false);
+    }
   }
 
   async function handleFilterChange(nextFilter: LeadFilterStatus) {
@@ -430,6 +489,16 @@ export function LeadsInbox({
               <span>Unduh CSV</span>
             </Button>
           )}
+
+          <Button
+            variant="outline"
+            className="min-h-11 md:min-h-9"
+            data-testid="leads-activity-log-link"
+            render={<a href={`/dashboard/${encodeURIComponent(handle)}/settings/activity`} />}
+          >
+            <ActivityIcon className="size-4" aria-hidden="true" />
+            <span>Log Aktivitas</span>
+          </Button>
         </div>
       </div>
 
@@ -472,6 +541,14 @@ export function LeadsInbox({
               </AlertDescription>
             </Alert>
           )}
+
+      {deletedBanner && (
+        <Alert variant="success" data-testid="lead-deleted-banner">
+          <CheckCircle2Icon className="size-4" aria-hidden="true" />
+          <AlertTitle>Pesan masuk dihapus permanen</AlertTitle>
+          <AlertDescription>{deletedBanner}</AlertDescription>
+        </Alert>
+      )}
 
       {notifFeedback && (
         <Alert
@@ -964,6 +1041,70 @@ export function LeadsInbox({
                     data-testid="lead-notes-input"
                   />
                 </div>
+
+                {/* Permanent Single-Lead Deletion (Owner / Admin; REQ-094) */}
+                {canDelete && (
+                  <div className="space-y-2.5 rounded-lg border border-destructive-border bg-destructive-soft/40 p-3.5">
+                    <div className="space-y-0.5">
+                      <h3 className="text-xs font-semibold tracking-wide text-destructive uppercase">
+                        Hapus Permanen Pesan Masuk
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Menghapus pesan #{selectedLead.id} beserta data kontak, jawaban formulir,
+                        dan catatan persetujuannya secara permanen. Tindakan ini dicatat di Log
+                        Aktivitas tanpa menyimpan data pribadi yang dihapus.
+                      </p>
+                    </div>
+                    {!confirmingDelete ? (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        size="sm"
+                        className="min-h-11 w-full md:min-h-9"
+                        disabled={savingLead || deletingLead}
+                        data-testid="lead-delete-request-btn"
+                        onClick={() => setConfirmingDelete(true)}
+                      >
+                        <Trash2Icon className="size-4" aria-hidden="true" />
+                        <span>Hapus Permanen Pesan #{selectedLead.id}</span>
+                      </Button>
+                    ) : (
+                      <div
+                        className="space-y-2 rounded-md border border-destructive-border bg-card p-3"
+                        data-testid="lead-delete-confirm-panel"
+                      >
+                        <p className="text-xs font-medium text-foreground">
+                          Konfirmasi penghapusan permanen pesan #{selectedLead.id}? Data tidak dapat
+                          dipulihkan setelah dihapus.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="min-h-11 flex-1 md:min-h-9"
+                            disabled={deletingLead}
+                            data-testid="lead-delete-cancel-btn"
+                            onClick={() => setConfirmingDelete(false)}
+                          >
+                            Batal
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="destructive"
+                            size="sm"
+                            className="min-h-11 flex-1 md:min-h-9"
+                            disabled={deletingLead}
+                            data-testid="lead-delete-confirm-btn"
+                            onClick={handleDeleteSelectedLead}
+                          >
+                            {deletingLead ? "Menghapus..." : "Ya, Hapus Permanen"}
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <SheetFooter>

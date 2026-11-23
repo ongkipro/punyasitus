@@ -1,0 +1,216 @@
+---
+import { env } from "cloudflare:workers";
+import { canPerform } from "@punyasitus/auth";
+import {
+  listTenantActivityLog,
+  type TenantActivityLogEntry,
+} from "@punyasitus/db/activity-log/index";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import type { TenantVertical } from "@punyasitus/db/platform";
+import { LockIcon, ShieldAlertIcon } from "lucide-react";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { bindTenantDatabase } from "@/core/tenant";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { ActivityLogPanel } from "./_ActivityLogPanel";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+function neutralNotFoundResponse(): Response {
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Halaman tidak ditemukan</title></head><body><main><h1>Halaman tidak ditemukan</h1></main></body></html>`,
+    {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+        "Content-Security-Policy": "default-src 'none'",
+      },
+    },
+  );
+}
+
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return neutralNotFoundResponse();
+}
+
+const authorized = Astro.locals.authorizedTenantMember;
+const authUser = Astro.locals.authUser;
+if (!authorized || !authUser || !env.PLATFORM_DB) {
+  return neutralNotFoundResponse();
+}
+
+function mapLifecycle(status: string): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+function offeringLabelForVertical(vertical?: TenantVertical): string {
+  switch (vertical) {
+    case "catalog":
+    case "resto":
+      return "Produk";
+    case "travel":
+      return "Paket Tur";
+    case "dealer":
+      return "Kendaraan";
+    default:
+      return "Layanan";
+  }
+}
+
+const saasZone = env.SAAS_ZONE || "situsku.click";
+
+const tenantMeta = await env.PLATFORM_DB.prepare(
+  `SELECT
+     t.vertical AS vertical,
+     t.operator_hold_reason AS operator_hold_reason,
+     t.trial_ends_at AS trial_ends_at,
+     ph.host AS primary_host
+   FROM tenants t
+   LEFT JOIN tenant_hosts ph
+     ON ph.tenant_id = t.id
+     AND ph.is_primary = 1
+     AND ph.status = 'active'
+     AND ph.ssl_status = 'active'
+   WHERE t.id = ?
+   LIMIT 1`,
+)
+  .bind(authorized.tenantId)
+  .first<{
+    readonly vertical: TenantVertical;
+    readonly operator_hold_reason: string | null;
+    readonly trial_ends_at: number | null;
+    readonly primary_host: string | null;
+  }>();
+
+const primaryHost = tenantMeta?.primary_host ?? `${authorized.handle}.${saasZone}`;
+const primaryOrigin = `https://${primaryHost}`;
+const lifecycleStatus = mapLifecycle(authorized.tenantStatus);
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof tenantMeta?.trial_ends_at === "number"
+    ? Math.max(0, Math.ceil((tenantMeta.trial_ends_at - Date.now()) / 86_400_000))
+    : undefined;
+
+const canReadActivity = canPerform(authorized.role, "settings:read");
+
+let initialItems: readonly TenantActivityLogEntry[] = [];
+let initialTotalCount = 0;
+let initialNextCursor: string | null = null;
+let initialHasMore = false;
+let initialLoadError: string | null = null;
+
+if (!canReadActivity) {
+  Astro.response.status = 403;
+} else if (lifecycleStatus === "suspended") {
+  Astro.response.status = 403;
+} else {
+  const tenantDb = bindTenantDatabase(
+    env.TENANT_STORE as unknown as TenantStoreNamespaceLike,
+    authorized.tenantId,
+  );
+  if (tenantDb) {
+    try {
+      const page = await listTenantActivityLog(tenantDb, { limit: 20 });
+      initialItems = page.items;
+      initialTotalCount = page.totalCount;
+      initialNextCursor = page.page.nextCursor;
+      initialHasMore = page.page.hasMore;
+    } catch {
+      if (!isLocalLoopback) {
+        Astro.response.status = 503;
+        initialLoadError =
+          "Log aktivitas situs sementara tidak dapat dimuat. Silakan muat ulang halaman.";
+      }
+    }
+  } else if (!isLocalLoopback) {
+    Astro.response.status = 503;
+    initialLoadError = "Penyimpanan data tenant sementara tidak tersedia.";
+  }
+}
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+Astro.response.headers.set("Vary", "Cookie");
+
+const userRoleLabel =
+  authorized.role === "owner"
+    ? "Pemilik Situs"
+    : authorized.role === "agency_admin"
+      ? "Admin Agensi"
+      : authorized.role === "admin"
+        ? "Admin"
+        : "Editor";
+---
+
+<DashboardLayout
+  title={`Log Aktivitas — ${authorized.tenantName}`}
+  surface="dashboard"
+  workspaceName={authorized.tenantName}
+  workspaceSubtitle={primaryHost}
+  activeNavId="settings"
+  basePath={`/dashboard/${authorized.handle}`}
+  offeringLabel={offeringLabelForVertical(tenantMeta?.vertical)}
+  lifecycleStatus={lifecycleStatus}
+  lifecycleDaysRemaining={lifecycleDaysRemaining}
+  lifecycleReason={tenantMeta?.operator_hold_reason ?? undefined}
+  publicSiteHref={primaryOrigin}
+  userDisplayName={authUser.name}
+  userRoleLabel={userRoleLabel}
+>
+  {!canReadActivity ? (
+    <div class="space-y-4" data-testid="activity-permission-denied">
+      <div class="space-y-1">
+        <h1 class="text-2xl font-bold tracking-[-0.02em] text-foreground">Log Aktivitas Situs</h1>
+        <p class="text-sm text-muted-foreground">
+          Akses log aktivitas dibatasi hanya untuk Pemilik Situs dan Admin.
+        </p>
+      </div>
+      <Alert variant="destructive">
+        <ShieldAlertIcon className="size-4" aria-hidden="true" />
+        <AlertTitle>Akses Ditolak</AlertTitle>
+        <AlertDescription>
+          Peran <strong>Editor</strong> tidak memiliki izin untuk melihat log aktivitas situs.
+          Hubungi Pemilik Situs atau Admin apabila Anda memerlukan informasi audit.
+        </AlertDescription>
+      </Alert>
+    </div>
+  ) : lifecycleStatus === "suspended" ? (
+    <div class="space-y-4" data-testid="activity-suspended-notice">
+      <div class="space-y-1">
+        <h1 class="text-2xl font-bold tracking-[-0.02em] text-foreground">Log Aktivitas Situs</h1>
+      </div>
+      <Alert variant="destructive">
+        <LockIcon className="size-4" aria-hidden="true" />
+        <AlertTitle>Situs sedang dinonaktifkan sementara</AlertTitle>
+        <AlertDescription>
+          Log aktivitas tidak dapat diakses saat situs berstatus ditangguhkan (suspended).
+        </AlertDescription>
+      </Alert>
+    </div>
+  ) : (
+    <ActivityLogPanel
+      client:load
+      tenantId={authorized.tenantId}
+      handle={authorized.handle}
+      tenantName={authorized.tenantName}
+      initialItems={initialItems}
+      initialTotalCount={initialTotalCount}
+      initialNextCursor={initialNextCursor}
+      initialHasMore={initialHasMore}
+      initialLoadError={initialLoadError}
+    />
+  )}
+</DashboardLayout>

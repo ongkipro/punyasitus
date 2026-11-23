@@ -1,3 +1,4 @@
+import { deleteSingleLeadPermanently } from "@punyasitus/db/activity-log/index";
 import {
   getLeadById,
   updateLeadStatus,
@@ -14,16 +15,18 @@ import {
   mapLeadDomainErrorToResponse,
   parseLeadIdParam,
   parseStrictLeadJsonBody,
+  PRIVATE_NO_STORE_JSON_HEADERS,
   type TenantLeadsHandlerOptions,
   type TenantLeadsRuntimeEnv,
 } from "./_shared.ts";
 
 /**
  * Tenant-scoped Lead Inbox single-item endpoint:
- * - `GET   /api/tenants/:tenantId/leads/:leadId` -> read single lead
- * - `PATCH /api/tenants/:tenantId/leads/:leadId` -> update status + optional internalNotes with optimistic `version` (`409 STALE_VERSION`)
+ * - `GET    /api/tenants/:tenantId/leads/:leadId` -> read single lead
+ * - `PATCH  /api/tenants/:tenantId/leads/:leadId` -> update status + optional internalNotes with optimistic `version` (`409 STALE_VERSION`)
+ * - `DELETE /api/tenants/:tenantId/leads/:leadId` -> permanently delete single lead & dedup record with atomic PII-free `tenant_activity_log` entry (`204 No Content`)
  *
- * TASK-021 (`REQ-031`, `REQ-032`, `REQ-038`).
+ * TASK-021 (`REQ-031`, `REQ-032`, `REQ-038`) & TASK-094 (`REQ-094`, `REQ-039`).
  */
 
 const UPDATE_LEAD_ALLOWED_KEYS = new Set([
@@ -32,6 +35,8 @@ const UPDATE_LEAD_ALLOWED_KEYS = new Set([
   "version",
   "expectedVersion",
 ]);
+
+const DELETE_LEAD_ALLOWED_KEYS = new Set(["version", "expectedVersion"]);
 
 function extractExpectedVersion(
   body: Record<string, unknown>,
@@ -82,7 +87,7 @@ export async function handleTenantLeadDetailRequest(
   const method = request.method.toUpperCase();
   const requestId = options.requestId ?? createRequestId();
 
-  if (method !== "GET" && method !== "PATCH") {
+  if (method !== "GET" && method !== "PATCH" && method !== "DELETE") {
     const auth = await authorizeTenantLeadRequest(tenantId, request, runtimeEnv, "lead:read", {
       ...options,
       requestId,
@@ -94,11 +99,12 @@ export async function handleTenantLeadDetailRequest(
       "Metode HTTP tidak diizinkan untuk detail pesan masuk.",
       requestId,
       undefined,
-      { Allow: "GET, PATCH" },
+      { Allow: "GET, PATCH, DELETE" },
     );
   }
 
-  const requiredPermission = method === "GET" ? "lead:read" : "lead:update";
+  const requiredPermission =
+    method === "GET" ? "lead:read" : method === "DELETE" ? "lead:delete" : "lead:update";
   const auth = await authorizeTenantLeadRequest(
     tenantId,
     request,
@@ -120,6 +126,54 @@ export async function handleTenantLeadDetailRequest(
         return leadErrorResponse(404, "NOT_FOUND", "Pesan masuk tidak ditemukan.", requestId);
       }
       return leadJsonResponse(200, formatLeadRecordResponse(lead, primaryOrigin));
+    }
+
+    if (method === "DELETE") {
+      let expectedVersion: number | undefined;
+      const urlVersion = new URL(request.url).searchParams.get("version");
+      if (urlVersion !== null && urlVersion.trim() !== "") {
+        const parsedQueryVersion = Number(urlVersion.trim());
+        if (
+          !Number.isSafeInteger(parsedQueryVersion) ||
+          parsedQueryVersion < 1 ||
+          parsedQueryVersion > 2_147_483_647
+        ) {
+          return leadErrorResponse(
+            422,
+            "VALIDATION_ERROR",
+            "Parameter version harus berupa bilangan bulat positif.",
+            requestId,
+            [{ field: "version", code: "INVALID_VERSION", message: "Expected positive integer version." }],
+          );
+        }
+        expectedVersion = parsedQueryVersion;
+      } else {
+        const clonedText = (await request.clone().text()).trim();
+        if (clonedText.length > 0) {
+          const parsedBody = await parseStrictLeadJsonBody(
+            request,
+            DELETE_LEAD_ALLOWED_KEYS,
+            requestId,
+          );
+          if (!parsedBody.ok) return parsedBody.response;
+          const versionCheck = extractExpectedVersion(parsedBody.body, requestId);
+          if (!versionCheck.ok) return versionCheck.response;
+          expectedVersion = versionCheck.expectedVersion;
+        }
+      }
+
+      await deleteSingleLeadPermanently(tenantDb, {
+        leadId: parsedId.leadId,
+        expectedVersion,
+        actorUserId: member.userId,
+        actorRole: member.role,
+        nowMs: options.nowMs,
+      });
+
+      const headers = new Headers(PRIVATE_NO_STORE_JSON_HEADERS);
+      headers.delete("Content-Type");
+      headers.set("X-Request-Id", requestId);
+      return new Response(null, { status: 204, headers });
     }
 
     // PATCH /api/tenants/:tenantId/leads/:leadId
