@@ -25,6 +25,11 @@ import {
   isRetryableDefiniteRefusalCode,
   recordEmailOutcome,
 } from "@punyasitus/db/email/index";
+import {
+  BILLING_ADVICE_RECONCILE_TOPIC,
+  createBillingAdviceReconciliationHandler,
+  type RunBillingAdviceSweepOptions,
+} from "./advice-reconciliation.ts";
 import type { DurableJobHandler, DurableQueueEnv, JobExecutionContext } from "../consumer.ts";
 import { BILLING_LIFECYCLE_SWEEP_TOPIC } from "../dispatch/billing.ts";
 
@@ -433,9 +438,17 @@ export function createBillingLifecycleSweepHandler(
 export function createBillingJobRegistry(
   options: Omit<RunBillingLifecycleSweepOptions, "nowMs"> & {
     readonly now?: () => number;
+    readonly adviceReconciliation?: Omit<RunBillingAdviceSweepOptions, "nowMs">;
   } = {},
 ): Readonly<Record<string, DurableJobHandler>> {
-  return {
+  const registry: Record<string, DurableJobHandler> = {
     [BILLING_LIFECYCLE_SWEEP_TOPIC]: createBillingLifecycleSweepHandler(options),
   };
+  if (options.adviceReconciliation) {
+    registry[BILLING_ADVICE_RECONCILE_TOPIC] = createBillingAdviceReconciliationHandler({
+      ...options.adviceReconciliation,
+      now: options.now,
+    });
+  }
+  return registry;
 }
