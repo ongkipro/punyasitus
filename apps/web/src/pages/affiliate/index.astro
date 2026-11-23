@@ -1,0 +1,108 @@
+---
+import { env } from "cloudflare:workers";
+import AffiliateLayout from "@/layouts/AffiliateLayout.astro";
+import {
+  affiliateNeutralNotFoundResponse,
+  authorizeAffiliateRequest,
+  loadAffiliatePortalOverview,
+  resolveAffiliatePortalRuntimeEnv,
+} from "../api/affiliate/_shared";
+import { AffiliateDashboardPanel } from "./_AffiliateDashboardPanel";
+import { AffiliateEnrollmentPanel } from "./_AffiliateEnrollmentPanel";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const affiliateEnv = resolveAffiliatePortalRuntimeEnv(env as unknown as Record<string, unknown>);
+const authz = await authorizeAffiliateRequest(
+  Astro.request,
+  affiliateEnv,
+  {
+    requireAffiliateAccount: false,
+    enforceCsrf: false,
+  },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? {
+          id: Astro.locals.authUser.id,
+          email: Astro.locals.authUser.email,
+          name: Astro.locals.authUser.name,
+        }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  if (authz.response.status === 404) {
+    return affiliateNeutralNotFoundResponse();
+  }
+  if (authz.response.status === 401) {
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: "/auth/login?next=%2Faffiliate",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    });
+  }
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>Akses Portal Afiliasi Dibatasi</title></head><body><main><h1>Akses Portal Afiliasi Dibatasi</h1><p>Anda tidak memiliki izin untuk membuka Portal Afiliasi saat ini.</p></main></body></html>`,
+    {
+      status: authz.response.status,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    },
+  );
+}
+
+const { affiliate, platformDb, nowMs, userName, userEmail, emailVerified } = authz.ctx;
+const overview = affiliate
+  ? await loadAffiliatePortalOverview(platformDb, affiliate, { nowMs })
+  : null;
+---
+
+<AffiliateLayout
+  title={overview ? "Beranda Afiliasi" : "Daftar Mitra Afiliasi"}
+  workspaceName="Portal Afiliasi"
+  workspaceSubtitle={
+    overview?.affiliate.referralCode
+      ? `Kode ${overview.affiliate.referralCode}`
+      : "Program Afiliasi PunyaSitus"
+  }
+  activeNavId="home"
+  basePath="/affiliate"
+  userDisplayName={userName}
+  userRoleLabel={overview ? "Mitra Afiliasi" : "Pengguna Terdaftar"}
+>
+  {!overview ? (
+    <div class="space-y-5" data-testid="affiliate-enrollment-page">
+      <header class="space-y-1">
+        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+          Gabung Program Afiliasi PunyaSitus
+        </h1>
+        <p class="text-sm text-muted-foreground">
+          Akun Anda belum terdaftar sebagai mitra afiliasi. Lengkapi rekening pencairan dan setujui
+          ketentuan program untuk mengajukan aktivasi.
+        </p>
+      </header>
+
+      <AffiliateEnrollmentPanel
+        client:load
+        userName={userName}
+        userEmail={userEmail}
+        emailVerified={emailVerified}
+      />
+    </div>
+  ) : (
+    <div data-testid="affiliate-overview-page" data-affiliate-id={overview.affiliate.id}>
+      <AffiliateDashboardPanel client:load overview={overview} />
+    </div>
+  )}
+</AffiliateLayout>
