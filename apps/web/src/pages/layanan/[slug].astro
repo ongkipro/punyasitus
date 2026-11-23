@@ -1,11 +1,14 @@
 ---
 import { env } from "cloudflare:workers";
+import type { ServiceConsultationAttributes } from "@punyasitus/core/catalog/service";
+import { createTenantDb, openTenantStoreStub } from "@punyasitus/db/connections";
 import { enrichPublicOfferingDetailResult } from "../../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
   resolveOfferingDetailRoute,
 } from "../../core/public-routes.ts";
+import { loadFrozenPublishedServiceBySlug } from "../dashboard/[handle]/catalog/services/_api-handler.ts";
 import OfferingDetailView from "./_OfferingDetailView.astro";
 import PublicNotFoundView from "./_PublicNotFoundView.astro";
 
@@ -30,6 +33,21 @@ const enriched =
   result.kind === "offering_detail"
     ? await enrichPublicOfferingDetailResult(result, deps)
     : null;
+
+let publishedServiceConsultation: ServiceConsultationAttributes | null = null;
+if (result.kind === "offering_detail") {
+  const tenantDb =
+    deps.tenantDb ??
+    (deps.tenantStore
+      ? createTenantDb(openTenantStoreStub(deps.tenantStore, result.tenant.id))
+      : null);
+  if (tenantDb) {
+    publishedServiceConsultation = await loadFrozenPublishedServiceBySlug(
+      tenantDb,
+      result.offering.slug,
+    );
+  }
+}
 ---
 
 {result.kind === "not_found" ? (
@@ -40,5 +58,6 @@ const enriched =
     headProps={enriched?.head ?? null}
     categoryLinks={enriched?.categoryLinks ?? []}
     sanitizedDescriptionHtml={enriched?.sanitizedDescriptionHtml ?? null}
+    serviceConsultation={publishedServiceConsultation}
   />
 )}
