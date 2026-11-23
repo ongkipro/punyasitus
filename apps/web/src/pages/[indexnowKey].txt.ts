@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { classifySurfaceHost, normalizeHost, PLATFORM_HOSTS } from "@punyasitus/core";
 import {
   constantTimeEqualStrings,
@@ -12,6 +13,10 @@ import {
 import { getPublishedResource } from "@punyasitus/db/publication/index";
 import { resolveTenantByHost } from "@punyasitus/db/routing/index";
 import type { APIRoute } from "astro";
+import {
+  checkSeoAutopilotActiveInTenantDb,
+  resolveAutopilotIndexNowKey,
+} from "../../../../packages/plugins/seo-ai-autopilot/index.ts";
 import type { TenantContext } from "../core/tenant.ts";
 import { readTenantSeoPluginConfig } from "../worker/queues/seo/indexnow.ts";
 import { readDiscoveryDepsFromAstroLocals } from "./sitemaps/_astro-env.ts";
@@ -21,23 +26,40 @@ import {
 } from "./sitemaps/_shared.ts";
 
 /**
- * Verified Custom-Domain `IndexNow` Key Verification Endpoint (`GET /<indexnowKey>.txt`, REQ-095).
+ * Verified Custom-Domain `IndexNow` Key Verification Endpoint (`GET /<indexnowKey>.txt`, REQ-095, REQ-102).
  *
  * Security & Isolation Invariants:
- * - Serves exact plain-text key (`text/plain; charset=utf-8`) ONLY when:
- *   1. `[indexnowKey]` is a valid 32–128 char alphanumeric/hyphen IndexNow key (also blocks
- *      speculative `/llms.txt` and path traversal with neutral `404`).
- *   2. Request host (strictly from `request.url`, never `X-Forwarded-Host` or `X-Tenant-ID`)
- *      is the tenant's **active, SSL-verified primary custom domain** (NEVER `*.situsku.click`).
- *   3. Tenant is in an indexable paid state (`active`, `grace`, `locked`, no `operatorHold`),
- *      `siteVisibility !== "noindex"`, and `seo-ai-autopilot` is enabled.
- *   4. Request key matches THIS tenant's stored `indexnowKey` in constant time.
- * - Any mismatch, wrong tenant key, `.situsku.click` trial/subdomain, suspended/recovery/purged
- *   tenant, platform host, or unknown host returns neutral `404` (`Cache-Control: no-store`,
- *   `X-Robots-Tag: noindex, nofollow`).
+ * - IndexNow key files are **public domain-control proofs** per the IndexNow protocol (never
+ *   authentication secrets). Deterministic zero-config keys use HMAC-SHA-256 keyed by Worker
+ *   secret (`INDEXNOW_KEY_SECRET ?? BETTER_AUTH_SECRET ?? AUTH_SECRET`) when configured.
+ * - Fails **CLOSED** (`404`, `Cache-Control: no-store`, `X-Robots-Tag: noindex, nofollow`) on
+ *   any TenantStore DB error, disabled `seo-ai-autopilot`, wrong/cross-tenant key, `.situsku.click`
+ *   trial/subdomain, unverified domain, `noindex`, or `suspended`/`recovery`/`purged` tenant.
+ * - Emits `Cache-Control: no-store` on `200` responses so disabling `seo-ai-autopilot` or
+ *   switching primary domains immediately serves `404` with zero stale edge cache.
  */
 
 const TEXT_CONTENT_TYPE = "text/plain; charset=utf-8" as const;
+
+export interface IndexNowKeyHandlerDeps extends DiscoveryHandlerDeps {
+  /** Optional Worker secret for HMAC-SHA-256 zero-config IndexNow key derivation. */
+  readonly indexnowKeySecret?: string | null;
+}
+
+function readIndexNowKeySecretFromWorkerEnv(): string | null {
+  try {
+    const bag = env as unknown as Record<string, unknown>;
+    for (const key of ["INDEXNOW_KEY_SECRET", "BETTER_AUTH_SECRET", "AUTH_SECRET"]) {
+      const value = bag[key];
+      if (typeof value === "string" && value.trim().length > 0) {
+        return value.trim();
+      }
+    }
+  } catch {
+    // Ignore outside workerd runtime
+  }
+  return null;
+}
 
 function createNeutralNotFound(request: Request): Response {
   const isHead = request.method.toUpperCase() === "HEAD";
@@ -55,7 +77,7 @@ function createNeutralNotFound(request: Request): Response {
 export async function handleIndexNowKeyRequest(
   request: Request,
   rawKeyParam: string | undefined,
-  deps: DiscoveryHandlerDeps,
+  deps: IndexNowKeyHandlerDeps,
 ): Promise<Response> {
   const method = request.method.toUpperCase();
   if (method !== "GET" && method !== "HEAD") {
@@ -189,6 +211,12 @@ export async function handleIndexNowKeyRequest(
     return createNeutralNotFound(request);
   }
 
+  // Fail CLOSED on TenantStore DB error before serving any IndexNow proof
+  const pluginCheck = await checkSeoAutopilotActiveInTenantDb(tenantDb);
+  if (!pluginCheck.ok || !pluginCheck.active) {
+    return createNeutralNotFound(request);
+  }
+
   const [publishedSiteSettings, pluginConfig] = await Promise.all([
     getPublishedResource(tenantDb, {
       resourceType: "site_settings",
@@ -206,7 +234,7 @@ export async function handleIndexNowKeyRequest(
     primaryHostSslStatus: hostSslStatus,
     primaryHostVerified: hostVerified,
     siteVisibility: publishedSiteSettings?.data.siteVisibility ?? "public",
-    seoAutopilotEnabled: pluginConfig.enabled,
+    seoAutopilotEnabled: pluginCheck.active && pluginConfig.enabled,
     saasZone,
   });
 
@@ -214,39 +242,51 @@ export async function handleIndexNowKeyRequest(
     return createNeutralNotFound(request);
   }
 
-  if (!pluginConfig.indexnowKey || !isValidIndexNowKey(pluginConfig.indexnowKey)) {
+  // Zero-config IndexNow key resolution (TASK-102): prefers stored tenant key if present
+  // (TASK-095 compatibility), otherwise derives the HMAC-SHA-256 keyed tenant-scoped key.
+  const keySecret =
+    deps.indexnowKeySecret !== undefined
+      ? deps.indexnowKeySecret
+      : readIndexNowKeySecretFromWorkerEnv();
+
+  const expectedKey = await resolveAutopilotIndexNowKey({
+    tenantId: tenant.id,
+    seoAutopilotActive: pluginCheck.active && pluginConfig.enabled,
+    storedKey: pluginConfig.indexnowKey,
+    secret: keySecret,
+  });
+
+  if (!expectedKey || !isValidIndexNowKey(expectedKey)) {
     return createNeutralNotFound(request);
   }
 
-  if (!constantTimeEqualStrings(keyParam, pluginConfig.indexnowKey)) {
+  if (!constantTimeEqualStrings(keyParam, expectedKey)) {
     return createNeutralNotFound(request);
   }
 
   const isHead = method === "HEAD";
-  return new Response(isHead ? null : pluginConfig.indexnowKey, {
+  return new Response(isHead ? null : expectedKey, {
     status: 200,
     headers: {
       "Content-Type": TEXT_CONTENT_TYPE,
-      "Cache-Control": "public, max-age=300, s-maxage=300",
+      "Cache-Control": "no-store",
       "X-Content-Type-Options": "nosniff",
     },
   });
 }
 
 export const GET: APIRoute = async ({ request, params, locals }) => {
-  return handleIndexNowKeyRequest(
-    request,
-    params.indexnowKey,
-    readDiscoveryDepsFromAstroLocals(locals),
-  );
+  return handleIndexNowKeyRequest(request, params.indexnowKey, {
+    ...readDiscoveryDepsFromAstroLocals(locals),
+    indexnowKeySecret: readIndexNowKeySecretFromWorkerEnv(),
+  });
 };
 
 export const HEAD: APIRoute = async ({ request, params, locals }) => {
-  return handleIndexNowKeyRequest(
-    request,
-    params.indexnowKey,
-    readDiscoveryDepsFromAstroLocals(locals),
-  );
+  return handleIndexNowKeyRequest(request, params.indexnowKey, {
+    ...readDiscoveryDepsFromAstroLocals(locals),
+    indexnowKeySecret: readIndexNowKeySecretFromWorkerEnv(),
+  });
 };
 
 export const ALL: APIRoute = async ({ request }) => {
