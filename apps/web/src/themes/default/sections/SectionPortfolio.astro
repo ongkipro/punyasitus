@@ -1,0 +1,228 @@
+---
+import Video from "../components/Video.astro";
+
+/**
+ * Semantic Portfolio Section (`apps/web/src/themes/default/sections/SectionPortfolio.astro`).
+ *
+ * Showcases business project documentation combining optimized WebP photos and
+ * self-hosted short videos (`<Video />`, REQ-062) without autoplay or hero placement.
+ * Zero client UI framework runtime; responsive 1/2/3-column grid across 360/768/1440px.
+ */
+
+export interface PortfolioImageItem {
+  readonly kind: "image";
+  readonly src: string;
+  readonly alt: string;
+  readonly width: number;
+  readonly height: number;
+  readonly title?: string;
+  readonly caption?: string | null;
+}
+
+export interface PortfolioVideoItem {
+  readonly kind: "video";
+  readonly src: string;
+  readonly posterUrl: string;
+  readonly width: number;
+  readonly height: number;
+  readonly title: string;
+  readonly caption?: string | null;
+  readonly captionsUrl?: string | null;
+  readonly captionsLang?: string | null;
+  readonly captionsLabel?: string | null;
+  readonly durationSeconds?: number | null;
+}
+
+export type PortfolioItem = PortfolioImageItem | PortfolioVideoItem;
+
+export interface PortfolioSectionConfig {
+  readonly eyebrow?: string;
+  readonly heading: string;
+  readonly subheading?: string;
+  readonly columns?: 2 | 3;
+  readonly items: readonly PortfolioItem[];
+}
+
+export interface Props {
+  readonly id: string;
+  readonly config: PortfolioSectionConfig;
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  config,
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+const columns = config.columns === 2 ? 2 : 3;
+let videoRenderIndex = 0;
+---
+
+<section
+  id={id}
+  class:list={["ps-section ps-portfolio", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type="portfolio"
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header">
+      {config.eyebrow && <p class="ps-eyebrow">{config.eyebrow}</p>}
+      {isFirstSection ? (
+        <h1 id={headingId} class="ps-section-title">
+          {config.heading}
+        </h1>
+      ) : (
+        <h2 id={headingId} class="ps-section-title">
+          {config.heading}
+        </h2>
+      )}
+      {config.subheading && <p class="ps-section-subtitle">{config.subheading}</p>}
+    </header>
+
+    {config.items.length > 0 ? (
+      <div class:list={["ps-portfolio-grid", `ps-portfolio-grid--${columns}`]}>
+        {config.items.map((item) => {
+          if (item.kind === "video") {
+            const idx = videoRenderIndex;
+            videoRenderIndex += 1;
+            return (
+              <figure
+                class="ps-portfolio-item"
+                data-portfolio-item-kind="video"
+              >
+                <Video
+                  src={item.src}
+                  posterUrl={item.posterUrl}
+                  width={item.width}
+                  height={item.height}
+                  title={item.title}
+                  caption={item.caption}
+                  captionsUrl={item.captionsUrl}
+                  captionsLang={item.captionsLang}
+                  captionsLabel={item.captionsLabel}
+                  durationSeconds={item.durationSeconds}
+                  placement="portfolio"
+                  mode={isPreview ? "preview" : "published"}
+                  testId={`section-${id}-video-${idx}`}
+                />
+              </figure>
+            );
+          }
+
+          return (
+            <figure class="ps-portfolio-item ps-portfolio-card" data-portfolio-item-kind="image">
+              <div
+                class="ps-portfolio-image-frame"
+                style={`aspect-ratio: ${item.width} / ${item.height};`}
+              >
+                <img
+                  src={item.src}
+                  alt={item.alt}
+                  width={item.width}
+                  height={item.height}
+                  loading="lazy"
+                  decoding="async"
+                  class="ps-portfolio-img"
+                />
+              </div>
+              {(item.title || item.caption) && (
+                <figcaption class="ps-portfolio-caption">
+                  {item.title && <h3 class="ps-portfolio-item-title">{item.title}</h3>}
+                  {item.caption && <p class="ps-portfolio-item-desc">{item.caption}</p>}
+                </figcaption>
+              )}
+            </figure>
+          );
+        })}
+      </div>
+    ) : (
+      <p class="ps-empty-state">Belum ada dokumentasi portofolio yang ditambahkan.</p>
+    )}
+  </div>
+</section>
+
+<style>
+  .ps-portfolio-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 1.25rem;
+    min-width: 0;
+  }
+
+  @media (min-width: 640px) {
+    .ps-portfolio-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .ps-portfolio-grid--3 {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .ps-portfolio-grid--2 {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  .ps-portfolio-item {
+    margin: 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .ps-portfolio-card {
+    background-color: var(--ps-surface, #ffffff);
+    border: 1px solid var(--ps-border, #d8e2dc);
+    border-radius: var(--ps-radius, 8px);
+    overflow: hidden;
+  }
+
+  .ps-portfolio-image-frame {
+    width: 100%;
+    overflow: hidden;
+    background-color: var(--ps-surface-muted, #f4f7f5);
+  }
+
+  .ps-portfolio-img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  .ps-portfolio-caption {
+    padding: 0.9rem 1rem 1rem;
+    background-color: var(--ps-surface-muted, #f4f7f5);
+    border-top: 1px solid var(--ps-border, #d8e2dc);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    flex: 1 1 auto;
+  }
+
+  .ps-portfolio-item-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.35;
+    color: var(--ps-ink, #111c19);
+    overflow-wrap: anywhere;
+  }
+
+  .ps-portfolio-item-desc {
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--ps-ink-muted, #4b5c55);
+    overflow-wrap: anywhere;
+  }
+</style>

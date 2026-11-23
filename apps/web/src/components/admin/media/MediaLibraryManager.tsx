@@ -1,7 +1,9 @@
 import { useCallback, useState } from "react";
 import {
   AlertTriangleIcon,
+  CaptionsIcon,
   CheckCircle2Icon,
+  FilmIcon,
   ImageIcon,
   PencilIcon,
   RefreshCwIcon,
@@ -38,7 +40,13 @@ import {
   MAX_CLIENT_IMAGE_LONGEST_EDGE,
   processImageFileForUpload,
 } from "./client-image-processor";
-import type { MediaLibraryItemDto } from "./MediaPickerSheet";
+import {
+  MAX_CLIENT_VIDEOS_PER_SITE,
+  prepareVideoFileForUpload,
+  prepareWebVttCaptionFile,
+  VideoClientValidationError,
+} from "./client-video-processor";
+import type { MediaLibraryItemDto, VideoSlotsDto } from "./MediaPickerSheet";
 
 export interface StorageQuotaSnapshotDto {
   readonly usedBytes: number;
@@ -57,6 +65,7 @@ interface MediaListApiResponse {
     readonly hasMore: boolean;
   };
   readonly storage: StorageQuotaSnapshotDto;
+  readonly videoSlots?: VideoSlotsDto;
 }
 
 interface UploadIntentResponse {
@@ -99,6 +108,16 @@ export function MediaLibraryManager({
   const [nextCursor, setNextCursor] = useState<string | null>(initialNextCursor);
   const [hasMore, setHasMore] = useState(initialHasMore);
   const [storage, setStorage] = useState<StorageQuotaSnapshotDto>(initialStorage);
+  const [videoSlots, setVideoSlots] = useState<VideoSlotsDto>(() => {
+    const initialVideoCount = initialItems.filter(
+      (it) => it.kind === "video" && it.status !== "failed",
+    ).length;
+    return {
+      used: initialVideoCount,
+      limit: MAX_CLIENT_VIDEOS_PER_SITE,
+      remaining: Math.max(0, MAX_CLIENT_VIDEOS_PER_SITE - initialVideoCount),
+    };
+  });
 
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [search, setSearch] = useState("");
@@ -149,6 +168,9 @@ export function MediaLibraryManager({
         setNextCursor(res.page.nextCursor);
         setHasMore(res.page.hasMore);
         setStorage(res.storage);
+        if (res.videoSlots) {
+          setVideoSlots(res.videoSlots);
+        }
       } catch (err) {
         setUploadFeedback({
           tone: "destructive",
@@ -267,6 +289,164 @@ export function MediaLibraryManager({
       });
     } finally {
       setUploading(false);
+    }
+  }
+
+  async function handleVideoFileSelected(file: File | null) {
+    if (!file || uploading || !permissions.canUploadMedia) return;
+    setUploading(true);
+    setUploadFeedback(null);
+
+    try {
+      const prepared = await prepareVideoFileForUpload(file);
+      const resolvedAlt =
+        altForUpload.trim() ||
+        prepared.filename
+          .replace(/\.[a-z0-9]{1,8}$/i, "")
+          .replace(/[-_]+/g, " ")
+          .trim()
+          .slice(0, 140);
+
+      const intent = await cmsFetchJson<UploadIntentResponse>(
+        `/api/tenants/${encodeURIComponent(handle)}/media/video/upload-intent`,
+        {
+          method: "POST",
+          headers: {
+            "Idempotency-Key": crypto.randomUUID(),
+          },
+          body: JSON.stringify({
+            kind: "video",
+            filename: prepared.filename,
+            mimeType: prepared.mimeType,
+            declaredBytes: prepared.declaredBytes,
+            sha256: prepared.sha256,
+            alt: resolvedAlt,
+          }),
+        },
+      );
+
+      const uploadBody = new Uint8Array(prepared.bytes.byteLength);
+      uploadBody.set(prepared.bytes);
+      const putRes = await fetch(intent.uploadPath, {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": prepared.mimeType,
+        },
+        body: new Blob([uploadBody], { type: prepared.mimeType }),
+      });
+
+      let putJson: Record<string, unknown> | null = null;
+      try {
+        putJson = (await putRes.json()) as Record<string, unknown>;
+      } catch {
+        putJson = null;
+      }
+
+      if (!putRes.ok) {
+        const errObj = putJson?.error as { code?: string; message?: string } | undefined;
+        throw new CmsApiError(
+          putRes.status,
+          errObj?.code ?? "UPLOAD_FAILED",
+          errObj?.message ?? `Server menolak unggahan video (HTTP ${putRes.status}).`,
+        );
+      }
+
+      setAltForUpload("");
+      setUploadFeedback({
+        tone: "success",
+        title: "Video berhasil diunggah",
+        message: `Berkas "${prepared.filename}" (${formatBytesHuman(prepared.declaredBytes)}) lolos validasi dan masuk antrean pemrosesan MP4.`,
+      });
+
+      await fetchMediaList({ status: statusFilter });
+    } catch (err) {
+      const message =
+        err instanceof VideoClientValidationError
+          ? err.message
+          : err instanceof CmsApiError
+            ? `${err.message} (${err.code})`
+            : err instanceof Error
+              ? err.message
+              : "Unggahan video gagal diproses.";
+      setUploadFeedback({
+        tone: "destructive",
+        title: "Unggahan video ditolak atau gagal",
+        message,
+      });
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleRetryVideo(item: MediaLibraryItemDto) {
+    if (!permissions.canManageMedia) return;
+    setUploadFeedback(null);
+    try {
+      await cmsFetchJson(
+        `/api/tenants/${encodeURIComponent(handle)}/media/${item.id}/retry`,
+        {
+          method: "POST",
+          body: JSON.stringify({}),
+        },
+      );
+      setUploadFeedback({
+        tone: "success",
+        title: "Pemrosesan ulang dijadwalkan",
+        message: `Video #${item.id} sedang diproses ulang.`,
+      });
+      await fetchMediaList({ status: statusFilter });
+    } catch (err) {
+      setUploadFeedback({
+        tone: "destructive",
+        title: "Gagal memproses ulang video",
+        message: err instanceof Error ? err.message : "Silakan unggah ulang video.",
+      });
+    }
+  }
+
+  async function handleVideoCaptionUpload(item: MediaLibraryItemDto, file: File | null) {
+    if (!file || !permissions.canManageMedia) return;
+    setUploadFeedback(null);
+    try {
+      const prepared = await prepareWebVttCaptionFile(file);
+      const copy = new Uint8Array(prepared.sanitizedBytes.byteLength);
+      copy.set(prepared.sanitizedBytes);
+      const res = await fetch(
+        `/api/tenants/${encodeURIComponent(handle)}/media/${item.id}/captions?lang=id`,
+        {
+          method: "PUT",
+          credentials: "same-origin",
+          headers: {
+            "Content-Type": "text/vtt; charset=utf-8",
+            "X-Caption-Lang": "id",
+            "X-Caption-Label": "Bahasa Indonesia",
+          },
+          body: new Blob([copy], { type: "text/vtt" }),
+        },
+      );
+      if (!res.ok) {
+        let msg = `Unggahan takarir gagal (HTTP ${res.status}).`;
+        try {
+          const j = (await res.json()) as { error?: { message?: string } };
+          if (j?.error?.message) msg = j.error.message;
+        } catch {
+          // ignore
+        }
+        throw new Error(msg);
+      }
+      setUploadFeedback({
+        tone: "success",
+        title: "Takarir WebVTT tersimpan",
+        message: `Takarir untuk video #${item.id} (${prepared.cueCount} baris) berhasil diunggah.`,
+      });
+      await fetchMediaList({ status: statusFilter });
+    } catch (err) {
+      setUploadFeedback({
+        tone: "destructive",
+        title: "Takarir WebVTT ditolak",
+        message: err instanceof Error ? err.message : "Berkas WebVTT tidak valid.",
+      });
     }
   }
 
@@ -498,6 +678,53 @@ export function MediaLibraryManager({
             </div>
           </div>
 
+          {/* Short Video Upload Row (DESIGN.md §8) */}
+          <div className="space-y-2 rounded-md border border-border bg-muted/20 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="space-y-0.5">
+                <p className="flex items-center gap-1.5 text-sm font-medium text-foreground">
+                  <FilmIcon className="size-4 text-primary" aria-hidden="true" />
+                  <span>Unggah Video Pendek (MP4, MOV, WebM)</span>
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Maksimal 10 MB per video (MP4, MOV, WebM; maks {videoSlots.limit} video). Untuk
+                  video panjang gunakan tautan YouTube.
+                </p>
+              </div>
+              <Badge variant={videoSlots.remaining === 0 ? "destructive" : "outline"} className="tabular-nums">
+                {videoSlots.used}/{videoSlots.limit} video
+              </Badge>
+            </div>
+            <label
+              className={`flex min-h-11 items-center justify-center gap-2 rounded-md border border-dashed border-border px-4 py-2 text-sm font-medium transition-colors ${
+                !permissions.canUploadMedia || uploading || videoSlots.remaining === 0
+                  ? "cursor-not-allowed bg-muted/50 text-muted-foreground opacity-60"
+                  : "cursor-pointer bg-background text-foreground hover:border-primary hover:bg-muted/40"
+              }`}
+            >
+              <FilmIcon className="size-4 text-primary" aria-hidden="true" />
+              <span>
+                {uploading
+                  ? "Memvalidasi & mengunggah video..."
+                  : videoSlots.remaining === 0
+                    ? "Kuota 20 video penuh — hapus permanen video lama"
+                    : "Pilih video pendek (maks 10 MB)"}
+              </span>
+              <input
+                type="file"
+                accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm"
+                disabled={!permissions.canUploadMedia || uploading || videoSlots.remaining === 0}
+                data-testid="media-video-file-input"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null;
+                  e.target.value = "";
+                  void handleVideoFileSelected(f);
+                }}
+                className="sr-only"
+              />
+            </label>
+          </div>
+
           {uploadFeedback && (
             <Alert
               variant={uploadFeedback.tone}
@@ -612,7 +839,18 @@ export function MediaLibraryManager({
             <li key={item.id}>
               <Card className="flex h-full flex-col overflow-hidden" data-testid={`media-card-${item.id}`}>
                 <div className="relative flex aspect-16/10 w-full items-center justify-center border-b border-border bg-muted">
-                  {item.publicUrl ? (
+                  {item.kind === "video" ? (
+                    item.posterUrl ? (
+                      <img
+                        src={item.posterUrl}
+                        alt={item.alt || `Poster Video #${item.id}`}
+                        loading="lazy"
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <FilmIcon className="size-10 text-muted-foreground" aria-hidden="true" />
+                    )
+                  ) : item.publicUrl ? (
                     <img
                       src={item.publicUrl}
                       alt={item.alt || `Media #${item.id}`}
@@ -670,6 +908,40 @@ export function MediaLibraryManager({
                         <PencilIcon className="size-3.5" aria-hidden="true" />
                         Ubah ALT
                       </Button>
+                    )}
+                    {item.kind === "video" && item.status === "failed" && (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        disabled={!permissions.canManageMedia}
+                        onClick={() => void handleRetryVideo(item)}
+                        className="min-h-11 md:min-h-8"
+                        data-testid={`media-retry-video-${item.id}`}
+                      >
+                        <RotateCcwIcon className="size-3.5" aria-hidden="true" />
+                        Coba lagi
+                      </Button>
+                    )}
+                    {item.kind === "video" && item.status === "ready" && (
+                      <label
+                        className="inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-foreground hover:bg-muted md:min-h-8"
+                        data-testid={`media-caption-upload-${item.id}`}
+                      >
+                        <CaptionsIcon className="size-3.5 text-primary" aria-hidden="true" />
+                        <span>{item.captionsUrl ? "Ganti .vtt" : "Takarir .vtt"}</span>
+                        <input
+                          type="file"
+                          accept=".vtt,text/vtt"
+                          disabled={!permissions.canManageMedia}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0] ?? null;
+                            e.target.value = "";
+                            void handleVideoCaptionUpload(item, f);
+                          }}
+                          className="sr-only"
+                        />
+                      </label>
                     )}
                     {item.status === "trashed" && (
                       <Button
