@@ -44,6 +44,8 @@ export interface HandlePublicEventPostDeps {
   readonly isLocalLoopback?: boolean;
   readonly expectedOrigin?: string;
   readonly rateLimitPolicy?: EventRateLimitPolicy;
+  readonly dedupTtlMs?: number;
+  readonly dedupPruneBatchSize?: number;
   readonly nowMs?: number;
   readonly requestId?: string;
 }
@@ -175,10 +177,13 @@ export async function handlePublicEventPost(
     return createNoContentResponse();
   }
 
-  // 5. Verify referenced published resource (when supplied) and increment daily counter atomically.
+  // 5. Verify referenced published resource (when supplied), deduplicate per-tenant eventId (24h),
+  //    and increment daily counter atomically inside one TenantStore batch (TASK-065).
   const recorded = await recordFirstPartyEvent(deps.tenantDb, payloadCheck.data, {
     nowMs: deps.nowMs,
     timeZone: deps.tenant.timeZone,
+    dedupTtlMs: deps.dedupTtlMs,
+    pruneBatchSize: deps.dedupPruneBatchSize,
   });
 
   if (!recorded.ok) {

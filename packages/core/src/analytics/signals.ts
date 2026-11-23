@@ -1,4 +1,16 @@
 import {
+  ANALYTICS_EVENT_DEDUP_TTL_MS,
+  createClientEventDedupStore,
+  deriveDeterministicLeadEventId,
+  generateAnalyticsEventId,
+  isValidAnalyticsUuid,
+  normalizeAnalyticsEventIdToUuid,
+  normalizeTenantDedupScope,
+  sanitizeClientEventId,
+  type ClientDedupStorageLike,
+  type ClientEventDedupStore,
+} from "./dedup.ts";
+import {
   buildGtmNoscriptUrl,
   buildGtmScriptUrl,
   buildGoogleConsentModeUpdate,
@@ -70,23 +82,46 @@ export interface ProviderDeliveryRecord {
 }
 
 export interface ProviderSkipRecord {
-  readonly provider: DirectAnalyticsProvider;
-  readonly reason: "NOT_CONFIGURED" | "CONSENT_DENIED" | "INVALID_ID" | "ROUTED_VIA_GTM";
+  readonly provider: DirectAnalyticsProvider | "gtm" | "first_party";
+  readonly reason:
+    | "NOT_CONFIGURED"
+    | "CONSENT_DENIED"
+    | "INVALID_ID"
+    | "ROUTED_VIA_GTM"
+    | "DUPLICATE_EVENT_ID";
 }
 
 export interface ProviderErrorRecord {
-  readonly provider: DirectAnalyticsProvider | "gtm";
+  readonly provider: DirectAnalyticsProvider | "gtm" | "first_party";
   readonly phase: "load" | "send" | "revoke" | "consent";
   readonly message: string;
 }
 
+export type FirstPartySignalEventName =
+  | "wa_click"
+  | "external_click"
+  | "lead_submitted"
+  | "page_view";
+
+export interface FirstPartyEventPayload {
+  readonly eventId: string;
+  readonly eventName: FirstPartySignalEventName;
+  readonly path: string;
+}
+
+export interface AnalyticsFirstPartyAdapter {
+  readonly sendEvent: (payload: FirstPartyEventPayload) => void;
+}
+
 export interface SignalDispatchReport {
   readonly ok: boolean;
+  readonly deduplicated?: boolean;
   readonly eventName: CanonicalSignalEvent | null;
   readonly eventId: string;
   readonly sanitizedParams: SanitizedSignalParams;
   readonly deliveredTo: readonly ProviderDeliveryRecord[];
   readonly gtmEventPushed?: PsDataLayerEventPayload | null;
+  readonly firstPartySent?: boolean;
   readonly skipped: readonly ProviderSkipRecord[];
   readonly errors: readonly ProviderErrorRecord[];
 }
@@ -163,6 +198,12 @@ export interface AnalyticsDispatcherOptions {
   readonly adapter: AnalyticsProviderAdapter;
   readonly gtm?: AnalyticsDispatcherGtmOptions | null;
   readonly gtmAdapter?: AnalyticsGtmAdapter;
+  readonly firstPartyAdapter?: AnalyticsFirstPartyAdapter;
+  readonly tenantScope?: string | null;
+  readonly dedupTtlMs?: number;
+  readonly dedupStorage?: ClientDedupStorageLike | null;
+  readonly dedupStore?: ClientEventDedupStore;
+  readonly now?: () => number;
   readonly expectedPolicyVersion?: number;
   readonly initialConsent?: Partial<AnalyticsConsentState> | null;
   readonly autoPageView?: boolean;
@@ -370,6 +411,14 @@ export function sanitizeAnalyticsSignalPayload(
       continue;
     }
 
+    if (rawKey === "event_id") {
+      const safeEventId = sanitizeClientEventId(rawVal);
+      if (safeEventId) {
+        clean.event_id = safeEventId;
+      }
+      continue;
+    }
+
     if (rawKey === "page_path") {
       const safePath = sanitizeSignalPagePath(rawVal);
       if (safePath) clean.page_path = safePath;
@@ -464,14 +513,26 @@ export function canDispatchToGtm(
 }
 
 function defaultEventId(): string {
-  try {
-    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-      return `evt_${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`;
-    }
-  } catch {
-    // Fallback below
+  return generateAnalyticsEventId();
+}
+
+function mapCanonicalToFirstPartyEvent(
+  canonical: CanonicalSignalEvent,
+): FirstPartySignalEventName | null {
+  switch (canonical) {
+    case "whatsapp_click":
+      return "wa_click";
+    case "external_click":
+      return "external_click";
+    case "page_view":
+      return "page_view";
+    // `lead_submitted` is intentionally excluded here because `POST /api/leads` already
+    // increments `analytics_daily.lead_submits` authoritatively on durable persistence;
+    // emitting it from client `firstPartyAdapter` would double-count leads.
+    case "lead_submitted":
+    default:
+      return null;
   }
-  return `evt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function normalizeLeadId(raw: number | string | null | undefined): string | null {
@@ -541,6 +602,8 @@ export function createAnalyticsSignalDispatcher(
   const autoPageView = options.autoPageView ?? true;
   const rawConfig = parseStoredDirectAnalyticsConfig(options.config);
   const generateEventId = options.generateEventId ?? defaultEventId;
+  const nowFn = options.now ?? Date.now;
+  const tenantScope = normalizeTenantDedupScope(options.tenantScope);
 
   const gtmOpt = options.gtm ?? null;
   const gtmContainerId =
@@ -571,6 +634,18 @@ export function createAnalyticsSignalDispatcher(
     marketing: false,
     hasDecision: false,
   };
+
+  // REQ-039: ZERO localStorage/sessionStorage writes before explicit `analytics` consent is granted.
+  const canPersistClientStorage = () => canDispatchToGtm(consent, expectedPolicyVersion);
+  const dedupStore =
+    options.dedupStore ??
+    createClientEventDedupStore({
+      tenantScope,
+      ttlMs: options.dedupTtlMs ?? ANALYTICS_EVENT_DEDUP_TTL_MS,
+      storage: options.dedupStorage ?? null,
+      canPersistStorage: canPersistClientStorage,
+    });
+  const pageLoadEventId = normalizeAnalyticsEventIdToUuid(generateEventId(), tenantScope);
 
   const loadedProviders = new Set<DirectAnalyticsProvider>();
   const pageViewSentProviders = new Set<DirectAnalyticsProvider>();
@@ -633,18 +708,59 @@ export function createAnalyticsSignalDispatcher(
     return true;
   }
 
+  function sendFirstPartyIfEligible(
+    canonical: CanonicalSignalEvent,
+    eventId: string,
+    pagePath: string,
+    nowMs: number,
+    skipped: ProviderSkipRecord[],
+    errors: ProviderErrorRecord[],
+  ): boolean {
+    if (!options.firstPartyAdapter) return false;
+    const fpName = mapCanonicalToFirstPartyEvent(canonical);
+    if (!fpName) return false;
+    if (!isValidAnalyticsUuid(eventId)) return false;
+
+    const channelKey = `ch:first_party:${eventId}`;
+    if (dedupStore.has(channelKey, nowMs)) {
+      skipped.push({ provider: "first_party", reason: "DUPLICATE_EVENT_ID" });
+      return false;
+    }
+
+    dedupStore.claim(channelKey, nowMs);
+    try {
+      options.firstPartyAdapter.sendEvent({
+        eventId,
+        eventName: fpName,
+        path: pagePath,
+      });
+      return true;
+    } catch (err) {
+      errors.push({ provider: "first_party", phase: "send", message: toErrorMessage(err) });
+      return false;
+    }
+  }
+
   function dispatchInternal(
     eventName: SignalEventAlias | string,
     rawParams?: Readonly<Record<string, unknown>>,
     restrictToProviders?: ReadonlySet<DirectAnalyticsProvider>,
     includeGtm = true,
+    internalOpts?: {
+      readonly isProgressivePageView?: boolean;
+    },
   ): SignalDispatchReport {
+    const nowMs = nowFn();
     const canonical = normalizeCanonicalSignalEvent(eventName);
     const sanitized = sanitizeAnalyticsSignalPayload(rawParams);
-    const eventId =
+    const rawEventId =
       typeof sanitized.event_id === "string" && sanitized.event_id.length > 0
         ? sanitized.event_id
         : generateEventId();
+    // Deterministically normalize ANY sanitized event_id (including non-UUID tokens like "abc_1")
+    // to a valid RFC 4122 UUID BEFORE dispatching to ALL channels so /api/events, GTM dataLayer,
+    // and direct GA4/Meta/TikTok always receive the exact same UUID and never diverge.
+    const eventId = normalizeAnalyticsEventIdToUuid(rawEventId, tenantScope);
     sanitized.event_id = eventId;
 
     if (!sanitized.page_path && options.currentPath) {
@@ -659,11 +775,13 @@ export function createAnalyticsSignalDispatcher(
     if (!canonical) {
       return {
         ok: false,
+        deduplicated: false,
         eventName: null,
         eventId,
         sanitizedParams: sanitized,
         deliveredTo: [],
         gtmEventPushed: null,
+        firstPartySent: false,
         skipped: [],
         errors: [],
       };
@@ -673,6 +791,60 @@ export function createAnalyticsSignalDispatcher(
     const deliveredTo: ProviderDeliveryRecord[] = [];
     const skipped: ProviderSkipRecord[] = [];
     const errors: ProviderErrorRecord[] = [];
+    const isProgressivePageView = internalOpts?.isProgressivePageView === true;
+    const logicalEventKey = `evt:${eventId}`;
+
+    // Per-event 24h dedup by (tenantScope, eventId) across direct tags, GTM dataLayer & first-party
+    if (!isProgressivePageView) {
+      if (dedupStore.has(logicalEventKey, nowMs)) {
+        for (const provider of DIRECT_ANALYTICS_PROVIDERS) {
+          if (restrictToProviders && !restrictToProviders.has(provider)) continue;
+          if (isProviderRoutedViaGtm(provider)) {
+            skipped.push({ provider, reason: "ROUTED_VIA_GTM" });
+          } else if (getProviderIdFromConfig(config, provider)) {
+            skipped.push({ provider, reason: "DUPLICATE_EVENT_ID" });
+          }
+        }
+        if (includeGtm && gtmEnabled && options.gtmAdapter) {
+          skipped.push({ provider: "gtm", reason: "DUPLICATE_EVENT_ID" });
+        }
+        if (options.firstPartyAdapter) {
+          skipped.push({ provider: "first_party", reason: "DUPLICATE_EVENT_ID" });
+        }
+        return {
+          ok: true,
+          deduplicated: true,
+          eventName: canonical,
+          eventId,
+          sanitizedParams: sanitized,
+          deliveredTo: [],
+          gtmEventPushed: null,
+          firstPartySent: false,
+          skipped,
+          errors: [],
+        };
+      }
+      dedupStore.claim(logicalEventKey, nowMs);
+    }
+
+    const resolvedPagePath =
+      typeof sanitized.page_path === "string" ? sanitized.page_path : "/";
+
+    // Cookieless first-party event parity (same UUID as direct tags & GTM dataLayer).
+    // Always skipped for `lead_submitted` because `POST /api/leads` already increments
+    // `analytics_daily.lead_submits` authoritatively on durable persistence (prevents 2x count
+    // whether called via `dispatchLeadSubmitted`, `trackEvent("lead_submitted")`, or DOM triggers).
+    const firstPartySent =
+      canonical === "lead_submitted"
+        ? false
+        : sendFirstPartyIfEligible(
+            canonical,
+            eventId,
+            resolvedPagePath,
+            nowMs,
+            skipped,
+            errors,
+          );
 
     for (const provider of DIRECT_ANALYTICS_PROVIDERS) {
       if (restrictToProviders && !restrictToProviders.has(provider)) {
@@ -689,6 +861,12 @@ export function createAnalyticsSignalDispatcher(
       }
       if (!canDispatchToProvider(provider, consent, expectedPolicyVersion)) {
         skipped.push({ provider, reason: "CONSENT_DENIED" });
+        continue;
+      }
+
+      const providerChannelKey = `ch:${provider}:${eventId}`;
+      if (dedupStore.has(providerChannelKey, nowMs)) {
+        skipped.push({ provider, reason: "DUPLICATE_EVENT_ID" });
         continue;
       }
 
@@ -711,6 +889,7 @@ export function createAnalyticsSignalDispatcher(
       const providerEventName = mapping.providers[provider].eventName;
       const tiktokMethod = mapping.providers.tiktok.method;
 
+      dedupStore.claim(providerChannelKey, nowMs);
       try {
         options.adapter.sendEvent(provider, id, providerEventName, sanitized, {
           canonicalEvent: canonical,
@@ -730,23 +909,27 @@ export function createAnalyticsSignalDispatcher(
       options.gtmAdapter &&
       canDispatchToGtm(consent, expectedPolicyVersion)
     ) {
-      const ready = ensureGtmLoaded(errors);
-      if (ready) {
-        const pagePath =
-          typeof sanitized.page_path === "string" ? sanitized.page_path : "/";
-        const psPayload = buildGtmEventForCanonical(
-          canonical,
-          eventId,
-          pagePath,
-          rawParams,
-          gtmDefaults,
-        );
-        if (psPayload) {
-          try {
-            options.gtmAdapter.pushDataLayerEvent(psPayload);
-            gtmEventPushed = psPayload;
-          } catch (err) {
-            errors.push({ provider: "gtm", phase: "send", message: toErrorMessage(err) });
+      const gtmChannelKey = `ch:gtm:${eventId}`;
+      if (dedupStore.has(gtmChannelKey, nowMs)) {
+        skipped.push({ provider: "gtm", reason: "DUPLICATE_EVENT_ID" });
+      } else {
+        const ready = ensureGtmLoaded(errors);
+        if (ready) {
+          const psPayload = buildGtmEventForCanonical(
+            canonical,
+            eventId,
+            resolvedPagePath,
+            rawParams,
+            gtmDefaults,
+          );
+          if (psPayload) {
+            dedupStore.claim(gtmChannelKey, nowMs);
+            try {
+              options.gtmAdapter.pushDataLayerEvent(psPayload);
+              gtmEventPushed = psPayload;
+            } catch (err) {
+              errors.push({ provider: "gtm", phase: "send", message: toErrorMessage(err) });
+            }
           }
         }
       }
@@ -754,11 +937,13 @@ export function createAnalyticsSignalDispatcher(
 
     return {
       ok: errors.length === 0,
+      deduplicated: false,
       eventName: canonical,
       eventId,
       sanitizedParams: sanitized,
       deliveredTo,
       gtmEventPushed,
+      firstPartySent,
       skipped,
       errors,
     };
@@ -776,7 +961,11 @@ export function createAnalyticsSignalDispatcher(
     };
 
     const errors: ProviderErrorRecord[] = [];
+    const wasStorageAllowed = canPersistClientStorage();
     consent = nextState;
+    if (wasStorageAllowed && !canPersistClientStorage()) {
+      dedupStore.clearPersistedStorage();
+    }
 
     const newlyConsentedForPageView = new Set<DirectAnalyticsProvider>();
 
@@ -847,9 +1036,10 @@ export function createAnalyticsSignalDispatcher(
     if (newlyConsentedForPageView.size > 0 || shouldSendGtmPageView) {
       const report = dispatchInternal(
         "page_view",
-        undefined,
+        { event_id: pageLoadEventId },
         newlyConsentedForPageView.size > 0 ? newlyConsentedForPageView : new Set(),
         shouldSendGtmPageView,
+        { isProgressivePageView: true },
       );
       for (const delivered of report.deliveredTo) {
         pageViewSentProviders.add(delivered.provider);
@@ -889,8 +1079,15 @@ export function createAnalyticsSignalDispatcher(
       };
     }
 
+    const nowMs = nowFn();
+    const rawLeadEventId =
+      sanitizeClientEventId(input.eventId) ??
+      deriveDeterministicLeadEventId(normalizedLeadId, tenantScope);
+    const eventId = normalizeAnalyticsEventIdToUuid(rawLeadEventId, tenantScope);
+
     const markerKey = `lead_${normalizedLeadId}`;
-    if (dispatchedLeadIds.has(normalizedLeadId)) {
+    if (dispatchedLeadIds.has(normalizedLeadId) || dedupStore.has(`evt:${eventId}`, nowMs)) {
+      dispatchedLeadIds.add(normalizedLeadId);
       return {
         ok: false,
         reason: "DUPLICATE_LEAD_ID",
@@ -898,27 +1095,30 @@ export function createAnalyticsSignalDispatcher(
       };
     }
 
-    try {
-      if (options.hasPersistedLeadMarker?.(markerKey)) {
-        dispatchedLeadIds.add(normalizedLeadId);
-        return {
-          ok: false,
-          reason: "DUPLICATE_LEAD_ID",
-          leadId: normalizedLeadId,
-        };
+    if (canPersistClientStorage()) {
+      try {
+        if (options.hasPersistedLeadMarker?.(markerKey)) {
+          dispatchedLeadIds.add(normalizedLeadId);
+          return {
+            ok: false,
+            reason: "DUPLICATE_LEAD_ID",
+            leadId: normalizedLeadId,
+          };
+        }
+      } catch {
+        // Storage unavailable (e.g. private browsing) — continue with in-memory dedup set
       }
-    } catch {
-      // Storage unavailable (e.g. private browsing) — continue with in-memory dedup set
     }
 
     dispatchedLeadIds.add(normalizedLeadId);
-    try {
-      options.savePersistedLeadMarker?.(markerKey);
-    } catch {
-      // Non-blocking
+    if (canPersistClientStorage()) {
+      try {
+        options.savePersistedLeadMarker?.(markerKey);
+      } catch {
+        // Non-blocking
+      }
     }
 
-    const eventId = input.eventId?.trim() || `lead_${normalizedLeadId}`;
     const report = dispatchInternal("lead_submitted", {
       ...(input.extra ?? {}),
       event_id: eventId,
@@ -934,6 +1134,19 @@ export function createAnalyticsSignalDispatcher(
       leadId: normalizedLeadId,
       report,
     };
+  }
+
+  // Emit ONE cookieless first-party `page_view` (no cookies, no third-party tags) sharing `pageLoadEventId`.
+  if (autoPageView && options.firstPartyAdapter) {
+    let initialPath = "/";
+    if (options.currentPath) {
+      try {
+        initialPath = sanitizeSignalPagePath(options.currentPath()) ?? "/";
+      } catch {
+        initialPath = "/";
+      }
+    }
+    sendFirstPartyIfEligible("page_view", pageLoadEventId, initialPath, nowFn(), [], []);
   }
 
   // Apply explicit initial consent ONLY if caller already has an affirmative decision
