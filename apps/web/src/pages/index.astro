@@ -117,6 +117,14 @@ if (tenantHomeResult.kind === "response") {
 }
 
 applyPublicRouteResponseMeta(Astro.response, tenantHomeResult.http);
+
+// Tenant-host cookie isolation (TASK-003 / PLAN §3.2): pass ONLY `__Host-ps_consent` to Layout.
+const rawCookieHeader = Astro.request.headers.get("cookie") ?? "";
+const consentCookieHeader =
+  rawCookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("__Host-ps_consent=")) ?? null;
 ---
 
 {tenantHomeResult.kind === "not_found" ? (
@@ -128,7 +136,7 @@ applyPublicRouteResponseMeta(Astro.response, tenantHomeResult.http);
     pageDescription={tenantHomeResult.seoMetadata.description || undefined}
     layoutMode={tenantHomeResult.layoutMode}
     currentPath={tenantHomeResult.currentPath}
-    initialCookieHeader={Astro.request.headers.get("cookie")}
+    initialCookieHeader={consentCookieHeader}
   >
     <SEOHead
       slot="head"
