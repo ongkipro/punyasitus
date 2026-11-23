@@ -1,0 +1,245 @@
+---
+import { env } from "cloudflare:workers";
+import { canPerform } from "@punyasitus/auth";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import {
+  buildLeadWhatsAppFollowUpUrl,
+  getLeadNotificationSettings,
+  listLeads,
+  type LeadStatusCounts,
+} from "@punyasitus/db/leads/index";
+import type { TenantVertical } from "@punyasitus/db/platform";
+import { ShieldAlertIcon } from "lucide-react";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { bindTenantDatabase } from "@/core/tenant";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { LeadsInbox, type LeadInboxItemDto } from "./_LeadsInbox";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+function neutralNotFoundResponse(): Response {
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Halaman tidak ditemukan</title></head><body><main><h1>Halaman tidak ditemukan</h1></main></body></html>`,
+    {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+        "Content-Security-Policy": "default-src 'none'",
+      },
+    },
+  );
+}
+
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return neutralNotFoundResponse();
+}
+
+const authorized = Astro.locals.authorizedTenantMember;
+const authUser = Astro.locals.authUser;
+if (!authorized || !authUser || !env.PLATFORM_DB) {
+  return neutralNotFoundResponse();
+}
+
+function mapLifecycle(status: string): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+function offeringLabelForVertical(vertical?: TenantVertical): string {
+  switch (vertical) {
+    case "catalog":
+    case "resto":
+      return "Produk";
+    case "travel":
+      return "Paket Tur";
+    case "dealer":
+      return "Kendaraan";
+    default:
+      return "Layanan";
+  }
+}
+
+const saasZone = env.SAAS_ZONE || "situsku.click";
+
+const tenantMeta = await env.PLATFORM_DB.prepare(
+  `SELECT
+     t.vertical AS vertical,
+     t.agency_id AS agency_id,
+     t.operator_hold_reason AS operator_hold_reason,
+     t.trial_ends_at AS trial_ends_at,
+     ph.host AS primary_host
+   FROM tenants t
+   LEFT JOIN tenant_hosts ph
+     ON ph.tenant_id = t.id
+     AND ph.is_primary = 1
+     AND ph.status = 'active'
+     AND ph.ssl_status = 'active'
+   WHERE t.id = ?
+   LIMIT 1`,
+)
+  .bind(authorized.tenantId)
+  .first<{
+    readonly vertical: TenantVertical;
+    readonly agency_id: string | null;
+    readonly operator_hold_reason: string | null;
+    readonly trial_ends_at: number | null;
+    readonly primary_host: string | null;
+  }>();
+
+const primaryHost = tenantMeta?.primary_host ?? `${authorized.handle}.${saasZone}`;
+const primaryOrigin = `https://${primaryHost}`;
+const lifecycleStatus = mapLifecycle(authorized.tenantStatus);
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof tenantMeta?.trial_ends_at === "number"
+    ? Math.max(0, Math.ceil((tenantMeta.trial_ends_at - Date.now()) / 86_400_000))
+    : undefined;
+
+const canReadLeads = canPerform(authorized.role, "lead:read");
+const canUpdateLeads =
+  canPerform(authorized.role, "lead:update") &&
+  lifecycleStatus !== "locked" &&
+  lifecycleStatus !== "suspended";
+const isPayer = tenantMeta?.agency_id
+  ? authorized.role === "agency_admin"
+  : authorized.role === "owner" || authorized.role === "agency_admin";
+const canExportCsv = canPerform(authorized.role, "lead:export_csv") && isPayer;
+
+let initialItems: LeadInboxItemDto[] = [];
+let initialCounts: LeadStatusCounts = { all: 0, new: 0, contacted: 0, closed: 0 };
+let initialNextCursor: string | null = null;
+let initialHasMore = false;
+let initialEmailNotificationsEnabled = true;
+let initialLoadError: string | null = null;
+
+if (!canReadLeads) {
+  Astro.response.status = 403;
+} else if (lifecycleStatus !== "suspended") {
+  const tenantDb = bindTenantDatabase(
+    env.TENANT_STORE as unknown as TenantStoreNamespaceLike,
+    authorized.tenantId,
+  );
+  if (tenantDb) {
+    try {
+      const [list, notif] = await Promise.all([
+        listLeads(tenantDb, { status: "all", limit: 20 }),
+        getLeadNotificationSettings(tenantDb),
+      ]);
+      initialItems = list.items.map((lead) => ({
+        id: lead.id,
+        name: lead.name,
+        phone: lead.phone,
+        email: lead.email,
+        message: lead.message,
+        status: lead.status,
+        preferredDate: lead.preferredDate,
+        preferredTime: lead.preferredTime,
+        branchId: lead.branchId,
+        sourceCategory: lead.sourceCategory,
+        pagePath: lead.pagePath,
+        internalNotes: lead.internalNotes,
+        version: lead.version,
+        createdAt: lead.createdAt,
+        updatedAt: lead.updatedAt,
+        whatsappFollowUpUrl: buildLeadWhatsAppFollowUpUrl({
+          phone: lead.phone,
+          leadName: lead.name,
+          primaryOrigin,
+          pagePath: lead.pagePath,
+        }),
+      }));
+      initialCounts = list.counts;
+      initialNextCursor = list.page.nextCursor;
+      initialHasMore = list.page.hasMore;
+      initialEmailNotificationsEnabled = notif.emailEnabled;
+    } catch {
+      if (!isLocalLoopback) {
+        Astro.response.status = 503;
+        initialLoadError =
+          "Daftar pesan masuk sementara tidak dapat dimuat dari penyimpanan tenant. Silakan muat ulang.";
+      }
+    }
+  } else if (!isLocalLoopback) {
+    Astro.response.status = 503;
+    initialLoadError = "Penyimpanan data tenant sementara tidak tersedia.";
+  }
+}
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+Astro.response.headers.set("Vary", "Cookie");
+
+const userRoleLabel =
+  authorized.role === "owner"
+    ? "Pemilik Situs"
+    : authorized.role === "agency_admin"
+      ? "Admin Agensi"
+      : authorized.role === "admin"
+        ? "Admin"
+        : "Editor";
+---
+
+<DashboardLayout
+  title={`Pesan Masuk — ${authorized.tenantName}`}
+  surface="dashboard"
+  workspaceName={authorized.tenantName}
+  workspaceSubtitle={primaryHost}
+  activeNavId="leads"
+  basePath={`/dashboard/${authorized.handle}`}
+  offeringLabel={offeringLabelForVertical(tenantMeta?.vertical)}
+  unreadLeadsCount={initialCounts.new}
+  lifecycleStatus={lifecycleStatus}
+  lifecycleDaysRemaining={lifecycleDaysRemaining}
+  lifecycleReason={tenantMeta?.operator_hold_reason ?? undefined}
+  publicSiteHref={primaryOrigin}
+  userDisplayName={authUser.name}
+  userRoleLabel={userRoleLabel}
+>
+  {!canReadLeads ? (
+    <div class="space-y-4" data-testid="leads-permission-denied">
+      <div class="space-y-1">
+        <h1 class="text-2xl font-bold tracking-[-0.02em] text-foreground">Pesan Masuk</h1>
+        <p class="text-sm text-muted-foreground">
+          Akses kotak masuk pesan pengunjung dibatasi berdasarkan peran akun.
+        </p>
+      </div>
+      <Alert variant="destructive">
+        <ShieldAlertIcon className="size-4" aria-hidden="true" />
+        <AlertTitle>Akses Ditolak</AlertTitle>
+        <AlertDescription>
+          Peran <strong>Editor</strong> tidak memiliki izin untuk melihat atau mengelola data pribadi
+          pesan masuk pengunjung. Hubungi Pemilik Situs atau Admin apabila Anda memerlukan akses.
+        </AlertDescription>
+      </Alert>
+    </div>
+  ) : (
+    <LeadsInbox
+      client:load
+      tenantId={authorized.tenantId}
+      handle={authorized.handle}
+      tenantName={authorized.tenantName}
+      lifecycleStatus={lifecycleStatus}
+      canUpdate={canUpdateLeads}
+      canExportCsv={canExportCsv}
+      initialItems={initialItems}
+      initialCounts={initialCounts}
+      initialNextCursor={initialNextCursor}
+      initialHasMore={initialHasMore}
+      initialEmailNotificationsEnabled={initialEmailNotificationsEnabled}
+      initialLoadError={initialLoadError}
+    />
+  )}
+</DashboardLayout>
