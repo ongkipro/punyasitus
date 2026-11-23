@@ -29,6 +29,7 @@ import {
 } from "@punyasitus/core/email/index";
 import { createStatePageResponse, type TenantMiddlewareLocals } from "../core/tenant.ts";
 import type { AuthLocalsSession, AuthLocalsUser } from "./locals.d.ts";
+import { handleMcpOAuthProtocolRequest, isMcpOAuthHandledPath } from "./mcp-oauth.ts";
 
 /**
  * Auth, CSRF/Origin, MCP bearer-only, and dashboard handle membership middleware (TASK-025, PLAN §4).
@@ -45,6 +46,7 @@ const CSRF_PROTECTED_API_PREFIXES = [
   "/api/account",
   "/api/auth",
   "/api/console",
+  "/auth/consent",
 ] as const;
 
 const DASHBOARD_HANDLE_RE = /^\/dashboard\/([^/]+)(?:\/(.*))?$/i;
@@ -343,7 +345,7 @@ export async function executeAuthMiddleware(
   const method = context.request.method.toUpperCase();
 
   // 1. MCP / OAuth bearer-only boundary (PLAN §4):
-  // Never accept `__Host-` session cookies on `/mcp`, `/oauth2/token`, `/oauth2/register`, `/.well-known/oauth-*`.
+  // Never accept `__Host-` session cookies on `/mcp`, `/oauth2/token`, `/oauth2/revoke`, `/oauth2/register`, `/.well-known/oauth-*`.
   const mcpCheck = assertMcpBearerOnly(
     new Request(`${url.origin}${pathnameLower}${url.search}`, {
       method: context.request.method,
@@ -353,7 +355,18 @@ export async function executeAuthMiddleware(
   if (!mcpCheck.ok) {
     return jsonAuthError(mcpCheck.status, mcpCheck.code, mcpCheck.reason);
   }
+  if (isMcpOAuthHandledPath(pathnameLower)) {
+    const oauthRes = await handleMcpOAuthProtocolRequest(context.request, env, {
+      nowMs: options.nowMs,
+    });
+    if (oauthRes) {
+      return oauthRes;
+    }
+  }
   if (isMcpOrOAuthProtocolPath(pathnameLower)) {
+    if (!isLocalLoopback && surface !== "app") {
+      return createStatePageResponse("not_found", { pathname, surface });
+    }
     return next();
   }
 

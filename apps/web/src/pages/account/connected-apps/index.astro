@@ -1,0 +1,72 @@
+---
+import { env } from "cloudflare:workers";
+import { buildCanonicalMcpResource } from "@punyasitus/core/mcp/index";
+import { listUserMcpGrants } from "@punyasitus/db/mcp/index";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { resolvePlatformAuthHostContext } from "../../../middleware/auth.ts";
+import { ConnectedAppsManager, type ConnectedAppGrantView } from "./_ConnectedApps";
+
+const runtimeEnv = env as typeof env & {
+  readonly AUTH_SECRET?: string;
+};
+
+const hostCtx = resolvePlatformAuthHostContext(Astro.request, {
+  APP_ENV: runtimeEnv.APP_ENV,
+  PLATFORM_DOMAIN: runtimeEnv.PLATFORM_DOMAIN,
+  PLATFORM_DB: runtimeEnv.PLATFORM_DB,
+});
+
+const authUser = Astro.locals.authUser;
+const mcpEndpointUrl = hostCtx.allowed
+  ? buildCanonicalMcpResource(hostCtx.expectedOrigin)
+  : "https://app.punyasitus.com/mcp";
+
+let initialGrants: readonly ConnectedAppGrantView[] = [];
+if (authUser && runtimeEnv.PLATFORM_DB) {
+  try {
+    const stored = await listUserMcpGrants(runtimeEnv.PLATFORM_DB, authUser.id, {
+      includeRevoked: true,
+      includeOwnedTenantGrants: true,
+    });
+    initialGrants = stored.map((g) => ({
+      id: g.id,
+      clientId: g.clientId,
+      clientName: g.clientName,
+      clientUri: g.clientUri,
+      tenantId: g.tenantId,
+      tenantHandle: g.tenantHandle,
+      tenantName: g.tenantName,
+      scopes: g.scopes,
+      piiConsentAcked: g.piiConsentAcked,
+      status: g.status,
+      revokedAt: g.revokedAt ? new Date(g.revokedAt).toISOString() : null,
+      revokedReason: g.revokedReason,
+      lastUsedAt: g.lastUsedAt ? new Date(g.lastUsedAt).toISOString() : null,
+      createdAt: new Date(g.createdAt).toISOString(),
+    }));
+  } catch {
+    initialGrants = [];
+  }
+}
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+---
+
+<DashboardLayout
+  title="Aplikasi AI Terhubung"
+  surface="dashboard"
+  workspaceName="Akun PunyaSitus"
+  workspaceSubtitle="Koneksi agen AI (MCP) & pencabutan akses"
+  activeNavId="settings"
+  basePath="/account"
+  userDisplayName={authUser?.name ?? "Tamu"}
+  userRoleLabel={authUser ? "Pengguna Terverifikasi" : "Sesi Berakhir"}
+>
+  <ConnectedAppsManager
+    client:load
+    authenticated={Boolean(authUser)}
+    mcpEndpointUrl={mcpEndpointUrl}
+    initialGrants={initialGrants}
+  />
+</DashboardLayout>
