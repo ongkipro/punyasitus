@@ -3,7 +3,12 @@ import {
   createAuth,
   enforceSessionLifetimeCeiling,
 } from "@punyasitus/auth";
+import type {
+  AiWritingProviderPort,
+  WorkersAiBindingLike,
+} from "@punyasitus/core/ai-writing/index";
 import type { CloudflareSendEmailBinding, EmailPort } from "@punyasitus/core/email/index";
+import type { AiWritingBurstPolicy } from "@punyasitus/db/ai-usage/index";
 import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
 import type { OnboardingRetryQueueProducer } from "@punyasitus/db/provisioning/self-service";
 import {
@@ -16,19 +21,28 @@ import {
 /**
  * Shared platform-`app`-host guard, CSRF/Origin check, session lifetime enforcement,
  * and `private, no-store` / `noindex, nofollow` response builders for `/api/onboarding/**`
- * (REQ-059, PLAN §4, §17.2, TASK-058).
+ * (REQ-059, REQ-109, PLAN §4, §17.2, §20.5, TASK-058, TASK-109).
  */
 
 export interface OnboardingRuntimeEnv extends AuthRuntimeEnv {
   readonly SAAS_ZONE?: string;
   readonly TENANT_STORE?: TenantStoreNamespaceLike | null;
   readonly JOBS_QUEUE?: OnboardingRetryQueueProducer | null;
+  readonly AI?: WorkersAiBindingLike | null;
+  readonly AI_WRITING_MODEL?: string;
+  readonly AI_WRITING_GATEWAY_ID?: string;
+  readonly AI_ONBOARDING_ENABLED?: string;
 }
 
 export interface OnboardingApiOptions {
   readonly emailPort?: EmailPort | null;
   readonly tenantStore?: TenantStoreNamespaceLike | null;
   readonly jobsQueue?: OnboardingRetryQueueProducer | null;
+  readonly providerPort?: AiWritingProviderPort | null;
+  readonly burstPolicy?: AiWritingBurstPolicy;
+  readonly quotaLimit?: number;
+  readonly authenticatedUser?: { readonly id: string } | null;
+  readonly requestId?: string;
   readonly turnstileFetch?: typeof fetch;
   readonly enforceTurnstileWhenUnconfigured?: boolean;
   readonly nowMs?: number;
@@ -228,5 +242,12 @@ export function extractOnboardingEnvFromCloudflare(
     TURNSTILE_SECRET_KEY:
       typeof rawEnv.TURNSTILE_SECRET_KEY === "string" ? rawEnv.TURNSTILE_SECRET_KEY : undefined,
     EMAIL: (rawEnv.EMAIL as CloudflareSendEmailBinding | undefined) ?? null,
+    AI: (rawEnv.AI as WorkersAiBindingLike | undefined) ?? null,
+    AI_WRITING_MODEL:
+      typeof rawEnv.AI_WRITING_MODEL === "string" ? rawEnv.AI_WRITING_MODEL : undefined,
+    AI_WRITING_GATEWAY_ID:
+      typeof rawEnv.AI_WRITING_GATEWAY_ID === "string" ? rawEnv.AI_WRITING_GATEWAY_ID : undefined,
+    AI_ONBOARDING_ENABLED:
+      typeof rawEnv.AI_ONBOARDING_ENABLED === "string" ? rawEnv.AI_ONBOARDING_ENABLED : undefined,
   };
 }

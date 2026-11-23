@@ -34,10 +34,12 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { OnboardingAiDraftStep } from "./_OnboardingAiDraftStep";
 
 export interface OnboardingWizardProps {
   readonly initialStatus: OwnerOnboardingStatus | null;
   readonly saasZone: string;
+  readonly aiProviderConfigured?: boolean;
 }
 
 interface HandleCheckState {
@@ -49,8 +51,10 @@ interface HandleCheckState {
 }
 
 interface ProvisionSuccessState {
+  readonly tenantId: string;
   readonly handle: string;
   readonly name: string;
+  readonly vertical: OnboardingVertical;
   readonly primaryHost: string;
   readonly grantedTrial: boolean;
   readonly awaitingFirstPayment: boolean;
@@ -78,8 +82,13 @@ function formatIndonesianDateTime(epochMs: number | null): string | null {
   }
 }
 
-export function OnboardingWizard({ initialStatus, saasZone }: OnboardingWizardProps) {
+export function OnboardingWizard({
+  initialStatus,
+  saasZone,
+  aiProviderConfigured = false,
+}: OnboardingWizardProps) {
   const [ownerStatus, setOwnerStatus] = React.useState<OwnerOnboardingStatus | null>(initialStatus);
+  const [aiAvailable, setAiAvailable] = React.useState<boolean>(aiProviderConfigured);
   const [name, setName] = React.useState("");
   const [handle, setHandle] = React.useState("");
   const [handleTouched, setHandleTouched] = React.useState(false);
@@ -239,9 +248,15 @@ export function OnboardingWizard({ initialStatus, saasZone }: OnboardingWizardPr
     try {
       const res = await fetch("/api/onboarding/status", { credentials: "same-origin" });
       if (!res.ok) return;
-      const data = (await res.json()) as OwnerOnboardingStatus & { readonly success?: boolean };
+      const data = (await res.json()) as OwnerOnboardingStatus & {
+        readonly success?: boolean;
+        readonly aiProviderConfigured?: boolean;
+      };
       if (data.success && data.user) {
         setOwnerStatus(data);
+        if (typeof data.aiProviderConfigured === "boolean") {
+          setAiAvailable(data.aiProviderConfigured);
+        }
         const firstPending: PendingOnboardingRecovery | undefined = data.pendingRecoveries[0];
         if (firstPending) {
           setRecoveryNotice({
@@ -284,8 +299,10 @@ export function OnboardingWizard({ initialStatus, saasZone }: OnboardingWizardPr
         readonly awaitingFirstPayment?: boolean;
         readonly nextPath?: string;
         readonly tenant?: {
+          readonly id: string;
           readonly handle: string;
           readonly name: string;
+          readonly vertical?: OnboardingVertical;
           readonly primaryHost: string;
           readonly trialEndsAt: number | null;
         };
@@ -301,8 +318,10 @@ export function OnboardingWizard({ initialStatus, saasZone }: OnboardingWizardPr
 
       setRecoveryNotice(null);
       setSuccessResult({
+        tenantId: data.tenant.id,
         handle: data.tenant.handle,
         name: data.tenant.name,
+        vertical: data.tenant.vertical ?? "compro",
         primaryHost: data.tenant.primaryHost,
         grantedTrial: data.tenant.trialEndsAt !== null && !data.awaitingFirstPayment,
         awaitingFirstPayment: Boolean(data.awaitingFirstPayment),
@@ -377,6 +396,7 @@ export function OnboardingWizard({ initialStatus, saasZone }: OnboardingWizardPr
           readonly id: string;
           readonly handle: string;
           readonly name: string;
+          readonly vertical?: OnboardingVertical;
           readonly primaryHost: string;
           readonly trialEndsAt: number | null;
         };
@@ -411,8 +431,10 @@ export function OnboardingWizard({ initialStatus, saasZone }: OnboardingWizardPr
       }
 
       setSuccessResult({
+        tenantId: data.tenant.id,
         handle: data.tenant.handle,
         name: data.tenant.name,
+        vertical: data.tenant.vertical ?? vertical,
         primaryHost: data.tenant.primaryHost,
         grantedTrial: Boolean(data.grantedTrial),
         awaitingFirstPayment: Boolean(data.awaitingFirstPayment),
@@ -519,11 +541,12 @@ export function OnboardingWizard({ initialStatus, saasZone }: OnboardingWizardPr
     );
   }
 
-  // 3. Provisioned success card
+  // 3. Provisioned success card (+ optional AI Draft step when AI provider is configured)
   if (successResult) {
     const expiryLabel = formatIndonesianDateTime(successResult.trialEndsAt);
+    const showOptionalAiStep = aiAvailable && !successResult.awaitingFirstPayment;
     return (
-      <Card className="w-full max-w-xl shadow-none" data-testid="onboarding-success">
+      <Card className="w-full max-w-2xl shadow-none" data-testid="onboarding-success">
         <CardHeader className="gap-2 border-b border-border pb-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 text-primary">
@@ -577,6 +600,14 @@ export function OnboardingWizard({ initialStatus, saasZone }: OnboardingWizardPr
                 pembayaran QRIS atau Virtual Account untuk mengaktifkannya.
               </AlertDescription>
             </Alert>
+          )}
+
+          {showOptionalAiStep && (
+            <OnboardingAiDraftStep
+              tenantId={successResult.tenantId}
+              businessName={successResult.name}
+              vertical={successResult.vertical}
+            />
           )}
 
           <div className="flex flex-col gap-2.5 sm:flex-row">

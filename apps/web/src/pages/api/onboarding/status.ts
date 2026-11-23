@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { isOnboardingAiProviderConfigured } from "@punyasitus/core/onboarding/ai-draft/index";
 import { getOwnerOnboardingStatus } from "@punyasitus/db/provisioning/self-service";
 import type { APIRoute } from "astro";
 import {
@@ -62,6 +63,7 @@ export async function handleOnboardingStatusRequest(
     return onboardingJsonResponse(200, {
       success: true,
       ...status,
+      aiProviderConfigured: isOnboardingAiProviderConfigured(runtimeEnv, options.providerPort),
     });
   } catch {
     return onboardingJsonResponse(503, {
