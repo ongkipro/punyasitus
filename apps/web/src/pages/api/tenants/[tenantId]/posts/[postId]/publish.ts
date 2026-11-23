@@ -1,5 +1,10 @@
+import { env } from "cloudflare:workers";
 import { publishPost } from "@punyasitus/db/posts/index";
 import type { APIRoute } from "astro";
+import {
+  enqueueIndexNowPublishPing,
+  type IndexNowEnqueueEnv,
+} from "../../../../../../worker/queues/seo/index.ts";
 import {
   authorizeTenantBlogRequest,
   blogErrorResponse,
@@ -19,16 +24,21 @@ import {
  * `POST /api/tenants/:tenantId/posts/:postId/publish`
  * Atomically publishes a blog post draft snapshot and bumps `PLATFORM_DB.tenants.cache_version`.
  *
- * TASK-006 (`REQ-009`, `REQ-034`, `REQ-036`, `REQ-061`).
+ * TASK-006 (`REQ-009`, `REQ-034`, `REQ-036`, `REQ-061`), TASK-095 (`REQ-095` IndexNow hook).
  */
 
 const PUBLISH_ALLOWED_KEYS = new Set(["version", "expectedVersion", "confirmSlugChange"]);
+
+export type TenantPostPublishRuntimeEnv = TenantBlogRuntimeEnv & {
+  readonly JOBS_QUEUE?: IndexNowEnqueueEnv["JOBS_QUEUE"] | null;
+  readonly SAAS_ZONE?: string;
+};
 
 export async function handleTenantPostPublishRequest(
   tenantId: string,
   rawPostId: string,
   request: Request,
-  runtimeEnv: TenantBlogRuntimeEnv,
+  runtimeEnv: TenantPostPublishRuntimeEnv,
   options: TenantBlogHandlerOptions = {},
 ): Promise<Response> {
   const method = request.method.toUpperCase();
@@ -108,6 +118,28 @@ export async function handleTenantPostPublishRequest(
       nowMs: options.nowMs,
     });
 
+    if (runtimeEnv.JOBS_QUEUE) {
+      const publicPath = `/blog/${result.post.slug}`;
+      try {
+        await enqueueIndexNowPublishPing(
+          {
+            PLATFORM_DB: platformDb,
+            JOBS_QUEUE: runtimeEnv.JOBS_QUEUE,
+            tenantDb,
+          },
+          {
+            tenantId: member.tenantId,
+            urls: [publicPath],
+            source: "cms",
+            nowMs: options.nowMs,
+            saasZone: runtimeEnv.SAAS_ZONE,
+          },
+        );
+      } catch {
+        // Non-blocking best-effort IndexNow ping; never fail a committed publish.
+      }
+    }
+
     return blogJsonResponse(200, {
       ...formatPostRecordResponse(result.post),
       cacheVersion: result.cacheVersion,
@@ -123,7 +155,11 @@ export const ALL: APIRoute = ({ params, request, locals }) =>
     params.tenantId ?? "",
     params.postId ?? "",
     request,
-    buildBlogRuntimeEnv(),
+    {
+      ...buildBlogRuntimeEnv(),
+      JOBS_QUEUE: env.JOBS_QUEUE,
+      SAAS_ZONE: env.SAAS_ZONE,
+    },
     {
       authenticatedUser: locals.authUser ? { id: locals.authUser.id } : null,
       activeOrganizationId: locals.authSession?.activeOrganizationId ?? null,

@@ -1,0 +1,125 @@
+---
+import { env } from "cloudflare:workers";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import type { TenantVertical } from "@punyasitus/db/platform";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { loadSeoVisibilitySnapshot } from "./_data";
+import { SeoVisibilityManager } from "./_SeoVisibilityManager";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const authorized = Astro.locals.authorizedTenantMember;
+const authUser = Astro.locals.authUser;
+if (!authorized || !authUser || !env.PLATFORM_DB) {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const saasZone = env.SAAS_ZONE || "situsku.click";
+const snapshot = await loadSeoVisibilitySnapshot({
+  platformDb: env.PLATFORM_DB,
+  tenantStore: env.TENANT_STORE as unknown as TenantStoreNamespaceLike,
+  tenantId: authorized.tenantId,
+  saasZone,
+});
+
+if (!snapshot) {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+function mapLifecycle(status: string): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+function offeringLabelForVertical(vertical?: TenantVertical): string {
+  switch (vertical) {
+    case "catalog":
+    case "resto":
+      return "Produk";
+    case "travel":
+      return "Paket Tur";
+    case "dealer":
+      return "Kendaraan";
+    default:
+      return "Layanan";
+  }
+}
+
+const lifecycleStatus = mapLifecycle(snapshot.tenantStatus);
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof snapshot.trialEndsAtMs === "number"
+    ? Math.max(0, Math.ceil((snapshot.trialEndsAtMs - Date.now()) / 86_400_000))
+    : undefined;
+
+const canEditPolicy =
+  authorized.role === "owner" ||
+  authorized.role === "admin" ||
+  authorized.role === "agency_admin";
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+---
+
+<DashboardLayout
+  title={`Visibilitas AI & Pencarian — ${snapshot.tenantName}`}
+  surface="dashboard"
+  workspaceName={snapshot.tenantName}
+  workspaceSubtitle={snapshot.primaryHost}
+  activeNavId="plugins"
+  basePath={`/dashboard/${snapshot.handle}`}
+  offeringLabel={offeringLabelForVertical(snapshot.vertical)}
+  lifecycleStatus={lifecycleStatus}
+  lifecycleDaysRemaining={lifecycleDaysRemaining}
+  publicSiteHref={`https://${snapshot.primaryHost}`}
+  userDisplayName={authUser.name}
+  userRoleLabel={
+    authorized.role === "owner"
+      ? "Pemilik Situs"
+      : authorized.role === "admin"
+        ? "Admin"
+        : "Editor"
+  }
+>
+  <SeoVisibilityManager
+    client:load
+    initialSnapshot={snapshot}
+    canEditPolicy={canEditPolicy}
+  />
+</DashboardLayout>

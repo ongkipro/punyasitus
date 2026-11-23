@@ -1,5 +1,11 @@
+import { env } from "cloudflare:workers";
+import type { OfferingType } from "@punyasitus/core/schemas/common";
 import { publishCatalogOffering } from "@punyasitus/db/catalog/index";
 import type { APIRoute } from "astro";
+import {
+  enqueueIndexNowPublishPing,
+  type IndexNowEnqueueEnv,
+} from "../../../../../../worker/queues/seo/index.ts";
 import {
   authorizeTenantCatalogRequest,
   buildCatalogRuntimeEnv,
@@ -19,16 +25,29 @@ import {
  * - `POST /api/tenants/:tenantId/catalog/:offeringId/publish`
  *
  * Atomically validates & publishes the offering snapshot via `publishResourceAtomically`
- * and bumps `PLATFORM_DB.tenants.cache_version` (TASK-009, REQ-012, REQ-036).
+ * and bumps `PLATFORM_DB.tenants.cache_version` (TASK-009, REQ-012, REQ-013, REQ-016, REQ-036,
+ * TASK-095 `REQ-095` IndexNow hook).
  */
 
 const PUBLISH_ALLOWED_KEYS = new Set(["version", "expectedVersion", "confirmSlugChange"]);
+
+const OFFERING_PUBLIC_PREFIX: Readonly<Record<OfferingType, string>> = {
+  service: "/layanan",
+  product: "/produk",
+  tour: "/tour",
+  vehicle: "/kendaraan",
+};
+
+export type TenantCatalogPublishRuntimeEnv = TenantCatalogRuntimeEnv & {
+  readonly JOBS_QUEUE?: IndexNowEnqueueEnv["JOBS_QUEUE"] | null;
+  readonly SAAS_ZONE?: string;
+};
 
 export async function handleTenantCatalogOfferingPublishRequest(
   tenantId: string,
   rawOfferingId: string,
   request: Request,
-  runtimeEnv: TenantCatalogRuntimeEnv,
+  runtimeEnv: TenantCatalogPublishRuntimeEnv,
   options: TenantCatalogHandlerOptions = {},
 ): Promise<Response> {
   const method = request.method.toUpperCase();
@@ -105,6 +124,29 @@ export async function handleTenantCatalogOfferingPublishRequest(
       nowMs: options.nowMs,
     });
 
+    if (runtimeEnv.JOBS_QUEUE) {
+      const prefix = OFFERING_PUBLIC_PREFIX[result.offering.offeringType];
+      const publicPath = `${prefix}/${result.offering.slug}`;
+      try {
+        await enqueueIndexNowPublishPing(
+          {
+            PLATFORM_DB: platformDb,
+            JOBS_QUEUE: runtimeEnv.JOBS_QUEUE,
+            tenantDb,
+          },
+          {
+            tenantId: member.tenantId,
+            urls: [publicPath],
+            source: "cms",
+            nowMs: options.nowMs,
+            saasZone: runtimeEnv.SAAS_ZONE,
+          },
+        );
+      } catch {
+        // Non-blocking best-effort IndexNow ping; never fail a committed publish.
+      }
+    }
+
     return catalogJsonResponse(200, {
       ...result.offering,
       cacheVersion: result.cacheVersion,
@@ -120,7 +162,11 @@ export const ALL: APIRoute = ({ params, request, locals }) =>
     params.tenantId ?? "",
     params.offeringId ?? "",
     request,
-    buildCatalogRuntimeEnv(),
+    {
+      ...buildCatalogRuntimeEnv(),
+      JOBS_QUEUE: env.JOBS_QUEUE,
+      SAAS_ZONE: env.SAAS_ZONE,
+    },
     {
       authenticatedUser: locals.authUser ? { id: locals.authUser.id } : null,
       activeOrganizationId: locals.authSession?.activeOrganizationId ?? null,

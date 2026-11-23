@@ -1,5 +1,10 @@
+import { env } from "cloudflare:workers";
 import { publishPage } from "@punyasitus/db/pages/index";
 import type { APIRoute } from "astro";
+import {
+  enqueueIndexNowPublishPing,
+  type IndexNowEnqueueEnv,
+} from "../../../../../../worker/queues/seo/index.ts";
 import {
   authorizeTenantPageRequest,
   buildPagesRuntimeEnv,
@@ -19,16 +24,21 @@ import {
  * `POST /api/tenants/:tenantId/pages/:pageId/publish`
  * Atomically publishes a page draft snapshot and bumps `PLATFORM_DB.tenants.cache_version`.
  *
- * TASK-005 (`REQ-008`, `REQ-034`, `REQ-036`, `REQ-061`).
+ * TASK-005 (`REQ-008`, `REQ-034`, `REQ-036`, `REQ-061`), TASK-095 (`REQ-095` IndexNow hook).
  */
 
 const PUBLISH_ALLOWED_KEYS = new Set(["version", "expectedVersion", "confirmSlugChange"]);
+
+export type TenantPagePublishRuntimeEnv = TenantPagesRuntimeEnv & {
+  readonly JOBS_QUEUE?: IndexNowEnqueueEnv["JOBS_QUEUE"] | null;
+  readonly SAAS_ZONE?: string;
+};
 
 export async function handleTenantPagePublishRequest(
   tenantId: string,
   rawPageId: string,
   request: Request,
-  runtimeEnv: TenantPagesRuntimeEnv,
+  runtimeEnv: TenantPagePublishRuntimeEnv,
   options: TenantPagesHandlerOptions = {},
 ): Promise<Response> {
   const method = request.method.toUpperCase();
@@ -107,6 +117,28 @@ export async function handleTenantPagePublishRequest(
       nowMs: options.nowMs,
     });
 
+    if (runtimeEnv.JOBS_QUEUE) {
+      const publicPath = result.page.isHomepage ? "/" : `/${result.page.slug}`;
+      try {
+        await enqueueIndexNowPublishPing(
+          {
+            PLATFORM_DB: platformDb,
+            JOBS_QUEUE: runtimeEnv.JOBS_QUEUE,
+            tenantDb,
+          },
+          {
+            tenantId: member.tenantId,
+            urls: [publicPath],
+            source: "cms",
+            nowMs: options.nowMs,
+            saasZone: runtimeEnv.SAAS_ZONE,
+          },
+        );
+      } catch {
+        // Non-blocking best-effort IndexNow ping; never fail a committed publish.
+      }
+    }
+
     return pageJsonResponse(200, {
       ...formatPageRecordResponse(result.page),
       cacheVersion: result.cacheVersion,
@@ -122,7 +154,11 @@ export const ALL: APIRoute = ({ params, request, locals }) =>
     params.tenantId ?? "",
     params.pageId ?? "",
     request,
-    buildPagesRuntimeEnv(),
+    {
+      ...buildPagesRuntimeEnv(),
+      JOBS_QUEUE: env.JOBS_QUEUE,
+      SAAS_ZONE: env.SAAS_ZONE,
+    },
     {
       authenticatedUser: locals.authUser ? { id: locals.authUser.id } : null,
       activeOrganizationId: locals.authSession?.activeOrganizationId ?? null,
