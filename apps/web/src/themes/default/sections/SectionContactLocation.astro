@@ -1,0 +1,197 @@
+---
+import type {
+  ClosedSectionType,
+  ContactLocationSectionConfig,
+} from "@punyasitus/core/theme/index";
+import { buildSafeWhatsAppDirectHref } from "../../../core/section-registry.ts";
+
+export interface Props {
+  readonly id: string;
+  readonly sectionType?: ClosedSectionType;
+  readonly config: ContactLocationSectionConfig;
+  readonly fallbackBusiness?: {
+    readonly address?: string | null;
+    readonly weekdayHours?: string | null;
+    readonly holidayHours?: string | null;
+    readonly phone?: string | null;
+    readonly whatsappE164?: string | null;
+    readonly email?: string | null;
+    readonly mapsUrl?: string | null;
+  };
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  sectionType = "contact_location",
+  config,
+  fallbackBusiness,
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+
+const address = config.address ?? fallbackBusiness?.address ?? null;
+const weekdayHours = config.weekdayHours ?? fallbackBusiness?.weekdayHours ?? null;
+const holidayHours = config.holidayHours ?? fallbackBusiness?.holidayHours ?? null;
+const phone = config.phone ?? fallbackBusiness?.phone ?? null;
+const email = config.email ?? fallbackBusiness?.email ?? null;
+const mapsUrl = config.mapsUrl ?? fallbackBusiness?.mapsUrl ?? null;
+const waHref = buildSafeWhatsAppDirectHref(
+  config.whatsappPhone ?? fallbackBusiness?.whatsappE164 ?? null,
+);
+const hasPrimaryCard = Boolean(address || weekdayHours || holidayHours || phone || email || mapsUrl || waHref);
+const hasBranches = config.branches.length > 0;
+---
+
+<section
+  id={id}
+  class:list={["ps-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type={sectionType}
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header">
+      {config.eyebrow && <p class="ps-eyebrow">{config.eyebrow}</p>}
+      {isFirstSection ? (
+        <h1 id={headingId} class="ps-section-title">
+          {config.heading}
+        </h1>
+      ) : (
+        <h2 id={headingId} class="ps-section-title">
+          {config.heading}
+        </h2>
+      )}
+      {config.subheading && <p class="ps-section-subtitle">{config.subheading}</p>}
+    </header>
+
+    <div class:list={["ps-contact-grid", hasPrimaryCard && hasBranches && "ps-contact-grid--two"]}>
+      {hasPrimaryCard && (
+        <article class="ps-card">
+          <h3 class="ps-card-title">Informasi Kontak &amp; Operasional</h3>
+          <dl class="ps-contact-dl">
+            {address && (
+              <div>
+                <dt>Alamat</dt>
+                <dd>{address}</dd>
+              </div>
+            )}
+            {weekdayHours && (
+              <div>
+                <dt>Jam Operasional</dt>
+                <dd>{weekdayHours}</dd>
+              </div>
+            )}
+            {holidayHours && (
+              <div>
+                <dt>Hari Libur</dt>
+                <dd>{holidayHours}</dd>
+              </div>
+            )}
+            {phone && (
+              <div>
+                <dt>Telepon</dt>
+                <dd>
+                  {isPreview ? (
+                    phone
+                  ) : (
+                    <a href={`tel:${phone}`}>{phone}</a>
+                  )}
+                </dd>
+              </div>
+            )}
+            {email && (
+              <div>
+                <dt>Email</dt>
+                <dd>
+                  {isPreview ? (
+                    email
+                  ) : (
+                    <a href={`mailto:${email}`}>{email}</a>
+                  )}
+                </dd>
+              </div>
+            )}
+          </dl>
+
+          {(waHref || mapsUrl) && (
+            <div class="ps-actions" style="margin-top: 0.5rem;">
+              {waHref && (
+                <a
+                  href={isPreview ? undefined : waHref}
+                  class:list={["ps-btn ps-btn--whatsapp", isPreview && "ps-btn--inert"]}
+                  aria-disabled={isPreview ? "true" : undefined}
+                  target={isPreview ? undefined : "_blank"}
+                  rel={isPreview ? undefined : "noopener noreferrer"}
+                >
+                  {config.whatsappLabel ?? "Hubungi via WhatsApp"}
+                </a>
+              )}
+              {mapsUrl && (
+                <a
+                  href={isPreview ? undefined : mapsUrl}
+                  class:list={["ps-btn ps-btn--secondary", isPreview && "ps-btn--inert"]}
+                  aria-disabled={isPreview ? "true" : undefined}
+                  target={isPreview ? undefined : "_blank"}
+                  rel={isPreview ? undefined : "noopener noreferrer"}
+                >
+                  {config.mapsLabel}
+                </a>
+              )}
+            </div>
+          )}
+        </article>
+      )}
+
+      {hasBranches && (
+        <div class="ps-contact-grid">
+          {config.branches.map((branch) => {
+            const branchWa = buildSafeWhatsAppDirectHref(branch.whatsappPhone ?? null);
+            return (
+              <article class="ps-card">
+                <h3 class="ps-card-title">{branch.name}</h3>
+                <p class="ps-card-desc">{branch.address}</p>
+                {branch.weekdayHours && (
+                  <p class="ps-card-meta">Jam operasional: {branch.weekdayHours}</p>
+                )}
+                {branch.holidayHours && (
+                  <p class="ps-card-desc">Hari libur: {branch.holidayHours}</p>
+                )}
+                <div class="ps-actions">
+                  {branch.mapsUrl && (
+                    <a
+                      href={isPreview ? undefined : branch.mapsUrl}
+                      class:list={["ps-btn ps-btn--secondary", isPreview && "ps-btn--inert"]}
+                      aria-disabled={isPreview ? "true" : undefined}
+                      target={isPreview ? undefined : "_blank"}
+                      rel={isPreview ? undefined : "noopener noreferrer"}
+                    >
+                      Buka Peta
+                    </a>
+                  )}
+                  {branchWa && (
+                    <a
+                      href={isPreview ? undefined : branchWa}
+                      class:list={["ps-btn ps-btn--whatsapp", isPreview && "ps-btn--inert"]}
+                      aria-disabled={isPreview ? "true" : undefined}
+                      target={isPreview ? undefined : "_blank"}
+                      rel={isPreview ? undefined : "noopener noreferrer"}
+                    >
+                      WhatsApp Cabang
+                    </a>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  </div>
+</section>

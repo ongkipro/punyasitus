@@ -1,0 +1,185 @@
+---
+import type { ClosedSectionType, OfferingsGridSectionConfig } from "@punyasitus/core/theme/index";
+import {
+  buildSectionOfferingDetailHref,
+  formatIdrPlain,
+  formatSectionOfferingPriceText,
+  getOfferingTypeLabelId,
+  getVehicleUnitStatusLabelId,
+  resolveSectionOfferingCta,
+  type SectionOfferingItem,
+} from "../../../core/section-registry.ts";
+
+export interface Props {
+  readonly id: string;
+  readonly sectionType?: ClosedSectionType;
+  readonly config: OfferingsGridSectionConfig;
+  readonly fallbackOfferings?: readonly SectionOfferingItem[];
+  readonly fallbackWhatsappPhone?: string | null;
+  readonly primaryOrigin?: string;
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  sectionType = "offerings_grid",
+  config,
+  fallbackOfferings = [],
+  fallbackWhatsappPhone = null,
+  primaryOrigin = "https://situsku.click",
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+
+const sourceItems: readonly SectionOfferingItem[] =
+  config.items.length > 0 ? config.items : fallbackOfferings;
+
+const filteredByType = config.offeringType
+  ? sourceItems.filter((item) => item.offeringType === config.offeringType)
+  : sourceItems;
+
+const filteredBySlugs =
+  config.itemSlugs.length > 0
+    ? config.itemSlugs
+        .map((slug) => filteredByType.find((item) => item.slug === slug))
+        .filter((item): item is SectionOfferingItem => Boolean(item))
+    : filteredByType;
+
+const visibleItems = filteredBySlugs.slice(0, config.limit);
+
+function statusBadgeClass(status: SectionOfferingItem["unitStatus"]): string {
+  if (status === "sold") return "ps-badge ps-badge--sold";
+  if (status === "booked") return "ps-badge ps-badge--booked";
+  return "ps-badge ps-badge--secondary";
+}
+---
+
+<section
+  id={id}
+  class:list={["ps-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type={sectionType}
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header ps-section-header--row">
+      <div>
+        {config.eyebrow && <p class="ps-eyebrow">{config.eyebrow}</p>}
+        {isFirstSection ? (
+          <h1 id={headingId} class="ps-section-title">
+            {config.heading}
+          </h1>
+        ) : (
+          <h2 id={headingId} class="ps-section-title">
+            {config.heading}
+          </h2>
+        )}
+        {config.subheading && <p class="ps-section-subtitle">{config.subheading}</p>}
+      </div>
+
+      {config.viewAllCta && (
+        <a
+          href={isPreview ? undefined : config.viewAllCta.href}
+          class:list={["ps-btn ps-btn--secondary", isPreview && "ps-btn--inert"]}
+          aria-disabled={isPreview ? "true" : undefined}
+        >
+          {config.viewAllCta.label}
+        </a>
+      )}
+    </header>
+
+    {visibleItems.length > 0 ? (
+      <div class="ps-card-grid ps-card-grid--3">
+        {visibleItems.map((item) => {
+          const detailHref = buildSectionOfferingDetailHref(item);
+          const priceText = formatSectionOfferingPriceText(item);
+          const cta = resolveSectionOfferingCta(item, {
+            fallbackWhatsappPhone,
+            primaryOrigin,
+          });
+          const statusLabel = getVehicleUnitStatusLabelId(item.unitStatus);
+          const typeLabel = getOfferingTypeLabelId(item.offeringType);
+
+          return (
+            <article
+              class="ps-card ps-offering-card"
+              data-offering-type={item.offeringType}
+              data-offering-slug={item.slug}
+            >
+              <div class="ps-offering-media">
+                {item.coverImage ? (
+                  <img
+                    src={item.coverImage.src}
+                    alt={item.coverImage.alt || item.title}
+                    width={item.coverImage.width}
+                    height={item.coverImage.height}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                ) : (
+                  <div class="ps-offering-media-placeholder">{typeLabel}</div>
+                )}
+              </div>
+
+              <div class="ps-offering-body">
+                <div class="ps-offering-badges">
+                  <span class="ps-badge">{item.categoryName ?? typeLabel}</span>
+                  {item.badge && <span class="ps-badge ps-badge--brand">{item.badge}</span>}
+                  {statusLabel && <span class={statusBadgeClass(item.unitStatus)}>{statusLabel}</span>}
+                </div>
+
+                <h3 class="ps-card-title">
+                  {isPreview ? (
+                    item.title
+                  ) : (
+                    <a href={detailHref} class="ps-offering-title-link">
+                      {item.title}
+                    </a>
+                  )}
+                </h3>
+
+                {item.summary && <p class="ps-card-desc">{item.summary}</p>}
+                {item.metaLine && <p class="ps-card-meta">{item.metaLine}</p>}
+
+                <div class="ps-offering-price-wrap">
+                  <p class="ps-offering-price">{priceText}</p>
+                  {item.originalAmount !== undefined &&
+                    item.originalAmount !== null &&
+                    item.priceMode !== "on_request" && (
+                      <del class="ps-offering-original">{formatIdrPlain(item.originalAmount)}</del>
+                    )}
+                </div>
+              </div>
+
+              <div class="ps-offering-footer">
+                <a
+                  href={isPreview ? undefined : cta.href}
+                  class:list={[
+                    "ps-btn",
+                    cta.isWhatsApp ? "ps-btn--whatsapp" : "ps-btn--primary",
+                    isPreview && "ps-btn--inert",
+                  ]}
+                  aria-disabled={isPreview ? "true" : undefined}
+                  target={!isPreview && cta.isExternal ? "_blank" : undefined}
+                  rel={!isPreview && cta.isExternal ? "noopener noreferrer" : undefined}
+                >
+                  {cta.label}
+                </a>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    ) : (
+      <p class="ps-empty-state">
+        {config.emptyMessage ?? "Belum ada penawaran yang diterbitkan untuk bagian ini."}
+      </p>
+    )}
+  </div>
+</section>

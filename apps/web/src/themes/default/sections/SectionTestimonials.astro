@@ -1,0 +1,80 @@
+---
+import {
+  PERMENKES_TESTIMONIALS_WARNING_MESSAGE,
+  type TestimonialsSectionConfig,
+} from "@punyasitus/core/theme/index";
+
+export interface Props {
+  readonly id: string;
+  readonly config: TestimonialsSectionConfig;
+  readonly isHealthCategory?: boolean;
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  config,
+  isHealthCategory = false,
+  surfaceTone = "surface",
+  isFirstSection = false,
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+---
+
+<section
+  id={id}
+  class:list={["ps-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type="testimonials"
+  data-health-category={isHealthCategory ? "true" : "false"}
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header">
+      {config.eyebrow && <p class="ps-eyebrow">{config.eyebrow}</p>}
+      {isFirstSection ? (
+        <h1 id={headingId} class="ps-section-title">
+          {config.heading}
+        </h1>
+      ) : (
+        <h2 id={headingId} class="ps-section-title">
+          {config.heading}
+        </h2>
+      )}
+      {config.subheading && <p class="ps-section-subtitle">{config.subheading}</p>}
+    </header>
+
+    {isHealthCategory && (
+      <p
+        class="ps-compliance-notice"
+        role="note"
+        data-testid={`section-${id}-permenkes-notice`}
+      >
+        {config.disclaimerText ?? PERMENKES_TESTIMONIALS_WARNING_MESSAGE}
+      </p>
+    )}
+
+    {config.items.length > 0 ? (
+      <div class="ps-card-grid ps-card-grid--3">
+        {config.items.map((item) => (
+          <figure class="ps-card ps-testimonial-card" style="margin: 0;">
+            <blockquote class="ps-testimonial-quote">“{item.quote}”</blockquote>
+            <figcaption class="ps-testimonial-author">
+              <span class="ps-testimonial-name">{item.authorName}</span>
+              {(item.authorRole || item.contextLabel) && (
+                <span class="ps-testimonial-role">
+                  {[item.authorRole, item.contextLabel].filter(Boolean).join(" · ")}
+                </span>
+              )}
+            </figcaption>
+          </figure>
+        ))}
+      </div>
+    ) : (
+      <p class="ps-empty-state">Belum ada testimoni yang ditampilkan.</p>
+    )}
+  </div>
+</section>

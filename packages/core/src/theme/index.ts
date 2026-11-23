@@ -440,3 +440,5 @@ export function renderThemeCssCustomProperties(snapshot: ThemeConfigSnapshot): s
 
   return `:root { ${declarations.join("; ")}; }`;
 }
+
+export * from "./sections.ts";
