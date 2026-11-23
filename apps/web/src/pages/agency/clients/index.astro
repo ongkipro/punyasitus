@@ -1,0 +1,115 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  agencyGatePageErrorResponse,
+  agencyNeutralNotFoundResponse,
+  authorizeAgencyRequest,
+} from "@punyasitus/auth/agency/index";
+import { listAgencyClients } from "@punyasitus/db/agencies/index";
+import AgencyLayout from "@/layouts/AgencyLayout.astro";
+import { formatAgencyClientDto, resolveAgencyRuntimeEnv } from "../../api/agency/_shared";
+import { AgencyClientsPanel } from "./_AgencyClientsPanel";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const agencyEnv = resolveAgencyRuntimeEnv(env as unknown as Record<string, unknown>);
+const authz = await authorizeAgencyRequest(
+  Astro.request,
+  agencyEnv,
+  {
+    action: "agency.page.clients",
+    requireAgencyMembership: true,
+    requiredPermission: "agency:read",
+    enforceCsrf: false,
+  },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email, name: Astro.locals.authUser.name }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  if (authz.response.status === 404) {
+    return agencyNeutralNotFoundResponse();
+  }
+  const msg =
+    authz.code === "TOTP_ENROLLMENT_REQUIRED"
+      ? "Autentikasi dua faktor (TOTP 2FA) wajib diaktifkan untuk mengelola klien agensi."
+      : authz.code === "TOTP_REQUIRED"
+        ? "Verifikasi 2FA diperlukan untuk membuka daftar klien agensi."
+        : "Akses halaman klien agensi memerlukan keanggotaan agensi aktif.";
+  return agencyGatePageErrorResponse(
+    authz.response.status === 401 ? 401 : 403,
+    authz.code,
+    msg,
+  );
+}
+
+const { actor, platformDb, nowMs } = authz.ctx;
+const activeAgency = actor.activeAgency!;
+const clients = (
+  await listAgencyClients(platformDb, activeAgency.id, {
+    nowMs,
+    saasZone: agencyEnv.SAAS_ZONE,
+  })
+).map(formatAgencyClientDto);
+
+const navLinks = [
+  { href: "/agency", label: "Ringkasan", current: false },
+  { href: "/agency/clients", label: "Daftar Klien", current: true },
+  { href: "/agency/billing", label: "Tagihan & Kuitansi", current: false },
+];
+---
+
+<AgencyLayout
+  title={`Daftar Klien — ${activeAgency.name}`}
+  workspaceName={activeAgency.name}
+  workspaceSubtitle={`Diskon ${activeAgency.effectiveDiscountPercent}%`}
+  activeNavId="clients"
+  basePath="/agency"
+  userDisplayName={actor.userName}
+  userRoleLabel="Admin Agensi (2FA Aktif)"
+>
+  <div class="space-y-5" data-testid="agency-clients-page">
+    <nav
+      aria-label="Navigasi Portal Agensi"
+      data-testid="agency-section-nav"
+      class="flex flex-wrap items-center gap-2 border-b border-border pb-3"
+    >
+      {navLinks.map((link) => (
+        <a
+          href={link.href}
+          aria-current={link.current ? "page" : undefined}
+          class:list={[
+            "inline-flex min-h-11 items-center rounded-md border px-3.5 text-sm font-medium transition-colors md:min-h-9",
+            link.current
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border bg-card text-foreground hover:bg-muted",
+          ]}
+        >
+          {link.label}
+        </a>
+      ))}
+    </nav>
+
+    <header class="space-y-1">
+      <h1 class="text-2xl font-semibold tracking-tight text-foreground">Daftar Situs Klien</h1>
+      <p class="text-sm text-muted-foreground">
+        Buat situs klien baru dan kelola konten klien dengan identitas agensi yang tercatat di log audit.
+      </p>
+    </header>
+
+    <AgencyClientsPanel
+      client:load
+      agencyId={activeAgency.id}
+      agencyName={activeAgency.name}
+      initialClients={clients}
+      initialTrialQuota={activeAgency.trialQuota}
+    />
+  </div>
+</AgencyLayout>

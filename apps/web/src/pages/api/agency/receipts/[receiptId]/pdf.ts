@@ -96,7 +96,11 @@ export const ALL: APIRoute = ({ params, request, locals }) =>
     request,
     buildAgencyReceiptRuntimeEnv(),
     {
-      authenticatedUser: locals.authUser ? { id: locals.authUser.id } : null,
-      activeOrganizationId: locals.authSession?.activeOrganizationId ?? null,
+      session: locals.authSession
+        ? { id: locals.authSession.id, userId: locals.authSession.userId }
+        : null,
+      user: locals.authUser
+        ? { id: locals.authUser.id, email: locals.authUser.email, name: locals.authUser.name }
+        : null,
     },
   );

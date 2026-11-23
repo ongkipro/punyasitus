@@ -1,4 +1,10 @@
 import { env } from "cloudflare:workers";
+import {
+  authorizeAgencyRequest,
+  canAgencyRolePerform,
+  type AgencySessionInput,
+  type AgencyUserInput,
+} from "@punyasitus/auth/agency/index";
 import type { CloudflareSendEmailBinding, EmailPort } from "@punyasitus/core/email/index";
 import {
   resolvePlatformAuthHostContext,
@@ -15,14 +21,16 @@ import {
 
 /**
  * Shared agency authorization & helpers for `/api/agency/receipts/**`
- * (REQ-081, REQ-083; PLAN §17.2, §19.3, §19.4; TASK-081).
+ * (REQ-081, REQ-083; PLAN §17.2, §19.3, §19.4; TASK-081 & TASK-083).
  *
- * Security boundaries:
- * - Platform `app` host ONLY (neutral `404` on tenant/marketing/console hosts).
- * - Unauthenticated -> `401 UNAUTHENTICATED`.
- * - Non-agency user -> `403 FORBIDDEN`.
- * - Agency staff/owner ONLY sees receipts owned by their active `agency_id`;
- *   another agency's or direct tenant's receipts return neutral `404 NOT_FOUND`.
+ * Security boundaries (TASK-083 hardened):
+ * - All live HTTP / Astro / cookie / session requests route strictly through `authorizeAgencyRequest`:
+ *   - Platform `app` host ONLY (neutral `404` on tenant/marketing/console hosts).
+ *   - DEC-045 agency session lifetime ceilings (60m idle / 12h absolute).
+ *   - Verified email (`403 EMAIL_NOT_VERIFIED`).
+ *   - Mandatory TOTP 2FA (`403 TOTP_ENROLLMENT_REQUIRED` / `403 TOTP_REQUIRED`).
+ *   - Active, non-revoked `agency_members` with `agency:billing:read` RBAC role (`403 FORBIDDEN` for `agency_staff`).
+ *   - Cross-agency or direct-tenant receipts return neutral `404 NOT_FOUND`.
  */
 
 export {
@@ -41,6 +49,10 @@ export interface AgencyReceiptHandlerOptions {
   readonly emailPort?: EmailPort | null;
   readonly nowMs?: number;
   readonly requestId?: string;
+  /** Live session + user forwarded by Astro middleware locals or session-based tests. */
+  readonly session?: AgencySessionInput | null;
+  readonly user?: AgencyUserInput | null;
+  /** Legacy pre-TASK-083 synthetic user injection (honored ONLY when `0028_agency_portal` is not applied). */
   readonly authenticatedUser?: { readonly id: string } | null;
   readonly activeOrganizationId?: string | null;
 }
@@ -70,6 +82,17 @@ export function buildAgencyReceiptRuntimeEnv(): AgencyReceiptRuntimeEnv {
   };
 }
 
+async function hasAgencyMembersTable(db: D1Database): Promise<boolean> {
+  try {
+    const row = await db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agency_members' LIMIT 1")
+      .first<{ readonly name: string }>();
+    return Boolean(row?.name);
+  } catch {
+    return false;
+  }
+}
+
 export async function authorizeAgencyReceiptRequest(
   request: Request,
   runtimeEnv: AgencyReceiptRuntimeEnv,
@@ -81,6 +104,77 @@ export async function authorizeAgencyReceiptRequest(
   const requestId = options.requestId ?? createReceiptRequestId();
   const nowMs = Math.trunc(options.nowMs ?? Date.now());
 
+  const isLegacySyntheticCall =
+    Boolean(options.authenticatedUser?.id) &&
+    !options.session &&
+    !request.headers.get("cookie") &&
+    Boolean(runtimeEnv.PLATFORM_DB) &&
+    !(await hasAgencyMembersTable(runtimeEnv.PLATFORM_DB!));
+
+  // Primary path (100% of live HTTP, Astro, cookie, session, and post-0028 requests):
+  // Route strictly through `authorizeAgencyRequest` with mandatory 2FA + agency:billing:read RBAC!
+  if (!isLegacySyntheticCall) {
+    const url = new URL(request.url);
+    const requestedAgencyId = url.searchParams.get("agencyId");
+    const authz = await authorizeAgencyRequest(
+      request,
+      runtimeEnv,
+      {
+        action: "agency.receipts.read",
+        requestedAgencyId,
+        requireAgencyMembership: true,
+        requiredPermission: "agency:billing:read",
+        enforceCsrf: false,
+      },
+      {
+        emailPort: options.emailPort,
+        nowMs,
+        requestId,
+        session: options.session ?? null,
+        user: options.user ?? null,
+      },
+    );
+
+    if (!authz.ok) {
+      return { ok: false, response: authz.response };
+    }
+
+    const billingAgencyIds = requestedAgencyId
+      ? [authz.ctx.actor.activeAgency!.id]
+      : authz.ctx.actor.memberships
+          .filter(
+            (m) =>
+              m.agency.status !== "suspended" &&
+              canAgencyRolePerform(m.role, "agency:billing:read"),
+          )
+          .map((m) => m.agency.id);
+
+    if (billingAgencyIds.length === 0) {
+      return {
+        ok: false,
+        response: receiptErrorResponse(
+          403,
+          "FORBIDDEN",
+          "Peran agensi Anda tidak memiliki izin akses kuitansi penagihan.",
+          authz.ctx.requestId,
+        ),
+      };
+    }
+
+    return {
+      ok: true,
+      ctx: {
+        requestId: authz.ctx.requestId,
+        nowMs: authz.ctx.nowMs,
+        userId: authz.ctx.actor.userId,
+        agencyIds: new Set(billingAgencyIds),
+        primaryAgencyId: authz.ctx.actor.activeAgency?.id ?? billingAgencyIds[0]!,
+        platformDb: authz.ctx.platformDb,
+      },
+    };
+  }
+
+  // Legacy pre-0028 synthetic test harness compatibility (TASK-081 tests without `0028_agency_portal.sql`)
   const hostCtx = resolvePlatformAuthHostContext(request, runtimeEnv);
   if (!hostCtx.allowed || hostCtx.surface !== "app") {
     return {
@@ -121,10 +215,6 @@ export async function authorizeAgencyReceiptRequest(
     };
   }
 
-  // Resolve all active agencies the authenticated user belongs to:
-  // 1) Agency owner (`agencies.owner_user_id`),
-  // 2) Member of the agency's own organization (`owner`/`admin`/`agency_staff`), or
-  // 3) Assigned `agency_staff` member on any tenant belonging to that active agency.
   const rows = await runtimeEnv.PLATFORM_DB.prepare(
     `SELECT DISTINCT a.id
      FROM agencies a

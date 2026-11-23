@@ -1,0 +1,166 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  agencyGatePageErrorResponse,
+  agencyNeutralNotFoundResponse,
+  authorizeAgencyRequest,
+} from "@punyasitus/auth/agency/index";
+import {
+  getAgencyClientBySelector,
+  switchAgencyIntoClientContext,
+} from "@punyasitus/db/agencies/index";
+import { ExternalLinkIcon, ReceiptTextIcon, ShieldCheckIcon } from "lucide-react";
+import AgencyLayout from "@/layouts/AgencyLayout.astro";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { resolveAgencyRuntimeEnv } from "../../../api/agency/_shared";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const agencyEnv = resolveAgencyRuntimeEnv(env as unknown as Record<string, unknown>);
+const authz = await authorizeAgencyRequest(
+  Astro.request,
+  agencyEnv,
+  {
+    action: "agency.page.client_context",
+    requireAgencyMembership: true,
+    requiredPermission: "agency:clients:switch",
+    enforceCsrf: false,
+  },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email, name: Astro.locals.authUser.name }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  if (authz.response.status === 404) {
+    return agencyNeutralNotFoundResponse();
+  }
+  return agencyGatePageErrorResponse(
+    authz.response.status === 401 ? 401 : 403,
+    authz.code,
+    "Autentikasi dua faktor (2FA) aktif dan keanggotaan agensi wajib digunakan.",
+  );
+}
+
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const activeAgency = authz.ctx.actor.activeAgency!;
+
+// Cross-agency / unknown handle ALWAYS returns neutral 404!
+const client = await getAgencyClientBySelector(
+  authz.ctx.platformDb,
+  activeAgency.id,
+  rawHandle,
+  authz.ctx.nowMs,
+  agencyEnv.SAAS_ZONE,
+);
+if (!client) {
+  return agencyNeutralNotFoundResponse();
+}
+
+const switched = await switchAgencyIntoClientContext(authz.ctx.platformDb, {
+  agencyId: activeAgency.id,
+  actorUserId: authz.ctx.actor.userId,
+  sessionId: authz.ctx.actor.sessionId,
+  tenantIdOrHandle: client.tenantId,
+  requestId: authz.ctx.requestId,
+  nowMs: authz.ctx.nowMs,
+});
+---
+
+<AgencyLayout
+  title={`Kelola Klien: ${client.name}`}
+  workspaceName={activeAgency.name}
+  workspaceSubtitle={client.primaryHost}
+  activeNavId="clients"
+  basePath="/agency"
+  publicSiteHref={`https://${client.primaryHost}`}
+  userDisplayName={authz.ctx.actor.userName}
+  userRoleLabel="Admin Agensi (2FA Aktif)"
+  agencyClientContext={{
+    agencyName: activeAgency.name,
+    clientName: client.name,
+    clientHandle: client.handle,
+    returnHref: "/agency/clients",
+  }}
+>
+  <div class="space-y-5" data-testid="agency-client-context-page" data-client-handle={client.handle}>
+    <header class="space-y-1">
+      <div class="flex flex-wrap items-center gap-2">
+        <h1 class="text-2xl font-semibold tracking-tight text-foreground">{client.name}</h1>
+        <Badge variant={client.effectiveStatus === "active" ? "default" : "secondary"}>
+          {client.effectiveStatus}
+        </Badge>
+        <Badge variant="outline">Pembayar: Agensi</Badge>
+      </div>
+      <p class="font-mono text-xs text-muted-foreground">{client.primaryHost}</p>
+    </header>
+
+    <Alert variant="info" data-testid="agency-audit-attribution-notice">
+      <ShieldCheckIcon className="size-4" aria-hidden="true" />
+      <AlertTitle>Atribusi Audit Pengguna Agensi Aktif</AlertTitle>
+      <AlertDescription>
+        Sesi pengelolaan ini tercatat atas nama pengguna agensi{" "}
+        <strong>{authz.ctx.actor.userName}</strong> ({authz.ctx.actor.userEmail}) dari agensi{" "}
+        <strong>{activeAgency.name}</strong> (Audit ID:{" "}
+        <span class="font-mono text-xs">{switched.audit.id}</span>). Sistem tidak pernah
+        menyamarkan identitas agensi sebagai akun klien.
+      </AlertDescription>
+    </Alert>
+
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <Card>
+        <CardHeader>
+          <CardTitle>Dashboard CMS Klien</CardTitle>
+          <CardDescription>
+            Kelola halaman, artikel, katalog penawaran, media, tema, dan plugin untuk{" "}
+            {client.name}.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <a
+            href={switched.agencyClientContext.dashboardUrl}
+            data-testid="open-client-cms-dashboard"
+            class="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:opacity-90 sm:w-auto md:min-h-9"
+          >
+            <span>Buka Dashboard CMS ({client.handle})</span>
+            <ExternalLinkIcon className="size-4" aria-hidden="true" />
+          </a>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Tagihan &amp; Kuitansi (Khusus Agensi)</CardTitle>
+          <CardDescription>
+            Anggota klien tidak dapat melihat atau membayar langganan. Perpanjangan dan kuitansi
+            PDF hanya tersedia di Portal Agensi.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <a
+            href={`/agency/billing?tenantId=${encodeURIComponent(client.tenantId)}`}
+            data-testid="open-client-agency-billing"
+            class="inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-border bg-card px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted sm:w-auto md:min-h-9"
+          >
+            <ReceiptTextIcon className="size-4" aria-hidden="true" />
+            <span>Buka Tagihan Agensi</span>
+          </a>
+        </CardContent>
+      </Card>
+    </div>
+  </div>
+</AgencyLayout>
