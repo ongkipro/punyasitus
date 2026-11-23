@@ -1,4 +1,5 @@
-import { restorePost } from "@punyasitus/db/posts/index";
+import { getPostById } from "@punyasitus/db/posts/index";
+import { restoreContentItem } from "@punyasitus/db/trash/index";
 import type { APIRoute } from "astro";
 import {
   authorizeTenantBlogRequest,
@@ -17,7 +18,12 @@ import {
 
 /**
  * `POST /api/tenants/:tenantId/posts/:postId/restore`
- * Restores a trashed blog post back to `draft` state ONLY (never auto-publishes).
+ * Restores a trashed blog post back to `draft` state ONLY (never auto-publishes),
+ * validates `expectedVersion` (`409 STALE_VERSION`), checks slug/redirect collisions
+ * (`409 CONFLICT` with `suggestedSlug` and optional `resolvedSlug` rename), and
+ * inspects media references cleanly without corrupting draft data.
+ *
+ * TASK-006 & TASK-044 (`REQ-009`, `REQ-034`, `REQ-036`, `REQ-048`, `REQ-061`).
  */
 
 const RESTORE_ALLOWED_KEYS = new Set(["version", "expectedVersion", "resolvedSlug"]);
@@ -74,19 +80,45 @@ export async function handleTenantPostRestoreRequest(
     return versionCheck.response;
   }
 
-  const { tenantDb } = auth.ctx;
+  if (
+    parsedBody.body.resolvedSlug !== undefined &&
+    typeof parsedBody.body.resolvedSlug !== "string"
+  ) {
+    return blogErrorResponse(
+      422,
+      "VALIDATION_ERROR",
+      "resolvedSlug harus berupa teks slug yang valid.",
+      requestId,
+      [{ field: "resolvedSlug", code: "INVALID_TYPE", message: "Expected a string for resolvedSlug." }],
+    );
+  }
+
+  const { member, tenantDb } = auth.ctx;
 
   try {
-    const restored = await restorePost(tenantDb, {
-      postId: parsedId.id,
+    const result = await restoreContentItem(tenantDb, {
+      resourceType: "post",
+      resourceId: parsedId.id,
       expectedVersion: versionCheck.expectedVersion!,
       ...(parsedBody.body.resolvedSlug !== undefined
         ? { resolvedSlug: parsedBody.body.resolvedSlug as string }
         : {}),
+      actorUserId: member.userId,
+      actorRole: member.role,
       nowMs: options.nowMs,
     });
 
-    return blogJsonResponse(200, formatPostRecordResponse(restored));
+    const reloaded = await getPostById(tenantDb, parsedId.id);
+    if (!reloaded) {
+      return blogErrorResponse(404, "NOT_FOUND", `Artikel #${parsedId.id} tidak ditemukan.`, requestId);
+    }
+
+    return blogJsonResponse(200, {
+      ...formatPostRecordResponse(reloaded),
+      slugChanged: result.slugChanged,
+      previousSlug: result.previousSlug,
+      mediaReferences: result.mediaReferences,
+    });
   } catch (err) {
     return mapBlogDomainErrorToResponse(err, requestId);
   }

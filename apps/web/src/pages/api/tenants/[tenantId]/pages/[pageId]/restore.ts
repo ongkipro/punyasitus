@@ -1,4 +1,5 @@
-import { restorePage } from "@punyasitus/db/pages/index";
+import { getPageById } from "@punyasitus/db/pages/index";
+import { restoreContentItem } from "@punyasitus/db/trash/index";
 import type { APIRoute } from "astro";
 import {
   authorizeTenantPageRequest,
@@ -17,9 +18,12 @@ import {
 
 /**
  * `POST /api/tenants/:tenantId/pages/:pageId/restore`
- * Restores a trashed page back to `draft` state only (OpenAPI `tenantRestorePage`).
+ * Restores a trashed page back to `draft` state ONLY (never auto-publishes),
+ * validates `expectedVersion` (`409 STALE_VERSION`), checks slug/redirect collisions
+ * (`409 CONFLICT` with `suggestedSlug` and optional `resolvedSlug` rename), and
+ * inspects media references cleanly without corrupting draft data.
  *
- * TASK-005 (`REQ-008`, `REQ-034`, `REQ-036`, `REQ-061`).
+ * TASK-005 & TASK-044 (`REQ-008`, `REQ-034`, `REQ-036`, `REQ-048`, `REQ-061`).
  */
 
 const RESTORE_ALLOWED_KEYS = new Set(["version", "expectedVersion", "resolvedSlug"]);
@@ -76,19 +80,46 @@ export async function handleTenantPageRestoreRequest(
     return versionCheck.response;
   }
 
-  const { tenantDb } = auth.ctx;
+  if (
+    parsedBody.body.resolvedSlug !== undefined &&
+    typeof parsedBody.body.resolvedSlug !== "string"
+  ) {
+    return pageErrorResponse(
+      422,
+      "VALIDATION_ERROR",
+      "resolvedSlug harus berupa teks slug yang valid.",
+      requestId,
+      [{ field: "resolvedSlug", code: "INVALID_TYPE", message: "Expected a string for resolvedSlug." }],
+    );
+  }
+
+  const { member, tenantDb } = auth.ctx;
 
   try {
-    const restored = await restorePage(tenantDb, {
-      pageId: parsedId.pageId,
+    const result = await restoreContentItem(tenantDb, {
+      resourceType: "page",
+      resourceId: parsedId.pageId,
       expectedVersion: versionCheck.expectedVersion!,
       ...(parsedBody.body.resolvedSlug !== undefined
         ? { resolvedSlug: parsedBody.body.resolvedSlug as string }
         : {}),
+      actorUserId: member.userId,
+      actorRole: member.role,
       nowMs: options.nowMs,
     });
 
-    return pageJsonResponse(200, formatPageRecordResponse(restored));
+    const reloaded = await getPageById(tenantDb, parsedId.pageId);
+    if (!reloaded) {
+      return pageErrorResponse(404, "NOT_FOUND", `Halaman #${parsedId.pageId} tidak ditemukan.`, requestId);
+    }
+
+    return pageJsonResponse(200, {
+      ...formatPageRecordResponse(reloaded),
+      slugChanged: result.slugChanged,
+      previousSlug: result.previousSlug,
+      homepageDemoted: result.homepageDemoted,
+      mediaReferences: result.mediaReferences,
+    });
   } catch (err) {
     return mapPageDomainErrorToResponse(err, requestId);
   }

@@ -1,4 +1,5 @@
-import { trashPost } from "@punyasitus/db/posts/index";
+import { getPostById } from "@punyasitus/db/posts/index";
+import { trashContentItem } from "@punyasitus/db/trash/index";
 import type { APIRoute } from "astro";
 import {
   authorizeTenantBlogRequest,
@@ -17,7 +18,8 @@ import {
 
 /**
  * `POST /api/tenants/:tenantId/posts/:postId/trash`
- * Moves a blog post to 30-day trash and unpublishes atomically.
+ * Moves a blog post to 30-day trash, unpublishes atomically, records audit (`WHERE changes() = 1`),
+ * and bumps `tenants.cache_version` (TASK-006 & TASK-044; REQ-009, REQ-034, REQ-036, REQ-048).
  */
 
 const TRASH_ALLOWED_KEYS = new Set(["version", "expectedVersion"]);
@@ -77,16 +79,29 @@ export async function handleTenantPostTrashRequest(
   const { member, platformDb, tenantDb } = auth.ctx;
 
   try {
-    const result = await trashPost(platformDb, tenantDb, {
+    const result = await trashContentItem(platformDb, tenantDb, {
       tenantId: member.tenantId,
-      postId: parsedId.id,
+      resourceType: "post",
+      resourceId: parsedId.id,
       expectedVersion: versionCheck.expectedVersion!,
+      actorUserId: member.userId,
+      actorRole: member.role,
       nowMs: options.nowMs,
     });
 
+    const reloaded = await getPostById(tenantDb, parsedId.id, { includeTrashed: true });
+    if (!reloaded) {
+      return blogErrorResponse(404, "NOT_FOUND", `Artikel #${parsedId.id} tidak ditemukan.`, requestId);
+    }
+
     return blogJsonResponse(200, {
-      ...formatPostRecordResponse(result.post),
+      ...formatPostRecordResponse(reloaded),
       ...(result.cacheVersion !== null ? { cacheVersion: result.cacheVersion } : {}),
+      trashMeta: {
+        deletedAt: result.deletedAt,
+        purgeEligibleAt: result.purgeEligibleAt,
+        daysRemaining: result.daysRemaining,
+      },
     });
   } catch (err) {
     return mapBlogDomainErrorToResponse(err, requestId);
