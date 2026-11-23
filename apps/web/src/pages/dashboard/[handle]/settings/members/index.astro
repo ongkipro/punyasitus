@@ -1,0 +1,130 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  INVITATION_EXPIRY_HOURS,
+  listTenantMembersAndInvitations,
+  MAX_TENANT_MEMBERS,
+} from "@punyasitus/auth/invitations/index";
+import type { TenantVertical } from "@punyasitus/db/platform";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { MembersManager } from "./_MembersManager";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const authorized = Astro.locals.authorizedTenantMember;
+const authUser = Astro.locals.authUser;
+if (!authorized || !authUser || !env.PLATFORM_DB) {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const snapshot = await listTenantMembersAndInvitations(env.PLATFORM_DB, {
+  tenantId: authorized.tenantId,
+});
+
+const tenantMeta = await env.PLATFORM_DB.prepare(
+  `SELECT vertical, operator_hold_reason, trial_ends_at
+   FROM tenants
+   WHERE id = ?
+   LIMIT 1`,
+)
+  .bind(authorized.tenantId)
+  .first<{
+    readonly vertical: TenantVertical;
+    readonly operator_hold_reason: string | null;
+    readonly trial_ends_at: number | null;
+  }>();
+
+function mapLifecycle(status: string): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+function offeringLabelForVertical(vertical?: TenantVertical): string {
+  switch (vertical) {
+    case "catalog":
+    case "resto":
+      return "Produk";
+    case "travel":
+      return "Paket Tur";
+    case "dealer":
+      return "Kendaraan";
+    default:
+      return "Layanan";
+  }
+}
+
+const saasZone = env.SAAS_ZONE || "situsku.click";
+const lifecycleStatus = mapLifecycle(authorized.tenantStatus);
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof tenantMeta?.trial_ends_at === "number"
+    ? Math.max(0, Math.ceil((tenantMeta.trial_ends_at - Date.now()) / 86_400_000))
+    : undefined;
+
+const canManageMembers = authorized.role === "owner" || authorized.role === "agency_admin";
+const canAccessBilling = !snapshot.agencyManaged && authorized.role === "owner";
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+---
+
+<DashboardLayout
+  title={`Anggota Tim — ${snapshot.tenantName}`}
+  surface="dashboard"
+  workspaceName={snapshot.tenantName}
+  workspaceSubtitle={`${snapshot.handle}.${saasZone}`}
+  activeNavId="settings"
+  basePath={`/dashboard/${snapshot.handle}`}
+  offeringLabel={offeringLabelForVertical(tenantMeta?.vertical)}
+  lifecycleStatus={lifecycleStatus}
+  lifecycleDaysRemaining={lifecycleDaysRemaining}
+  lifecycleReason={tenantMeta?.operator_hold_reason ?? undefined}
+  publicSiteHref={`https://${snapshot.handle}.${saasZone}`}
+  userDisplayName={authUser.name}
+  userRoleLabel={authorized.role === "owner" ? "Pemilik Situs" : authorized.role === "admin" ? "Admin" : "Editor"}
+>
+  <MembersManager
+    client:load
+    handle={snapshot.handle}
+    tenantName={snapshot.tenantName}
+    tenantStatus={authorized.tenantStatus}
+    currentUserId={authUser.id}
+    currentRole={authorized.role}
+    canManageMembers={canManageMembers}
+    canAccessBilling={canAccessBilling}
+    agencyManaged={snapshot.agencyManaged}
+    seatsLimit={MAX_TENANT_MEMBERS}
+    invitationExpiryHours={INVITATION_EXPIRY_HOURS}
+    initialMembers={snapshot.members}
+    initialInvitations={snapshot.pendingInvitations}
+  />
+</DashboardLayout>

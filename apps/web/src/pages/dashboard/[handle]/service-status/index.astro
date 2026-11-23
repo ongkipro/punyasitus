@@ -1,0 +1,458 @@
+---
+import { env } from "cloudflare:workers";
+import type { TenantStatus, TenantVertical } from "@punyasitus/db/platform";
+import { computeEffectiveTenantStatus } from "@punyasitus/db/routing/index";
+import {
+  AlertTriangleIcon,
+  ArrowLeftIcon,
+  BanIcon,
+  CheckCircle2Icon,
+  ClockIcon,
+  CreditCardIcon,
+  LockIcon,
+  ShieldAlertIcon,
+  UsersIcon,
+  WrenchIcon,
+} from "lucide-react";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const authorized = Astro.locals.authorizedTenantMember;
+const authUser = Astro.locals.authUser;
+if (!authorized || !authUser || !env.PLATFORM_DB) {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+interface TenantLifecycleRow {
+  readonly id: string;
+  readonly handle: string;
+  readonly name: string;
+  readonly vertical: TenantVertical;
+  readonly status: TenantStatus;
+  readonly operator_hold: number;
+  readonly operator_hold_reason: string | null;
+  readonly agency_id: string | null;
+  readonly trial_ends_at: number | null;
+  readonly paid_through: number | null;
+  readonly deletion_due_at: number | null;
+  readonly primary_host: string | null;
+}
+
+const row = await env.PLATFORM_DB.prepare(
+  `SELECT
+     t.id,
+     t.handle,
+     t.name,
+     t.vertical,
+     t.status,
+     t.operator_hold,
+     t.operator_hold_reason,
+     t.agency_id,
+     t.trial_ends_at,
+     t.paid_through,
+     t.deletion_due_at,
+     (
+       SELECT th.host FROM tenant_hosts th
+       WHERE th.tenant_id = t.id AND th.is_primary = 1
+       LIMIT 1
+     ) AS primary_host
+   FROM tenants t
+   WHERE t.id = ?
+   LIMIT 1`,
+)
+  .bind(authorized.tenantId)
+  .first<TenantLifecycleRow>();
+
+if (!row) {
+  return new Response("Halaman tidak ditemukan", { status: 404 });
+}
+
+const nowMs = Date.now();
+const operatorHold = row.operator_hold === 1;
+const effectiveStatus = computeEffectiveTenantStatus(
+  {
+    storedStatus: row.status,
+    operatorHold,
+    trialEndsAt: row.trial_ends_at,
+    paidThrough: row.paid_through,
+  },
+  nowMs,
+);
+
+const saasZone = env.SAAS_ZONE || "situsku.click";
+const primaryHost = row.primary_host ?? `${row.handle}.${saasZone}`;
+const isOwnerPayer = !row.agency_id && authorized.role === "owner";
+const isAgencyManaged = row.agency_id !== null;
+
+function formatDateTimeWib(ms: number | null): string {
+  if (!ms) return "—";
+  try {
+    return `${new Date(ms).toLocaleString("id-ID", {
+      timeZone: "Asia/Jakarta",
+      dateStyle: "medium",
+      timeStyle: "short",
+    })} WIB`;
+  } catch {
+    return new Date(ms).toISOString();
+  }
+}
+
+function mapLifecycle(status: TenantStatus): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+interface StatusCopy {
+  readonly label: string;
+  readonly badgeVariant: "default" | "secondary" | "outline" | "destructive";
+  readonly alertVariant: "success" | "info" | "warning" | "destructive";
+  readonly headline: string;
+  readonly publicAccess: string;
+  readonly cmsAccess: string;
+  readonly ownerGuidance: string;
+  readonly memberGuidance: string;
+}
+
+function getStatusCopy(status: TenantStatus, hold: boolean): StatusCopy {
+  if (hold) {
+    return {
+      label: "Ditangguhkan (Operator Hold)",
+      badgeVariant: "destructive",
+      alertVariant: "destructive",
+      headline: "Situs ditangguhkan sementara oleh operator platform",
+      publicAccess:
+        'Pengunjung publik melihat halaman netral HTTP 503 ("Situs dalam perbaikan") dan situs tidak diindeks.',
+      cmsAccess:
+        "Penyuntingan CMS dinonaktifkan. Pemilik tetap dapat mengekspor data pesan masuk (CSV) dan menghubungi tim dukungan.",
+      ownerGuidance:
+        "Pembayaran langganan tidak otomatis melepas penangguhan operator. Hubungi tim dukungan PunyaSitus untuk peninjauan dan pemulihan.",
+      memberGuidance:
+        "Hubungi Pemilik Situs (Owner) Anda untuk menindaklanjuti penangguhan ini bersama tim dukungan PunyaSitus.",
+    };
+  }
+
+  switch (status) {
+    case "trial":
+      return {
+        label: "Uji Coba Gratis (7 Hari)",
+        badgeVariant: "secondary",
+        alertVariant: "info",
+        headline: "Situs aktif dalam masa uji coba 7 hari",
+        publicAccess: `Aktif pada subdomain ${primaryHost} dengan noindex, nofollow. Domain khusus tersedia setelah aktivasi paket berbayar.`,
+        cmsAccess: "Akses penuh CMS dengan kuota penyimpanan media 100 MB.",
+        ownerGuidance:
+          "Aktifkan paket langganan bulanan atau tahunan sebelum batas waktu uji coba agar situs tetap online dan siap terindeks mesin pencari.",
+        memberGuidance:
+          "Anda dapat menyusun dan menerbitkan konten selama uji coba. Aktivasi paket langganan dikelola oleh Pemilik Situs (Owner).",
+      };
+    case "active":
+      return {
+        label: "Aktif",
+        badgeVariant: "default",
+        alertVariant: "success",
+        headline: "Layanan aktif dan berjalan normal",
+        publicAccess: "Situs publik aktif, dapat diindeks mesin pencari, dan mendukung domain khusus.",
+        cmsAccess: "Akses penuh CMS dengan kuota penyimpanan media 1 GB.",
+        ownerGuidance:
+          "Layanan dalam kondisi sehat. Anda dapat mengelola anggota tim atau memperpanjang langganan lebih awal kapan saja.",
+        memberGuidance:
+          "Situs beroperasi normal. Anda dapat mengelola konten sesuai peran tim Anda.",
+      };
+    case "grace":
+      return {
+        label: "Masa Tenggang (H+1 – H+3)",
+        badgeVariant: "outline",
+        alertVariant: "warning",
+        headline: "Langganan melewati jatuh tempo — masa tenggang aktif",
+        publicAccess: "Situs publik masih tetap live dan terindeks selama masa tenggang.",
+        cmsAccess: "CMS masih dapat disunting hingga H+4 sebelum otomatis beralih ke mode baca saja.",
+        ownerGuidance:
+          "Segera selesaikan perpanjangan langganan sebelum batas H+4 agar akses penyuntingan tidak terkunci.",
+        memberGuidance:
+          "Informasikan kepada Pemilik Situs (Owner) agar segera menyelesaikan pembayaran perpanjangan sebelum H+4.",
+      };
+    case "locked":
+      return {
+        label: "Terkunci / Baca Saja (H+4 – H+7)",
+        badgeVariant: "destructive",
+        alertVariant: "destructive",
+        headline: "CMS dalam mode baca saja (Terkunci)",
+        publicAccess:
+          "Situs publik masih tetap live dan terindeks mesin pencari untuk menjaga peringkat SEO Anda.",
+        cmsAccess:
+          "Penyuntingan dan publikasi dinonaktifkan sementara (403 SUBSCRIPTION_LOCKED). Anda tetap dapat melihat data dan mengekspor pesan masuk (CSV).",
+        ownerGuidance:
+          "Selesaikan pembayaran perpanjangan sebelum H+8 agar situs publik tidak ditangguhkan sementara.",
+        memberGuidance:
+          "Perubahan konten terkunci hingga Pemilik Situs (Owner) menyelesaikan perpanjangan langganan.",
+      };
+    case "recovery":
+      return {
+        label: "Mode Pemulihan",
+        badgeVariant: "destructive",
+        alertVariant: "destructive",
+        headline: "Situs sedang dalam mode pemulihan teknis",
+        publicAccess: 'Situs publik menampilkan halaman pemeliharaan sementara HTTP 503.',
+        cmsAccess:
+          "Operasi tulis CMS ditunda sementara hingga proses pemulihan basis data selesai oleh tim operasional.",
+        ownerGuidance:
+          "Data situs Anda terlindungi oleh titik pemulihan (PITR). Pantau pembaruan atau hubungi dukungan jika memerlukan bantuan.",
+        memberGuidance:
+          "Situs sedang dalam pemeliharaan teknis. Tunggu hingga tim operasional menyelesaikan pemulihan.",
+      };
+    case "suspended":
+    default:
+      return {
+        label: "Ditangguhkan",
+        badgeVariant: "destructive",
+        alertVariant: "destructive",
+        headline: "Situs publik ditangguhkan sementara",
+        publicAccess:
+          'Pengunjung publik melihat halaman netral HTTP 503 ("Situs dalam perbaikan") dengan no-store dan noindex.',
+        cmsAccess:
+          "Hanya halaman pemulihan pembayaran dan ekspor CSV pesan masuk yang tersedia. Data situs tidak langsung dihapus.",
+        ownerGuidance:
+          "Lakukan pembayaran perpanjangan untuk segera mengaktifkan kembali situs publik sebelum batas tanggal penghapusan data.",
+        memberGuidance:
+          "Akses pembayaran dan pemulihan hanya tersedia untuk Pemilik Situs (Owner). Hubungi pemilik situs untuk mengaktifkan kembali layanan.",
+      };
+  }
+}
+
+const copy = getStatusCopy(effectiveStatus, operatorHold);
+const lifecycleStatus = mapLifecycle(effectiveStatus);
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof row.trial_ends_at === "number"
+    ? Math.max(0, Math.ceil((row.trial_ends_at - nowMs) / 86_400_000))
+    : undefined;
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+---
+
+<DashboardLayout
+  title={`Status Layanan — ${row.name}`}
+  surface="dashboard"
+  workspaceName={row.name}
+  workspaceSubtitle={primaryHost}
+  activeNavId="settings"
+  basePath={`/dashboard/${row.handle}`}
+  lifecycleStatus={lifecycleStatus}
+  lifecycleDaysRemaining={lifecycleDaysRemaining}
+  lifecycleReason={row.operator_hold_reason ?? undefined}
+  publicSiteHref={`https://${primaryHost}`}
+  userDisplayName={authUser.name}
+  userRoleLabel={authorized.role === "owner" ? "Pemilik Situs" : authorized.role === "admin" ? "Admin" : "Editor"}
+>
+  <div
+    class="space-y-6"
+    data-testid="service-status-page"
+    data-handle={row.handle}
+    data-effective-status={effectiveStatus}
+    data-operator-hold={operatorHold ? "true" : "false"}
+  >
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+      <div class="min-w-0 space-y-1">
+        <div class="flex flex-wrap items-center gap-2">
+          <Badge variant={copy.badgeVariant} data-testid="service-status-badge">
+            {copy.label}
+          </Badge>
+          <span class="font-mono text-xs text-muted-foreground">{primaryHost}</span>
+        </div>
+        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+          Status Layanan Situs
+        </h1>
+        <p class="text-sm text-muted-foreground">
+          Ringkasan status operasional, akses publik, dan panduan pemulihan untuk{" "}
+          <strong class="text-foreground">{row.name}</strong>.
+        </p>
+      </div>
+
+      <a
+        href={`/dashboard/${encodeURIComponent(row.handle)}`}
+        class={cn(
+          buttonVariants({
+            variant: "outline",
+            className: "min-h-11 w-full sm:w-auto md:min-h-9",
+          }),
+        )}
+      >
+        <ArrowLeftIcon className="size-4" aria-hidden="true" />
+        Kembali ke Beranda
+      </a>
+    </div>
+
+    <Alert variant={copy.alertVariant} data-testid="service-status-summary-alert">
+      {effectiveStatus === "active" && !operatorHold && (
+        <CheckCircle2Icon className="size-4" aria-hidden="true" />
+      )}
+      {effectiveStatus === "trial" && !operatorHold && (
+        <ClockIcon className="size-4" aria-hidden="true" />
+      )}
+      {effectiveStatus === "grace" && !operatorHold && (
+        <AlertTriangleIcon className="size-4" aria-hidden="true" />
+      )}
+      {effectiveStatus === "locked" && !operatorHold && (
+        <LockIcon className="size-4" aria-hidden="true" />
+      )}
+      {effectiveStatus === "recovery" && !operatorHold && (
+        <WrenchIcon className="size-4" aria-hidden="true" />
+      )}
+      {(effectiveStatus === "suspended" || operatorHold) && (
+        <BanIcon className="size-4" aria-hidden="true" />
+      )}
+      <AlertTitle>{copy.headline}</AlertTitle>
+      <AlertDescription>
+        {operatorHold && row.operator_hold_reason ? (
+          <span>Alasan penangguhan operator: {row.operator_hold_reason}</span>
+        ) : (
+          <span>{isOwnerPayer ? copy.ownerGuidance : copy.memberGuidance}</span>
+        )}
+      </AlertDescription>
+    </Alert>
+
+    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+      <Card>
+        <CardHeader className="border-b border-border">
+          <CardTitle className="text-base">Dampak Akses Saat Ini</CardTitle>
+          <CardDescription>Aturan sistem untuk situs publik dan dashboard CMS.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4 pt-4 text-sm">
+          <div class="space-y-1">
+            <p class="font-medium text-foreground">Situs Publik ({primaryHost})</p>
+            <p class="text-muted-foreground">{copy.publicAccess}</p>
+          </div>
+          <div class="space-y-1">
+            <p class="font-medium text-foreground">Dashboard CMS</p>
+            <p class="text-muted-foreground">{copy.cmsAccess}</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="border-b border-border">
+          <CardTitle className="text-base">Jadwal & Periode Layanan</CardTitle>
+          <CardDescription>Semua batas waktu ditampilkan dalam Waktu Indonesia Barat (WIB).</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 pt-4 text-sm">
+          <div class="flex items-center justify-between gap-4 border-b border-border pb-2">
+            <span class="text-muted-foreground">Batas Uji Coba</span>
+            <span class="font-medium text-foreground tabular-nums">
+              {formatDateTimeWib(row.trial_ends_at)}
+            </span>
+          </div>
+          <div class="flex items-center justify-between gap-4 border-b border-border pb-2">
+            <span class="text-muted-foreground">Aktif Hingga</span>
+            <span class="font-medium text-foreground tabular-nums">
+              {formatDateTimeWib(row.paid_through)}
+            </span>
+          </div>
+          <div class="flex items-center justify-between gap-4">
+            <span class="text-muted-foreground">Batas Retensi Data</span>
+            <span class="font-medium text-foreground tabular-nums">
+              {formatDateTimeWib(row.deletion_due_at)}
+            </span>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+
+    <Card data-testid="service-status-role-guidance">
+      <CardHeader className="border-b border-border">
+        <CardTitle className="flex items-center gap-2 text-base">
+          {isOwnerPayer ? (
+            <CreditCardIcon className="size-4 text-primary" aria-hidden="true" />
+          ) : (
+            <ShieldAlertIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+          )}
+          {isOwnerPayer
+            ? "Tindakan Pemilik Situs (Owner)"
+            : isAgencyManaged
+              ? "Pengelolaan Tagihan oleh Agensi"
+              : "Panduan Anggota Tim (Non-Owner)"}
+        </CardTitle>
+        <CardDescription>
+          {isOwnerPayer
+            ? "Anda memegang hak akses tagihan dan pengelolaan keanggotaan untuk situs ini."
+            : isAgencyManaged
+              ? "Tagihan langganan situs ini dikelola langsung oleh agensi pengelola Anda."
+              : "Akses tagihan dan perpanjangan hanya tersedia bagi Pemilik Situs (Owner)."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4 pt-4">
+        <p class="text-sm text-muted-foreground">
+          {isOwnerPayer ? copy.ownerGuidance : copy.memberGuidance}
+        </p>
+
+        <div class="flex flex-wrap items-center gap-3">
+          <a
+            href={`/dashboard/${encodeURIComponent(row.handle)}/settings/members`}
+            class={cn(
+              buttonVariants({
+                variant: "outline",
+                className: "min-h-11 w-full sm:w-auto md:min-h-9",
+              }),
+            )}
+            data-testid="service-status-members-link"
+          >
+            <UsersIcon className="size-4" aria-hidden="true" />
+            Kelola Anggota Tim
+          </a>
+          <a
+            href="/account/security"
+            class={cn(
+              buttonVariants({
+                variant: "outline",
+                className: "min-h-11 w-full sm:w-auto md:min-h-9",
+              }),
+            )}
+          >
+            Keamanan Akun & 2FA
+          </a>
+        </div>
+      </CardContent>
+    </Card>
+  </div>
+</DashboardLayout>

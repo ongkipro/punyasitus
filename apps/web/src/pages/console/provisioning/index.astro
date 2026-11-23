@@ -1,0 +1,83 @@
+---
+import { env } from "cloudflare:workers";
+import { PLATFORM_HOSTS } from "@punyasitus/core";
+import { listProvisionedTenants } from "@punyasitus/db/provisioning/index";
+import ConsoleLayout from "@/layouts/ConsoleLayout.astro";
+import {
+  ConsoleProvisioningPanel,
+  type ConsoleProvisionedTenantDto,
+} from "./_ConsoleProvisioningPanel";
+
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+if (!isLocalLoopback && Astro.locals.surface !== "console") {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+if (!Astro.locals.platformOperator || !Astro.locals.authUser) {
+  return new Response("Akses operator platform terautentikasi dengan 2FA wajib digunakan.", {
+    status: 403,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const saasZone = env.SAAS_ZONE || PLATFORM_HOSTS.saasZone;
+let initialTenants: ConsoleProvisionedTenantDto[] = [];
+
+if (env.PLATFORM_DB) {
+  try {
+    const listed = await listProvisionedTenants(env.PLATFORM_DB, {
+      limit: 50,
+      saasZone,
+    });
+    initialTenants = listed.map((t) => ({
+      id: t.id,
+      organizationId: t.organizationId,
+      handle: t.handle,
+      name: t.name,
+      vertical: t.vertical,
+      status: t.status,
+      effectiveStatus: t.effectiveStatus,
+      operatorHold: t.operatorHold,
+      operatorHoldReason: t.operatorHoldReason,
+      primaryHost: t.primaryHost,
+      ownerEmail: t.ownerEmail,
+      version: t.version,
+      cacheVersion: t.cacheVersion,
+      createdAt: t.createdAt,
+    }));
+  } catch {
+    initialTenants = [];
+  }
+}
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+---
+
+<ConsoleLayout
+  title="Provisioning Tenant"
+  activeNavId="tenants"
+  basePath="/console/provisioning"
+  userDisplayName={Astro.locals.authUser.name}
+  userRoleLabel="Operator Platform (2FA Aktif)"
+>
+  <ConsoleProvisioningPanel
+    client:load
+    initialTenants={initialTenants}
+    saasZone={saasZone}
+    operatorEmail={Astro.locals.authUser.email}
+  />
+</ConsoleLayout>
