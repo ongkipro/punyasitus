@@ -148,6 +148,7 @@ Astro.response.status = loaded.httpStatus;
     saasZone={saasZone}
     apiBaseUrl={`/api/tenants/${encodeURIComponent(authorized.tenantId)}/domains`}
     billingHref={`/dashboard/${encodeURIComponent(authorized.handle)}/billing`}
+    guideHref={`/dashboard/${encodeURIComponent(authorized.handle)}/settings/domains/guide`}
     supportContact={supportContact}
     initialItems={initialItems}
     initialCustomDomainLocked={initialCustomDomainLocked}

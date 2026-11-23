@@ -4,6 +4,7 @@ import {
   AlertCircleIcon,
   AlertTriangleIcon,
   ArrowRightLeftIcon,
+  BookOpenIcon,
   CheckCircle2Icon,
   CheckIcon,
   ClockIcon,
@@ -212,6 +213,7 @@ export function DomainsManager({
   saasZone,
   apiBaseUrl,
   billingHref,
+  guideHref,
   supportContact,
   initialItems,
   initialCustomDomainLocked,
@@ -746,6 +748,22 @@ export function DomainsManager({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
+          <Button
+            variant="outline"
+            className="min-h-11"
+            data-testid="open-domain-guide-link"
+            render={
+              <a
+                href={
+                  guideHref ??
+                  `/dashboard/${encodeURIComponent(handle)}/settings/domains/guide`
+                }
+              />
+            }
+          >
+            <BookOpenIcon className="size-4" aria-hidden="true" />
+            Panduan Domain &amp; Email
+          </Button>
           {currentPrimary ? (
             <div className="inline-flex min-h-11 max-w-full items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-xs text-muted-foreground">
               <GlobeIcon className="size-3.5 text-primary shrink-0" aria-hidden="true" />

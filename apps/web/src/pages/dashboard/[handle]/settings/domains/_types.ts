@@ -72,6 +72,7 @@ export interface DomainsManagerProps {
   readonly saasZone: string;
   readonly apiBaseUrl: string;
   readonly billingHref: string;
+  readonly guideHref?: string;
   readonly supportContact: PlatformSupportContactDto;
   readonly initialItems: readonly TenantDomainItemDto[];
   readonly initialCustomDomainLocked: boolean;
