@@ -1,0 +1,83 @@
+---
+import { env } from "cloudflare:workers";
+import { listBranchesForAdmin } from "@punyasitus/db/branches/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { BranchesSettingsClient } from "./_BranchesSettingsClient";
+import {
+  BRANCHES_SSR_SECURITY_HEADERS,
+  evaluateBranchesSettingsSsrGate,
+  serviceUnavailableBranchesSsrResponse,
+} from "./_ssr-gate";
+
+// Check operatorHold from PLATFORM_DB only (BEFORE any TenantStore DB reads!) — FAIL CLOSED on DB error!
+let operatorHold = false;
+const preAuthMember = Astro.locals.authorizedTenantMember;
+if (preAuthMember) {
+  if (!env.PLATFORM_DB) {
+    return serviceUnavailableBranchesSsrResponse();
+  }
+  try {
+    const holdRow = await env.PLATFORM_DB.prepare(
+      "SELECT operator_hold FROM tenants WHERE id = ? LIMIT 1",
+    )
+      .bind(preAuthMember.tenantId)
+      .first<{ readonly operator_hold: number | null }>();
+    operatorHold = Number(holdRow?.operator_hold ?? 0) === 1;
+  } catch {
+    return serviceUnavailableBranchesSsrResponse();
+  }
+}
+
+// 1. Enforce SSR Lifecycle & RBAC Gate BEFORE any TenantStore DB reads!
+const gate = evaluateBranchesSettingsSsrGate({
+  rawHandle: Astro.params.handle,
+  surface: Astro.locals.surface,
+  isLocalLoopback: Astro.locals.isLocalLoopback,
+  isLocalEnv: env.APP_ENV === "local",
+  authUser: Astro.locals.authUser,
+  authorized: preAuthMember,
+  operatorHold,
+});
+
+if (!gate.ok) {
+  return gate.response;
+}
+
+// 2. Bind verified TenantStore only after passing SSR Lifecycle & RBAC Gate
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+Astro.response.headers.set("Cache-Control", BRANCHES_SSR_SECURITY_HEADERS["Cache-Control"]);
+Astro.response.headers.set("X-Robots-Tag", BRANCHES_SSR_SECURITY_HEADERS["X-Robots-Tag"]);
+
+const { ctx } = resolved;
+const initialBranches = await listBranchesForAdmin(ctx.tenantDb);
+---
+
+<DashboardLayout
+  title={`Lokasi & Cabang — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="settings"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <BranchesSettingsClient
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    canManageBranches={gate.canManageBranches}
+    initialData={initialBranches}
+  />
+</DashboardLayout>

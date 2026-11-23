@@ -1,0 +1,425 @@
+---
+import {
+  buildBranchStaticMapsHref,
+  buildBranchTelHref,
+  buildBranchWhatsAppHref,
+  formatBranchFullAddress,
+  formatBranchPhoneDisplay,
+  formatBranchTimezoneLabel,
+  MAX_BRANCHES_PER_TENANT,
+  resolveBranchMapsLabel,
+  sortBranchesCanonically,
+  type PublicBranchViewInput,
+} from "@punyasitus/core/branches/index";
+
+/**
+ * Pure HTML-First Multi-Branch Locations Section (`SectionBranches.astro`; REQ-088, TASK-088).
+ *
+ * Hard Invariants:
+ * - ZERO client JavaScript (`<script>` count = 0) and ZERO third-party map SDK/iframe embeds
+ *   before visitor consent (`TASK-031` & `REQ-088`).
+ * - Renders ONLY active branches (capped at 10 beside head office) in canonical order
+ *   (`isPrimary DESC, sortOrder ASC, id ASC`).
+ * - Exact visible-fact parity with Schema.org `@graph` branch nodes: branch name, address,
+ *   weekday/holiday hours, phone, static Google Maps link — ZERO fabricated ratings or reviews.
+ * - Branch WhatsApp CTA uses each branch's own normalized E.164 WhatsApp number; never alters
+ *   the site's main floating WhatsApp button.
+ * - Safe HTML escaping (zero `set:html`), responsive 360px..1440px, zero horizontal overflow.
+ */
+
+export interface HeadOfficeSummary {
+  readonly name?: string | null;
+  readonly address?: string | null;
+  readonly city?: string | null;
+  readonly province?: string | null;
+  readonly postalCode?: string | null;
+  readonly phone?: string | null;
+  readonly whatsappE164?: string | null;
+  readonly mapsUrl?: string | null;
+  readonly latitude?: number | null;
+  readonly longitude?: number | null;
+  readonly weekdayHours?: string | null;
+  readonly holidayHours?: string | null;
+  readonly timezone?: string | null;
+}
+
+export interface Props {
+  readonly id?: string;
+  readonly eyebrow?: string | null;
+  readonly heading?: string;
+  readonly subheading?: string | null;
+  readonly businessName?: string | null;
+  readonly headOffice?: HeadOfficeSummary | null;
+  readonly branches: readonly PublicBranchViewInput[];
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+  readonly callLabel?: string;
+  readonly whatsappLabel?: string;
+  readonly mapsLabel?: string;
+  readonly emptyMessage?: string;
+}
+
+const {
+  id = "branches",
+  eyebrow = "Lokasi & Cabang",
+  heading = "Daftar Lokasi Cabang",
+  subheading = "Temukan alamat, jam operasional, dan kontak langsung setiap cabang kami.",
+  businessName = null,
+  headOffice = null,
+  branches = [],
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+  callLabel = "Telepon",
+  whatsappLabel = "WhatsApp Cabang",
+  mapsLabel = "Buka Google Maps",
+  emptyMessage = "Belum ada lokasi cabang aktif yang ditampilkan.",
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+
+const visibleBranches = sortBranchesCanonically(
+  branches.filter((b) => b.active !== false && b.name.trim().length > 0),
+).slice(0, MAX_BRANCHES_PER_TENANT);
+
+const headOfficeAddress = headOffice
+  ? formatBranchFullAddress({
+      address: headOffice.address ?? "",
+      city: headOffice.city,
+      province: headOffice.province,
+      postalCode: headOffice.postalCode,
+    })
+  : "";
+const headOfficeTelHref = headOffice ? buildBranchTelHref(headOffice.phone) : null;
+const headOfficePhoneDisplay = headOffice ? formatBranchPhoneDisplay(headOffice.phone) : null;
+const headOfficeWaHref = headOffice
+  ? buildBranchWhatsAppHref(
+      {
+        name: headOffice.name || businessName || "Kantor Pusat",
+        whatsappE164: headOffice.whatsappE164,
+      },
+      businessName,
+    )
+  : null;
+const headOfficeMapsHref = headOffice
+  ? buildBranchStaticMapsHref({
+      mapsUrl: headOffice.mapsUrl,
+      latitude: headOffice.latitude,
+      longitude: headOffice.longitude,
+    })
+  : null;
+const hasHeadOffice = Boolean(
+  headOffice &&
+    (headOfficeAddress ||
+      headOffice.weekdayHours ||
+      headOffice.holidayHours ||
+      headOfficeTelHref ||
+      headOfficeWaHref ||
+      headOfficeMapsHref),
+);
+---
+
+<section
+  id={id}
+  class:list={["ps-section", "ps-branches-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type="branches"
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header">
+      {eyebrow && <p class="ps-eyebrow">{eyebrow}</p>}
+      {isFirstSection ? (
+        <h1 id={headingId} class="ps-section-title">
+          {heading}
+        </h1>
+      ) : (
+        <h2 id={headingId} class="ps-section-title">
+          {heading}
+        </h2>
+      )}
+      {subheading && <p class="ps-section-subtitle">{subheading}</p>}
+    </header>
+
+    {hasHeadOffice && headOffice && (
+      <article class="ps-card ps-branch-card ps-branch-card--head-office" data-testid="branch-head-office-card">
+        <div class="ps-branch-card__header">
+          <div class="ps-branch-card__badges">
+            <span class="ps-badge ps-badge--brand">Kantor Pusat</span>
+          </div>
+          <h3 class="ps-card-title">{headOffice.name || businessName || "Kantor Pusat"}</h3>
+        </div>
+
+        <dl class="ps-contact-dl ps-branch-dl">
+          {headOfficeAddress && (
+            <div>
+              <dt>Alamat</dt>
+              <dd>{headOfficeAddress}</dd>
+            </div>
+          )}
+          {headOffice.weekdayHours && (
+            <div>
+              <dt>Jam Operasional Hari Kerja</dt>
+              <dd>{headOffice.weekdayHours}</dd>
+            </div>
+          )}
+          {headOffice.holidayHours && (
+            <div>
+              <dt>Jam Operasional Hari Libur</dt>
+              <dd>{headOffice.holidayHours}</dd>
+            </div>
+          )}
+          {headOffice.timezone && (
+            <div>
+              <dt>Zona Waktu</dt>
+              <dd>{formatBranchTimezoneLabel(headOffice.timezone)}</dd>
+            </div>
+          )}
+          {headOfficePhoneDisplay && (
+            <div>
+              <dt>Telepon</dt>
+              <dd>
+                {isPreview || !headOfficeTelHref ? (
+                  headOfficePhoneDisplay
+                ) : (
+                  <a href={headOfficeTelHref}>{headOfficePhoneDisplay}</a>
+                )}
+              </dd>
+            </div>
+          )}
+        </dl>
+
+        {(headOfficeTelHref || headOfficeWaHref || headOfficeMapsHref) && (
+          <div class="ps-actions ps-branch-card__actions">
+            {headOfficeWaHref && (
+              <a
+                href={isPreview ? undefined : headOfficeWaHref}
+                class:list={["ps-btn ps-btn--whatsapp", isPreview && "ps-btn--inert"]}
+                aria-disabled={isPreview ? "true" : undefined}
+                target={isPreview ? undefined : "_blank"}
+                rel={isPreview ? undefined : "noopener noreferrer"}
+              >
+                Hubungi WhatsApp
+              </a>
+            )}
+            {headOfficeTelHref && (
+              <a
+                href={isPreview ? undefined : headOfficeTelHref}
+                class:list={["ps-btn ps-btn--secondary", isPreview && "ps-btn--inert"]}
+                aria-disabled={isPreview ? "true" : undefined}
+              >
+                {callLabel}
+              </a>
+            )}
+            {headOfficeMapsHref && (
+              <a
+                href={isPreview ? undefined : headOfficeMapsHref}
+                class:list={["ps-btn ps-btn--secondary", isPreview && "ps-btn--inert"]}
+                aria-disabled={isPreview ? "true" : undefined}
+                target={isPreview ? undefined : "_blank"}
+                rel={isPreview ? undefined : "noopener noreferrer"}
+              >
+                {resolveBranchMapsLabel(headOfficeMapsHref, mapsLabel)}
+              </a>
+            )}
+          </div>
+        )}
+      </article>
+    )}
+
+    {visibleBranches.length > 0 ? (
+      <div
+        class:list={[
+          "ps-branches-grid",
+          visibleBranches.length === 1 && "ps-branches-grid--single",
+          visibleBranches.length >= 3 && "ps-branches-grid--multi",
+        ]}
+        data-testid="branches-card-grid"
+      >
+        {visibleBranches.map((branch, idx) => {
+          const fullAddress = formatBranchFullAddress(branch);
+          const weekdayHours = branch.weekdayHours ?? branch.openingHours?.weekday ?? null;
+          const holidayHours = branch.holidayHours ?? branch.openingHours?.holiday ?? null;
+          const telHref = buildBranchTelHref(branch.phone);
+          const phoneDisplay = formatBranchPhoneDisplay(branch.phone);
+          const waHref = buildBranchWhatsAppHref(branch, businessName);
+          const mapsHref = buildBranchStaticMapsHref(branch);
+          const tzLabel = formatBranchTimezoneLabel(branch.timezone);
+          const cardKey = branch.id ?? idx + 1;
+
+          return (
+            <article
+              class:list={["ps-card", "ps-branch-card", branch.isPrimary && "ps-branch-card--primary"]}
+              data-testid={`branch-card-${cardKey}`}
+              data-branch-primary={branch.isPrimary ? "true" : "false"}
+            >
+              <div class="ps-branch-card__header">
+                <div class="ps-branch-card__badges">
+                  {branch.isPrimary ? (
+                    <span class="ps-badge ps-badge--brand">Cabang Utama</span>
+                  ) : (
+                    <span class="ps-badge">Cabang</span>
+                  )}
+                  <span class="ps-branch-tz">{tzLabel}</span>
+                </div>
+                <h3 class="ps-card-title">{branch.name}</h3>
+              </div>
+
+              <dl class="ps-contact-dl ps-branch-dl">
+                {fullAddress && (
+                  <div>
+                    <dt>Alamat</dt>
+                    <dd data-branch-field="address">{fullAddress}</dd>
+                  </div>
+                )}
+                {weekdayHours && (
+                  <div>
+                    <dt>Jam Hari Kerja</dt>
+                    <dd data-branch-field="weekdayHours">{weekdayHours}</dd>
+                  </div>
+                )}
+                {holidayHours && (
+                  <div>
+                    <dt>Jam Hari Libur</dt>
+                    <dd data-branch-field="holidayHours">{holidayHours}</dd>
+                  </div>
+                )}
+                {phoneDisplay && (
+                  <div>
+                    <dt>Telepon</dt>
+                    <dd data-branch-field="phone">
+                      {isPreview || !telHref ? (
+                        phoneDisplay
+                      ) : (
+                        <a href={telHref}>{phoneDisplay}</a>
+                      )}
+                    </dd>
+                  </div>
+                )}
+              </dl>
+
+              {(telHref || waHref || mapsHref) && (
+                <div class="ps-actions ps-branch-card__actions">
+                  {waHref && (
+                    <a
+                      href={isPreview ? undefined : waHref}
+                      class:list={["ps-btn ps-btn--whatsapp", isPreview && "ps-btn--inert"]}
+                      aria-disabled={isPreview ? "true" : undefined}
+                      target={isPreview ? undefined : "_blank"}
+                      rel={isPreview ? undefined : "noopener noreferrer"}
+                      data-branch-action="whatsapp"
+                    >
+                      {whatsappLabel}
+                    </a>
+                  )}
+                  {telHref && (
+                    <a
+                      href={isPreview ? undefined : telHref}
+                      class:list={["ps-btn ps-btn--secondary", isPreview && "ps-btn--inert"]}
+                      aria-disabled={isPreview ? "true" : undefined}
+                      data-branch-action="call"
+                    >
+                      {callLabel}
+                    </a>
+                  )}
+                  {mapsHref && (
+                    <a
+                      href={isPreview ? undefined : mapsHref}
+                      class:list={["ps-btn ps-btn--secondary", isPreview && "ps-btn--inert"]}
+                      aria-disabled={isPreview ? "true" : undefined}
+                      target={isPreview ? undefined : "_blank"}
+                      rel={isPreview ? undefined : "noopener noreferrer"}
+                      data-branch-action="maps"
+                    >
+                      {resolveBranchMapsLabel(mapsHref, mapsLabel)}
+                    </a>
+                  )}
+                </div>
+              )}
+            </article>
+          );
+        })}
+      </div>
+    ) : !hasHeadOffice ? (
+      <p class="ps-empty-state" data-testid="branches-empty-state">
+        {emptyMessage}
+      </p>
+    ) : null}
+  </div>
+</section>
+
+<style>
+  .ps-branches-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: clamp(1rem, 2vw, 1.5rem);
+  }
+
+  .ps-branch-card--head-office {
+    margin-bottom: clamp(1.25rem, 2.5vw, 1.75rem);
+    border-left: 4px solid var(--ps-brand-primary);
+  }
+
+  .ps-branch-card {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 1rem;
+    min-width: 0;
+  }
+
+  .ps-branch-card--primary {
+    border-color: var(--ps-brand-primary);
+  }
+
+  .ps-branch-card__header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .ps-branch-card__badges {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .ps-branch-tz {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-branch-dl {
+    gap: 0.75rem;
+  }
+
+  .ps-branch-card__actions {
+    margin-top: auto;
+    padding-top: 0.5rem;
+    border-top: 1px solid var(--ps-border);
+  }
+
+  .ps-branch-card__actions .ps-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    text-align: center;
+  }
+
+  @media (min-width: 45rem) {
+    .ps-branches-grid:not(.ps-branches-grid--single) {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 70rem) {
+    .ps-branches-grid--multi {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+</style>
