@@ -1,4 +1,5 @@
-import { trashPage } from "@punyasitus/db/pages/index";
+import { getPageById } from "@punyasitus/db/pages/index";
+import { trashContentItem } from "@punyasitus/db/trash/index";
 import type { APIRoute } from "astro";
 import {
   authorizeTenantPageRequest,
@@ -17,9 +18,8 @@ import {
 
 /**
  * `POST /api/tenants/:tenantId/pages/:pageId/trash`
- * Moves a page to 30-day trash and unpublishes atomically (OpenAPI `tenantTrashPage`).
- *
- * TASK-005 (`REQ-008`, `REQ-034`, `REQ-036`, `REQ-061`).
+ * Moves a page to 30-day trash, unpublishes atomically, records audit (`WHERE changes() = 1`),
+ * and bumps `tenants.cache_version` (TASK-005 & TASK-044; REQ-008, REQ-034, REQ-036, REQ-048).
  */
 
 const TRASH_ALLOWED_KEYS = new Set(["version", "expectedVersion"]);
@@ -79,16 +79,29 @@ export async function handleTenantPageTrashRequest(
   const { member, platformDb, tenantDb } = auth.ctx;
 
   try {
-    const result = await trashPage(platformDb, tenantDb, {
+    const result = await trashContentItem(platformDb, tenantDb, {
       tenantId: member.tenantId,
-      pageId: parsedId.pageId,
+      resourceType: "page",
+      resourceId: parsedId.pageId,
       expectedVersion: versionCheck.expectedVersion!,
+      actorUserId: member.userId,
+      actorRole: member.role,
       nowMs: options.nowMs,
     });
 
+    const reloaded = await getPageById(tenantDb, parsedId.pageId, { includeTrashed: true });
+    if (!reloaded) {
+      return pageErrorResponse(404, "NOT_FOUND", `Halaman #${parsedId.pageId} tidak ditemukan.`, requestId);
+    }
+
     return pageJsonResponse(200, {
-      ...formatPageRecordResponse(result.page),
+      ...formatPageRecordResponse(reloaded),
       ...(result.cacheVersion !== null ? { cacheVersion: result.cacheVersion } : {}),
+      trashMeta: {
+        deletedAt: result.deletedAt,
+        purgeEligibleAt: result.purgeEligibleAt,
+        daysRemaining: result.daysRemaining,
+      },
     });
   } catch (err) {
     return mapPageDomainErrorToResponse(err, requestId);

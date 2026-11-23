@@ -1,0 +1,48 @@
+---
+import { env } from "cloudflare:workers";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import { listTrashedContentByType } from "@punyasitus/db/trash/index";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { ContentTrashClient } from "../pages/_ContentTrashClient";
+import { resolveTrashSsrGate } from "../pages/_trash-ssr-gate";
+
+const resolved = await resolveTrashSsrGate(Astro, {
+  APP_ENV: env.APP_ENV,
+  SAAS_ZONE: env.SAAS_ZONE,
+  PLATFORM_DOMAIN: env.PLATFORM_DOMAIN,
+  PLATFORM_DB: env.PLATFORM_DB,
+  TENANT_STORE: env.TENANT_STORE as unknown as TenantStoreNamespaceLike | undefined,
+});
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const initialItems = await listTrashedContentByType(ctx.tenantDb, "offering", { limit: 50 });
+---
+
+<DashboardLayout
+  title={`Sampah Katalog ${ctx.offeringLabel} — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="offering"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <ContentTrashClient
+    client:load
+    resourceType="offering"
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    offeringLabel={ctx.offeringLabel}
+    permissions={ctx.permissions}
+    initialItems={initialItems}
+  />
+</DashboardLayout>

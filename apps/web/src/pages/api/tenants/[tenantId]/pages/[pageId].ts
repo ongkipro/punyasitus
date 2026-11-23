@@ -1,4 +1,5 @@
-import { getPageById, trashPage, updatePage } from "@punyasitus/db/pages/index";
+import { getPageById, updatePage } from "@punyasitus/db/pages/index";
+import { trashContentItem } from "@punyasitus/db/trash/index";
 import type { APIRoute } from "astro";
 import {
   authorizeTenantPageRequest,
@@ -190,10 +191,13 @@ export async function handleTenantPageItemRequest(
       }
     }
 
-    await trashPage(platformDb, tenantDb, {
+    await trashContentItem(platformDb, tenantDb, {
       tenantId: member.tenantId,
-      pageId: parsedId.pageId,
+      resourceType: "page",
+      resourceId: parsedId.pageId,
       expectedVersion,
+      actorUserId: member.userId,
+      actorRole: member.role,
       nowMs: options.nowMs,
     });
 

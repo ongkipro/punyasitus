@@ -25,6 +25,12 @@ import {
 } from "@punyasitus/db/connections";
 import type { PageRecord } from "@punyasitus/db/pages/index";
 import {
+  TrashConflictError,
+  TrashNotFoundError,
+  TrashProtectedReferenceError,
+  TrashValidationError,
+} from "@punyasitus/db/trash/index";
+import {
   resolveAuthEmailPort,
   resolvePlatformAuthHostContext,
   resolveSurfaceAuthSecret,
@@ -599,6 +605,35 @@ export function extractPageExpectedVersion(
 }
 
 export function mapPageDomainErrorToResponse(err: unknown, requestId: string): Response {
+  if (err instanceof TrashProtectedReferenceError) {
+    return pageJsonResponse(409, {
+      error: {
+        code: err.code,
+        message: err.message,
+        fields: err.fields,
+        protectedReferences: err.references,
+      },
+      requestId,
+    });
+  }
+  if (err instanceof TrashConflictError) {
+    return pageJsonResponse(409, {
+      error: {
+        code: err.code,
+        message: err.message,
+        fields: err.fields,
+        ...(err.suggestedSlug ? { suggestedSlug: err.suggestedSlug } : {}),
+        ...(err.conflictKind ? { conflictKind: err.conflictKind } : {}),
+      },
+      requestId,
+    });
+  }
+  if (err instanceof TrashValidationError) {
+    return pageErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
+  }
+  if (err instanceof TrashNotFoundError) {
+    return pageErrorResponse(404, "NOT_FOUND", err.message, requestId);
+  }
   if (err instanceof SlugValidationError) {
     return pageErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
   }

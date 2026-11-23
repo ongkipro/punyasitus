@@ -17,7 +17,14 @@ import {
 } from "@punyasitus/core/content/index";
 import type { CloudflareSendEmailBinding, EmailPort } from "@punyasitus/core/email/index";
 import { FORBIDDEN_TENANT_SELECTOR_KEYS, type ApiErrorCode } from "@punyasitus/core/schemas";
+import { SlugValidationError } from "@punyasitus/core/slug/index";
 import { CatalogConflictError, CatalogNotFoundError } from "@punyasitus/db/catalog/index";
+import {
+  TrashConflictError,
+  TrashNotFoundError,
+  TrashProtectedReferenceError,
+  TrashValidationError,
+} from "@punyasitus/db/trash/index";
 import {
   createTenantDb,
   openTenantStoreStub,
@@ -527,6 +534,38 @@ export function extractCatalogExpectedVersion(
 }
 
 export function mapCatalogDomainErrorToResponse(err: unknown, requestId: string): Response {
+  if (err instanceof TrashProtectedReferenceError) {
+    return catalogJsonResponse(409, {
+      error: {
+        code: err.code,
+        message: err.message,
+        fields: err.fields,
+        protectedReferences: err.references,
+      },
+      requestId,
+    });
+  }
+  if (err instanceof TrashConflictError) {
+    return catalogJsonResponse(409, {
+      error: {
+        code: err.code,
+        message: err.message,
+        fields: err.fields,
+        ...(err.suggestedSlug ? { suggestedSlug: err.suggestedSlug } : {}),
+        ...(err.conflictKind ? { conflictKind: err.conflictKind } : {}),
+      },
+      requestId,
+    });
+  }
+  if (err instanceof TrashValidationError) {
+    return catalogErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
+  }
+  if (err instanceof TrashNotFoundError) {
+    return catalogErrorResponse(404, "NOT_FOUND", err.message, requestId);
+  }
+  if (err instanceof SlugValidationError) {
+    return catalogErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
+  }
   if (err instanceof CatalogValidationError) {
     return catalogErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
   }

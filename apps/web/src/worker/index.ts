@@ -11,6 +11,10 @@ import {
 } from "./cron/index.ts";
 import type { JobQueuePayload, PunyasitusEnv } from "./env.d.ts";
 import {
+  CONTENT_PURGE_CRON_JOB_DEFINITIONS,
+  createContentPurgeJobRegistry,
+} from "./queues/content-purge/index.ts";
+import {
   DOMAIN_CRON_JOB_DEFINITIONS,
   createDomainJobRegistry,
 } from "./queues/domains/index.ts";
@@ -32,6 +36,7 @@ type AstroCtx = Parameters<typeof handle>[2];
 
 const WORKER_JOB_REGISTRY: DurableJobRegistry = {
   ...createRetentionJobRegistry(),
+  ...createContentPurgeJobRegistry(),
   ...createMediaJobRegistry(),
   ...createDomainJobRegistry(),
   ...createSeoJobRegistry(),
@@ -81,6 +86,7 @@ export default {
     await dispatchScheduledCron(controller, env, [
       ...DEFAULT_CRON_JOB_DEFINITIONS,
       ...DOMAIN_CRON_JOB_DEFINITIONS,
+      ...CONTENT_PURGE_CRON_JOB_DEFINITIONS,
     ]);
     await sweepAllTenantsExpiredQuarantine(env, { nowMs: controller.scheduledTime });
   },

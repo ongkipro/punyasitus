@@ -6,6 +6,7 @@ import {
   GlobeIcon,
   PencilIcon,
   PlusIcon,
+  RotateCcwIcon,
   SearchIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -237,6 +238,48 @@ export function CatalogListClient({
     }
   }
 
+  async function handleRestore(item: CatalogListItemDto) {
+    if (!permissions.canWriteContent || busyId !== null) return;
+    setBusyId(item.id);
+    setFeedback(null);
+    try {
+      await cmsFetchJson(
+        `/api/tenants/${encodeURIComponent(handle)}/catalog/${item.id}/restore`,
+        {
+          method: "POST",
+          body: JSON.stringify({ expectedVersion: item.version }),
+        },
+      );
+      setFeedback({
+        tone: "success",
+        title: "Penawaran dipulihkan sebagai draf",
+        message: `"${item.title}" berhasil dipulihkan dari Sampah ke daftar draf.`,
+      });
+      await loadCatalog();
+    } catch (err) {
+      if (err instanceof CmsApiError && err.code === "STALE_VERSION") {
+        await loadCatalog();
+        setFeedback({
+          tone: "destructive",
+          title: "Data telah berubah, daftar dimuat ulang (409)",
+          message:
+            "Versi penawaran telah berubah di sesi lain. Daftar telah disegarkan.",
+        });
+      } else {
+        setFeedback({
+          tone: "destructive",
+          title: "Gagal memulihkan penawaran",
+          message:
+            err instanceof Error
+              ? err.message
+              : "Terjadi kesalahan. Buka halaman Sampah & Pemulihan untuk menyelesaikan konflik slug.",
+        });
+      }
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   const filtered = items.filter((item) => {
     if (!search.trim()) return true;
     const q = search.trim().toLowerCase();
@@ -257,15 +300,26 @@ export function CatalogListClient({
             transparan dan tombol WhatsApp/inquiry.
           </p>
         </div>
-        <Button
-          disabled={!permissions.canWriteContent}
-          className="min-h-11 self-start sm:self-auto md:min-h-9"
-          render={permissions.canWriteContent ? <a href={`${basePath}/catalog/new`} /> : undefined}
-          data-testid="new-offering-btn"
-        >
-          <PlusIcon className="size-4" aria-hidden="true" />
-          Tambah Penawaran
-        </Button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <Button
+            variant="outline"
+            className="min-h-11 md:min-h-9"
+            render={<a href={`${basePath}/catalog/trash`} />}
+            data-testid="catalog-trash-link"
+          >
+            <Trash2Icon className="size-4" aria-hidden="true" />
+            Sampah &amp; Pemulihan
+          </Button>
+          <Button
+            disabled={!permissions.canWriteContent}
+            className="min-h-11 md:min-h-9"
+            render={permissions.canWriteContent ? <a href={`${basePath}/catalog/new`} /> : undefined}
+            data-testid="new-offering-btn"
+          >
+            <PlusIcon className="size-4" aria-hidden="true" />
+            Tambah Penawaran
+          </Button>
+        </div>
       </div>
 
       {permissions.isLocked && <LockedTenantBanner billingHref={`${basePath}/service-status`} />}
@@ -420,7 +474,7 @@ export function CatalogListClient({
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap items-center justify-end gap-1.5">
-                          {item.status !== "trashed" && (
+                          {item.status !== "trashed" ? (
                             <>
                               <Button
                                 size="sm"
@@ -464,6 +518,18 @@ export function CatalogListClient({
                                 Sampah
                               </Button>
                             </>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              disabled={!permissions.canWriteContent || busyId === item.id}
+                              onClick={() => void handleRestore(item)}
+                              data-testid={`offering-restore-${item.id}`}
+                            >
+                              <RotateCcwIcon className="size-3.5" aria-hidden="true" />
+                              Pulihkan
+                            </Button>
                           )}
                         </div>
                       </TableCell>
@@ -499,7 +565,7 @@ export function CatalogListClient({
                   <p className="text-xs text-muted-foreground tabular-nums">
                     Diperbarui {formatDateTimeId(item.updatedAt)}
                   </p>
-                  {item.status !== "trashed" && (
+                  {item.status !== "trashed" ? (
                     <div className="flex flex-wrap items-center gap-2">
                       <Button
                         size="sm"
@@ -531,6 +597,17 @@ export function CatalogListClient({
                         <Trash2Icon className="size-4" aria-hidden="true" />
                       </Button>
                     </div>
+                  ) : (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="min-h-11 w-full"
+                      disabled={!permissions.canWriteContent || busyId === item.id}
+                      onClick={() => void handleRestore(item)}
+                    >
+                      Pulihkan ke Draf
+                    </Button>
                   )}
                 </li>
               ))}

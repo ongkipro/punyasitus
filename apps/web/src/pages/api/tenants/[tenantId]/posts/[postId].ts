@@ -1,4 +1,5 @@
-import { getPostById, trashPost, updatePost } from "@punyasitus/db/posts/index";
+import { getPostById, updatePost } from "@punyasitus/db/posts/index";
+import { trashContentItem } from "@punyasitus/db/trash/index";
 import type { APIRoute } from "astro";
 import {
   authorizeTenantBlogRequest,
@@ -223,10 +224,13 @@ export async function handleTenantPostItemRequest(
       }
     }
 
-    await trashPost(platformDb, tenantDb, {
+    await trashContentItem(platformDb, tenantDb, {
       tenantId: member.tenantId,
-      postId: parsedId.id,
+      resourceType: "post",
+      resourceId: parsedId.id,
       expectedVersion,
+      actorUserId: member.userId,
+      actorRole: member.role,
       nowMs: options.nowMs,
     });
 

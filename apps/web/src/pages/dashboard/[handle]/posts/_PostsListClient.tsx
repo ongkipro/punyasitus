@@ -277,15 +277,26 @@ export function PostsListClient({
             Tulis dan terbitkan artikel informatif untuk membangun otoritas dan trafik organik.
           </p>
         </div>
-        <Button
-          disabled={!permissions.canWriteContent}
-          className="min-h-11 self-start sm:self-auto md:min-h-9"
-          render={permissions.canWriteContent ? <a href={`${basePath}/posts/new`} /> : undefined}
-          data-testid="new-post-btn"
-        >
-          <PlusIcon className="size-4" aria-hidden="true" />
-          Tulis Artikel Baru
-        </Button>
+        <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <Button
+            variant="outline"
+            className="min-h-11 md:min-h-9"
+            render={<a href={`${basePath}/posts/trash`} />}
+            data-testid="posts-trash-link"
+          >
+            <Trash2Icon className="size-4" aria-hidden="true" />
+            Sampah &amp; Pemulihan
+          </Button>
+          <Button
+            disabled={!permissions.canWriteContent}
+            className="min-h-11 md:min-h-9"
+            render={permissions.canWriteContent ? <a href={`${basePath}/posts/new`} /> : undefined}
+            data-testid="new-post-btn"
+          >
+            <PlusIcon className="size-4" aria-hidden="true" />
+            Tulis Artikel Baru
+          </Button>
+        </div>
       </div>
 
       {permissions.isLocked && <LockedTenantBanner billingHref={`${basePath}/service-status`} />}

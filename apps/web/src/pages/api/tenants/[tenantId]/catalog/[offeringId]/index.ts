@@ -1,9 +1,9 @@
 import { OFFERING_WRITE_ALLOWED_KEYS } from "@punyasitus/core/catalog/index";
 import {
   getCatalogOfferingById,
-  softDeleteCatalogOffering,
   updateCatalogOffering,
 } from "@punyasitus/db/catalog/index";
+import { trashContentItem } from "@punyasitus/db/trash/index";
 import type { APIRoute } from "astro";
 import {
   authorizeTenantCatalogRequest,
@@ -164,10 +164,13 @@ export async function handleTenantCatalogOfferingRequest(
       );
     }
 
-    await softDeleteCatalogOffering(platformDb, tenantDb, {
+    await trashContentItem(platformDb, tenantDb, {
       tenantId: member.tenantId,
-      offeringId,
+      resourceType: "offering",
+      resourceId: offeringId,
       expectedVersion,
+      actorUserId: member.userId,
+      actorRole: member.role,
       nowMs: options.nowMs,
     });
     return catalogNoContentResponse();
