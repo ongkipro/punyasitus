@@ -305,7 +305,7 @@ describe("TASK-063 Phase 1 Integration Checkpoint (M1) — Unit Invariants", () 
         path.join(tmpRoot, "packages/db/migrations/tenant/0022_m2_leak.sql"),
         "CREATE TABLE m2_tenant_tbl (id INTEGER PRIMARY KEY);",
       );
-      const migRes = verifySqlMigrations(tmpRoot);
+      const migRes = verifySqlMigrations(tmpRoot, { enforceM1Ceiling: true });
       expect(migRes.ok).toBe(false);
       expect(migRes.errors.some((e: string) => e.includes("Destructive DROP TABLE"))).toBe(true);
       expect(migRes.errors.some((e: string) => e.includes("0028_m2_leak.sql exceeds M1 migration ceiling"))).toBe(

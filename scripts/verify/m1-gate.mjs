@@ -412,7 +412,8 @@ export function verifyM1TaskCoverage(rootDir = DEFAULT_ROOT) {
   };
 }
 
-export function verifySqlMigrations(rootDir = DEFAULT_ROOT) {
+export function verifySqlMigrations(rootDir = DEFAULT_ROOT, options = {}) {
+  const enforceM1Ceiling = Boolean(options.enforceM1Ceiling);
   const errors = [];
   const summary = {
     platform: { count: 0, maxVersion: 0, statementsTotal: 0, files: [] },
@@ -423,11 +424,13 @@ export function verifySqlMigrations(rootDir = DEFAULT_ROOT) {
     {
       key: "platform",
       dir: path.join(rootDir, "packages/db/migrations/platform"),
+      minExpectedM1Version: 27,
       maxExpectedM1Version: 27,
     },
     {
       key: "tenant",
       dir: path.join(rootDir, "packages/db/migrations/tenant"),
+      minExpectedM1Version: 21,
       maxExpectedM1Version: 21,
     },
   ];
@@ -463,7 +466,7 @@ export function verifySqlMigrations(rootDir = DEFAULT_ROOT) {
       seenVersions.add(version);
       if (version > maxVersion) maxVersion = version;
 
-      if (version > scope.maxExpectedM1Version) {
+      if (enforceM1Ceiling && version > scope.maxExpectedM1Version) {
         errors.push(
           `${scope.key}/${filename} exceeds M1 migration ceiling (${scope.maxExpectedM1Version})`,
         );

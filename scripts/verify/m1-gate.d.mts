@@ -90,7 +90,10 @@ export function validateTaskPartition(
   r11Ids?: readonly string[],
 ): { readonly ok: boolean; readonly errors: readonly string[] };
 export function verifyM1TaskCoverage(rootDir?: string): M1TaskCoverageResult;
-export function verifySqlMigrations(rootDir?: string): M1SqlMigrationsResult;
+export function verifySqlMigrations(
+  rootDir?: string,
+  options?: { enforceM1Ceiling?: boolean },
+): M1SqlMigrationsResult;
 export function verifyWranglerConfig(rootDir?: string): M1WranglerConfigResult;
 export function verifyWorkflowSecurity(rootDir?: string): M1WorkflowSecurityResult;
 export function verifyUiProhibitions(rootDir?: string): M1UiProhibitionsResult;
