@@ -1,14 +1,21 @@
 import * as React from "react";
 import {
+  formatPreferredDateIndonesian,
+  formatPreferredTimeLabelId,
+} from "@punyasitus/core/leads/index";
+import {
   ActivityIcon,
   AlertCircleIcon,
   BellIcon,
   BellOffIcon,
+  CalendarIcon,
   CheckCircle2Icon,
+  ClockIcon,
   DownloadIcon,
   ExternalLinkIcon,
   InboxIcon,
   LockIcon,
+  MapPinIcon,
   MessageCircleIcon,
   RefreshCwIcon,
   SearchIcon,
@@ -55,6 +62,7 @@ export interface LeadInboxItemDto {
   readonly preferredDate: string | null;
   readonly preferredTime: string | null;
   readonly branchId: number | null;
+  readonly preferredBranchLabel?: string | null;
   readonly sourceCategory: string;
   readonly pagePath: string | null;
   readonly internalNotes: string | null;
@@ -85,6 +93,7 @@ export interface LeadsInboxProps {
   readonly initialHasMore: boolean;
   readonly initialEmailNotificationsEnabled: boolean;
   readonly initialLoadError: string | null;
+  readonly branchNamesById?: Readonly<Record<number, string>>;
 }
 
 const STATUS_LABELS: Readonly<Record<LeadStatus, string>> = {
@@ -129,6 +138,35 @@ function getAllowedNextStatuses(current: LeadStatus): readonly LeadStatus[] {
   return ["closed"];
 }
 
+interface ResolvedLeadScheduleView {
+  readonly hasSchedule: boolean;
+  readonly formattedDate: string | null;
+  readonly formattedTime: string | null;
+  readonly branchName: string | null;
+}
+
+function resolveLeadScheduleView(
+  lead: LeadInboxItemDto,
+  branchNamesById: Readonly<Record<number, string>>,
+  snapshotLabelsByLeadId: ReadonlyMap<number, string>,
+): ResolvedLeadScheduleView {
+  const formattedDate = lead.preferredDate
+    ? formatPreferredDateIndonesian(lead.preferredDate)
+    : null;
+  const formattedTime = formatPreferredTimeLabelId(lead.preferredTime);
+  const branchName =
+    (lead.preferredBranchLabel && lead.preferredBranchLabel.trim()) ||
+    snapshotLabelsByLeadId.get(lead.id) ||
+    (lead.branchId !== null ? (branchNamesById[lead.branchId] ?? `Cabang #${lead.branchId}`) : null);
+
+  return {
+    hasSchedule: Boolean(formattedDate || formattedTime || branchName),
+    formattedDate,
+    formattedTime,
+    branchName,
+  };
+}
+
 export function LeadsInbox({
   tenantId,
   handle,
@@ -143,9 +181,20 @@ export function LeadsInbox({
   initialHasMore,
   initialEmailNotificationsEnabled,
   initialLoadError,
+  branchNamesById = {},
 }: LeadsInboxProps) {
   const apiBase = `/api/tenants/${encodeURIComponent(tenantId)}/leads`;
   const exportCsvHref = `${apiBase}/export.csv`;
+
+  const snapshotLabelsByLeadId = React.useMemo(() => {
+    const map = new Map<number, string>();
+    for (const item of initialItems) {
+      if (item.preferredBranchLabel && item.preferredBranchLabel.trim()) {
+        map.set(item.id, item.preferredBranchLabel.trim());
+      }
+    }
+    return map;
+  }, [initialItems]);
 
   const [items, setItems] = React.useState<readonly LeadInboxItemDto[]>(initialItems);
   const [counts, setCounts] = React.useState<LeadStatusCountsDto>(initialCounts);
@@ -722,13 +771,20 @@ export function LeadsInbox({
                   <TableRow>
                     <TableHead>Pengunjung</TableHead>
                     <TableHead>Pesan</TableHead>
+                    <TableHead>Permintaan Jadwal</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Waktu Masuk</TableHead>
                     <TableHead className="text-right">Tindakan</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {items.map((lead) => (
+                  {items.map((lead) => {
+                    const schedule = resolveLeadScheduleView(
+                      lead,
+                      branchNamesById,
+                      snapshotLabelsByLeadId,
+                    );
+                    return (
                     <TableRow key={lead.id} data-testid={`lead-row-${lead.id}`}>
                       <TableCell className="align-top">
                         <div className="space-y-0.5">
@@ -745,6 +801,35 @@ export function LeadsInbox({
                           <p className="mt-0.5 font-mono text-xs text-muted-foreground">
                             Halaman: {lead.pagePath}
                           </p>
+                        )}
+                      </TableCell>
+                      <TableCell className="align-top" data-testid={`lead-schedule-${lead.id}`}>
+                        {schedule.hasSchedule ? (
+                          <div className="space-y-1 text-xs">
+                            {schedule.formattedDate && (
+                              <p className="flex items-center gap-1.5 font-medium text-foreground">
+                                <CalendarIcon
+                                  className="size-3.5 shrink-0 text-muted-foreground"
+                                  aria-hidden="true"
+                                />
+                                <span>{schedule.formattedDate}</span>
+                              </p>
+                            )}
+                            {schedule.formattedTime && (
+                              <p className="flex items-center gap-1.5 text-muted-foreground">
+                                <ClockIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                                <span>{schedule.formattedTime}</span>
+                              </p>
+                            )}
+                            {schedule.branchName && (
+                              <p className="flex items-center gap-1.5 text-muted-foreground">
+                                <MapPinIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                                <span className="truncate">{schedule.branchName}</span>
+                              </p>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </TableCell>
                       <TableCell className="align-top">
@@ -788,14 +873,21 @@ export function LeadsInbox({
                         </div>
                       </TableCell>
                     </TableRow>
-                  ))}
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
 
             {/* Mobile Stacked Cards (360px safe, >= 44px tap targets) */}
             <ul className="divide-y divide-border md:hidden">
-              {items.map((lead) => (
+              {items.map((lead) => {
+                const schedule = resolveLeadScheduleView(
+                  lead,
+                  branchNamesById,
+                  snapshotLabelsByLeadId,
+                );
+                return (
                 <li
                   key={lead.id}
                   data-testid={`lead-card-${lead.id}`}
@@ -814,6 +906,34 @@ export function LeadsInbox({
                     </Badge>
                   </div>
                   <p className="line-clamp-3 text-sm text-foreground">{lead.message}</p>
+                  {schedule.hasSchedule && (
+                    <div
+                      className="space-y-1 rounded-md border border-border bg-muted/40 px-3 py-2 text-xs"
+                      data-testid={`lead-mobile-schedule-${lead.id}`}
+                    >
+                      <p className="font-semibold text-foreground">Permintaan Jadwal</p>
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
+                        {schedule.formattedDate && (
+                          <span className="inline-flex items-center gap-1 text-foreground">
+                            <CalendarIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                            <span>{schedule.formattedDate}</span>
+                          </span>
+                        )}
+                        {schedule.formattedTime && (
+                          <span className="inline-flex items-center gap-1">
+                            <ClockIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                            <span>{schedule.formattedTime}</span>
+                          </span>
+                        )}
+                        {schedule.branchName && (
+                          <span className="inline-flex items-center gap-1">
+                            <MapPinIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                            <span className="break-words">{schedule.branchName}</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  )}
                   <p className="text-xs text-muted-foreground tabular-nums">
                     {formatDateTimeWib(lead.createdAt)}
                   </p>
@@ -845,7 +965,8 @@ export function LeadsInbox({
                     </Button>
                   </div>
                 </li>
-              ))}
+                );
+              })}
             </ul>
 
             {hasMore && nextCursor && (
@@ -972,6 +1093,66 @@ export function LeadsInbox({
                     {selectedLead.message}
                   </div>
                 </div>
+
+                {/* Preferred Schedule Request (REQ-072, TASK-071) */}
+                {(() => {
+                  const detailSchedule = resolveLeadScheduleView(
+                    selectedLead,
+                    branchNamesById,
+                    snapshotLabelsByLeadId,
+                  );
+                  if (!detailSchedule.hasSchedule) return null;
+                  return (
+                    <div
+                      className="space-y-2 rounded-lg border border-border bg-muted/30 p-3.5 text-sm"
+                      data-testid="lead-detail-schedule"
+                    >
+                      <div className="space-y-0.5">
+                        <h3 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                          Permintaan Jadwal
+                        </h3>
+                        <p className="text-xs text-muted-foreground">
+                          Permintaan jadwal awal dari pengunjung (bukan konfirmasi slot otomatis).
+                        </p>
+                      </div>
+                      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {detailSchedule.formattedDate && (
+                          <div>
+                            <dt className="text-xs font-medium text-muted-foreground">
+                              Tanggal Pilihan
+                            </dt>
+                            <dd className="flex items-center gap-1.5 font-medium text-foreground">
+                              <CalendarIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                              <span>{detailSchedule.formattedDate}</span>
+                            </dd>
+                          </div>
+                        )}
+                        {detailSchedule.formattedTime && (
+                          <div>
+                            <dt className="text-xs font-medium text-muted-foreground">
+                              Waktu Pilihan
+                            </dt>
+                            <dd className="flex items-center gap-1.5 font-medium text-foreground">
+                              <ClockIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                              <span>{detailSchedule.formattedTime}</span>
+                            </dd>
+                          </div>
+                        )}
+                        {detailSchedule.branchName && (
+                          <div className="sm:col-span-2">
+                            <dt className="text-xs font-medium text-muted-foreground">
+                              Cabang Tujuan
+                            </dt>
+                            <dd className="flex items-center gap-1.5 font-medium text-foreground">
+                              <MapPinIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                              <span>{detailSchedule.branchName}</span>
+                            </dd>
+                          </div>
+                        )}
+                      </dl>
+                    </div>
+                  );
+                })()}
 
                 {/* 1-Click WhatsApp Follow-Up */}
                 {selectedLead.whatsappFollowUpUrl && (

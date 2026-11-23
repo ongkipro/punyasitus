@@ -7,10 +7,20 @@ export const ON_REQUEST_PRICE_TEXT_ID = "Hubungi untuk harga" as const;
 export const CANONICAL_WA_TOKENS = ["item_title", "item_price", "page_url"] as const;
 export type CanonicalWaToken = (typeof CANONICAL_WA_TOKENS)[number];
 
+export const SCHEDULE_WA_TOKENS = ["preferred_date", "preferred_time", "branch"] as const;
+export type ScheduleWaToken = (typeof SCHEDULE_WA_TOKENS)[number];
+
+export const ALL_WA_TOKENS = [...CANONICAL_WA_TOKENS, ...SCHEDULE_WA_TOKENS] as const;
+export type AllowedWaToken = (typeof ALL_WA_TOKENS)[number];
+
 export const DEFAULT_WA_TEMPLATE =
   "Halo, saya tertarik dengan {{item_title}} ({{item_price}}).\n{{page_url}}" as const;
 
-const CANONICAL_WA_TOKEN_SET: ReadonlySet<string> = new Set<string>(CANONICAL_WA_TOKENS);
+export const DEFAULT_WA_SCHEDULE_TEMPLATE =
+  "Halo, saya ingin mengajukan permintaan jadwal untuk {{item_title}}.\nTanggal yang diharapkan: {{preferred_date}}.\nWaktu yang diharapkan: {{preferred_time}}.\nCabang tujuan: {{branch}}.\n{{page_url}}" as const;
+
+const ALLOWED_WA_TOKEN_SET: ReadonlySet<string> = new Set<string>(ALL_WA_TOKENS);
+const SCHEDULE_WA_TOKEN_SET: ReadonlySet<string> = new Set<string>(SCHEDULE_WA_TOKENS);
 
 export type WhatsAppErrorCode =
   | "INVALID_PHONE"
@@ -50,6 +60,9 @@ export interface WhatsAppTemplateValues {
   readonly item_title?: string;
   readonly item_price?: string;
   readonly page_url?: string;
+  readonly preferred_date?: string | null;
+  readonly preferred_time?: string | null;
+  readonly branch?: string | null;
 }
 
 export interface BuildWhatsAppUrlInput {
@@ -61,6 +74,9 @@ export interface BuildWhatsAppUrlInput {
   readonly primaryOrigin?: string;
   readonly canonicalPath?: string;
   readonly pageUrl?: string;
+  readonly preferredDate?: string | null;
+  readonly preferredTime?: string | null;
+  readonly branch?: string | null;
 }
 
 export interface WhatsAppDispatchResult {
@@ -351,17 +367,13 @@ export function canonicalizePageUrl(rawPageUrl: string): string {
   return `${parsed.origin}${parsed.pathname}`;
 }
 
-/**
- * Performs single-pass expansion of canonical `{{item_title}}`, `{{item_price}}`, and `{{page_url}}` tokens.
- * - Rejects templates exceeding 1000 characters.
- * - Rejects unknown `{{...}}` tokens and malformed/unclosed `{{` or `}}`.
- * - Never recursively re-expands replacement values.
- * - Preserves literal `$` sequences (`$&`, `$1`, `$$`), Unicode/emoji, and line breaks (`\n`).
- */
-export function renderWhatsAppTemplate(
-  template: string,
-  values: WhatsAppTemplateValues,
-): string {
+interface ScannedTemplateToken {
+  readonly name: AllowedWaToken;
+  readonly start: number;
+  readonly end: number;
+}
+
+function scanAndValidateTemplateTokens(template: string): readonly ScannedTemplateToken[] {
   if (typeof template !== "string") {
     throw new WhatsAppValidationError("INVALID_TEMPLATE", "Template must be a string.");
   }
@@ -381,7 +393,7 @@ export function renderWhatsAppTemplate(
     );
   }
 
-  const outputParts: string[] = [];
+  const tokens: ScannedTemplateToken[] = [];
   let cursor = 0;
 
   while (cursor < template.length) {
@@ -396,11 +408,8 @@ export function renderWhatsAppTemplate(
     }
 
     if (openIdx === -1) {
-      outputParts.push(template.slice(cursor));
       break;
     }
-
-    outputParts.push(template.slice(cursor, openIdx));
 
     const closeIdx = template.indexOf("}}", openIdx + 2);
     if (closeIdx === -1) {
@@ -417,27 +426,88 @@ export function renderWhatsAppTemplate(
         `Template contains malformed token delimiters near '{{${tokenName}}}'.`,
       );
     }
-    if (!CANONICAL_WA_TOKEN_SET.has(tokenName)) {
+    if (!ALLOWED_WA_TOKEN_SET.has(tokenName)) {
       throw new WhatsAppValidationError(
         "UNKNOWN_TOKEN",
-        `Unknown WhatsApp template token '{{${tokenName}}}'. Allowed tokens: ${CANONICAL_WA_TOKENS.map((t) => `{{${t}}}`).join(", ")}.`,
+        `Unknown WhatsApp template token '{{${tokenName}}}'. Allowed tokens: ${ALL_WA_TOKENS.map((t) => `{{${t}}}`).join(", ")}.`,
       );
     }
 
-    const canonicalToken = tokenName as CanonicalWaToken;
-    const replacement = values[canonicalToken];
-    if (typeof replacement !== "string") {
-      throw new WhatsAppValidationError(
-        "MISSING_TOKEN_VALUE",
-        `Missing value for WhatsApp template token '{{${canonicalToken}}}'.`,
-      );
+    tokens.push({
+      name: tokenName as AllowedWaToken,
+      start: openIdx,
+      end: closeIdx + 2,
+    });
+    cursor = closeIdx + 2;
+  }
+
+  return tokens;
+}
+
+/**
+ * Validates a WhatsApp message template without expanding it (length, delimiters,
+ * control characters, and strict known-token allowlist).
+ */
+export function validateWhatsAppTemplate(template: string): readonly AllowedWaToken[] {
+  return scanAndValidateTemplateTokens(template).map((t) => t.name);
+}
+
+function splitLineIntoSentences(line: string): readonly string[] {
+  const sentences: string[] = [];
+  let start = 0;
+  let i = 0;
+
+  while (i < line.length) {
+    const ch = line[i];
+    if (ch === "." || ch === "!" || ch === "?") {
+      let end = i + 1;
+      while (end < line.length && (line[end] === "." || line[end] === "!" || line[end] === "?")) {
+        end += 1;
+      }
+      // Split ONLY when sentence punctuation ends the line or is followed by whitespace
+      // (so URLs like `https://example.com/a.html` and IDR numbers like `Rp 1.500.000` stay intact).
+      if (end === line.length || line[end] === " " || line[end] === "\t") {
+        const segment = line.slice(start, end).trim();
+        if (segment.length > 0) {
+          sentences.push(segment);
+        }
+        let next = end;
+        while (next < line.length && (line[next] === " " || line[next] === "\t")) {
+          next += 1;
+        }
+        start = next;
+        i = next;
+        continue;
+      }
     }
-    if (hasDisallowedControlChars(replacement, true)) {
-      throw new WhatsAppValidationError(
-        "INVALID_TEMPLATE",
-        `Value for '{{${canonicalToken}}}' contains disallowed control characters.`,
-      );
+    i += 1;
+  }
+
+  const tail = line.slice(start).trim();
+  if (tail.length > 0) {
+    sentences.push(tail);
+  }
+  return sentences;
+}
+
+function expandSegmentSinglePass(
+  segment: string,
+  resolvedValues: Readonly<Partial<Record<AllowedWaToken, string>>>,
+): string {
+  const outputParts: string[] = [];
+  let cursor = 0;
+
+  while (cursor < segment.length) {
+    const openIdx = segment.indexOf("{{", cursor);
+    if (openIdx === -1) {
+      outputParts.push(segment.slice(cursor));
+      break;
     }
+
+    outputParts.push(segment.slice(cursor, openIdx));
+    const closeIdx = segment.indexOf("}}", openIdx + 2);
+    const tokenName = segment.slice(openIdx + 2, closeIdx) as AllowedWaToken;
+    const replacement = resolvedValues[tokenName] ?? "";
 
     // Literal push: never interprets `$` sequences and never re-scans replacement text.
     outputParts.push(replacement);
@@ -445,6 +515,114 @@ export function renderWhatsAppTemplate(
   }
 
   return outputParts.join("");
+}
+
+/**
+ * Performs single-pass expansion of canonical (`{{item_title}}`, `{{item_price}}`, `{{page_url}}`)
+ * and optional schedule (`{{preferred_date}}`, `{{preferred_time}}`, `{{branch}}`) tokens.
+ * - Rejects templates exceeding 1000 characters.
+ * - Rejects unknown `{{...}}` tokens and malformed/unclosed `{{` or `}}`.
+ * - Never recursively re-expands replacement values.
+ * - When an optional schedule token (`preferred_date`, `preferred_time`, `branch`) is empty/absent,
+ *   drops the entire sentence containing that token cleanly (never emits dangling punctuation
+ *   or literal placeholders).
+ * - Preserves literal `$` sequences (`$&`, `$1`, `$$`), Unicode/emoji, and line breaks (`\n`).
+ */
+export function renderWhatsAppTemplate(
+  template: string,
+  values: WhatsAppTemplateValues,
+): string {
+  const tokens = scanAndValidateTemplateTokens(template);
+  const resolvedValues: Partial<Record<AllowedWaToken, string>> = {};
+  const emptyScheduleTokens = new Set<ScheduleWaToken>();
+
+  for (const token of tokens) {
+    const rawVal = values[token.name];
+
+    if (SCHEDULE_WA_TOKEN_SET.has(token.name)) {
+      if (rawVal === undefined || rawVal === null) {
+        emptyScheduleTokens.add(token.name as ScheduleWaToken);
+        continue;
+      }
+      if (typeof rawVal !== "string") {
+        throw new WhatsAppValidationError(
+          "INVALID_TEMPLATE",
+          `Value for '{{${token.name}}}' must be a string.`,
+        );
+      }
+      if (hasDisallowedControlChars(rawVal, true)) {
+        throw new WhatsAppValidationError(
+          "INVALID_TEMPLATE",
+          `Value for '{{${token.name}}}' contains disallowed control characters.`,
+        );
+      }
+      const trimmedVal = rawVal.trim();
+      if (trimmedVal.length === 0) {
+        emptyScheduleTokens.add(token.name as ScheduleWaToken);
+      } else {
+        resolvedValues[token.name] = trimmedVal;
+      }
+      continue;
+    }
+
+    if (typeof rawVal !== "string") {
+      throw new WhatsAppValidationError(
+        "MISSING_TOKEN_VALUE",
+        `Missing value for WhatsApp template token '{{${token.name}}}'.`,
+      );
+    }
+    if (hasDisallowedControlChars(rawVal, true)) {
+      throw new WhatsAppValidationError(
+        "INVALID_TEMPLATE",
+        `Value for '{{${token.name}}}' contains disallowed control characters.`,
+      );
+    }
+    resolvedValues[token.name] = rawVal;
+  }
+
+  // Fast path when no optional schedule token is empty: preserve exact template formatting verbatim.
+  if (emptyScheduleTokens.size === 0) {
+    return expandSegmentSinglePass(template, resolvedValues);
+  }
+
+  const lines = template.split("\n");
+  const renderedLines: string[] = [];
+
+  for (const rawLine of lines) {
+    const hadContent = rawLine.trim().length > 0;
+    if (!hadContent) {
+      renderedLines.push("");
+      continue;
+    }
+
+    const sentences = splitLineIntoSentences(rawLine);
+    const keptSentences: string[] = [];
+
+    for (const sentence of sentences) {
+      const sentenceTokens = scanAndValidateTemplateTokens(sentence);
+      const hasEmptyScheduleToken = sentenceTokens.some(
+        (t) => SCHEDULE_WA_TOKEN_SET.has(t.name) && emptyScheduleTokens.has(t.name as ScheduleWaToken),
+      );
+      if (hasEmptyScheduleToken) {
+        continue;
+      }
+      keptSentences.push(expandSegmentSinglePass(sentence, resolvedValues));
+    }
+
+    if (keptSentences.length > 0) {
+      renderedLines.push(keptSentences.join(" "));
+    }
+  }
+
+  // Collapse leading/trailing blank lines introduced when surrounding schedule lines were dropped.
+  while (renderedLines.length > 0 && renderedLines[0] === "") {
+    renderedLines.shift();
+  }
+  while (renderedLines.length > 0 && renderedLines[renderedLines.length - 1] === "") {
+    renderedLines.pop();
+  }
+
+  return renderedLines.join("\n");
 }
 
 /**
@@ -488,8 +666,14 @@ export function buildWhatsAppUrl(input: BuildWhatsAppUrlInput): WhatsAppDispatch
     item_title: input.itemTitle,
     item_price: formattedPrice,
     page_url: pageUrl,
+    preferred_date: input.preferredDate ?? null,
+    preferred_time: input.preferredTime ?? null,
+    branch: input.branch ?? null,
   });
 
-  const url = `${WA_ME_ORIGIN}/${phone}?text=${encodeURIComponent(message)}`;
+  const url =
+    message.length > 0
+      ? `${WA_ME_ORIGIN}/${phone}?text=${encodeURIComponent(message)}`
+      : `${WA_ME_ORIGIN}/${phone}`;
   return { url, phone, message, pageUrl };
 }

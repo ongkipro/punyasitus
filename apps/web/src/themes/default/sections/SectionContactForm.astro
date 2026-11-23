@@ -1,14 +1,28 @@
 ---
 import "./sections.css";
+import {
+  getPreferredDateBounds,
+  PREFERRED_TIME_LABELS_ID,
+  PREFERRED_TIME_WINDOWS,
+} from "@punyasitus/core/leads/index";
 import { buildSafeGoogleMapsReviewLink } from "@punyasitus/core/settings/google-maps-review";
+import ScheduleInquiryCta from "../components/ScheduleInquiryCta.astro";
+import {
+  sanitizeContactBranchOptions,
+  type PublicContactBranchOption,
+} from "../components/ScheduleInquiryCta.ts";
 
 /**
  * Accessible Zero-JS Native Lead Capture Contact Form Section
  * (`apps/web/src/themes/default/sections/SectionContactForm.astro`;
- * TASK-021, REQ-031, REQ-038, REQ-039; TASK-073, REQ-074).
+ * TASK-021, REQ-031, REQ-038, REQ-039; TASK-071, REQ-072; TASK-073, REQ-074).
  *
  * - 100% functional WITHOUT JavaScript via native `<form method="POST" action="/api/leads">`
  *   with PRG `303 See Other` redirect rendering a durable status banner from query params.
+ * - Collects optional "Permintaan Jadwal (Opsional)" fields (`preferred_date`, `preferred_time`,
+ *   and conditional `branch_id` when published outlets exist) with explicit request-only wording.
+ * - Renders an optional zero-JS WhatsApp CTA (`ScheduleInquiryCta.astro`) that updates via
+ *   single-pass token expansion when JavaScript is enabled and works cleanly without JS.
  * - Progressively enhanced when JS is available (submits JSON with `Idempotency-Key` header
  *   while preserving exact server validation and error states).
  * - Renders an optional plain external Google Maps review link when configured (zero scripts,
@@ -16,6 +30,8 @@ import { buildSafeGoogleMapsReviewLink } from "@punyasitus/core/settings/google-
  * - Consumes ONLY `--ps-*` public theme tokens; zero admin UI imports; >= 44px touch targets;
  *   zero horizontal overflow at 360px..2560px.
  */
+
+export type ContactFormBranchOption = PublicContactBranchOption;
 
 export interface Props {
   readonly id?: string;
@@ -29,6 +45,15 @@ export interface Props {
   readonly sourcePath?: string;
   readonly returnTo?: string;
   readonly turnstileSiteKey?: string;
+  readonly showScheduleFields?: boolean;
+  readonly tenantTimeZone?: string;
+  readonly branches?: readonly PublicContactBranchOption[];
+  readonly whatsappPhone?: string | null;
+  readonly whatsappTemplate?: string | null;
+  readonly whatsappCtaLabel?: string | null;
+  readonly primaryOrigin?: string | null;
+  readonly itemTitle?: string | null;
+  readonly nowMs?: number;
   readonly googleMapsReviewUrl?: string | null;
   readonly googleMapsReviewLabel?: string;
   readonly surfaceTone?: "surface" | "muted";
@@ -48,6 +73,15 @@ const {
   sourcePath,
   returnTo,
   turnstileSiteKey,
+  showScheduleFields = true,
+  tenantTimeZone = "Asia/Jakarta",
+  branches = [],
+  whatsappPhone = null,
+  whatsappTemplate = null,
+  whatsappCtaLabel = null,
+  primaryOrigin = null,
+  itemTitle = null,
+  nowMs,
   googleMapsReviewUrl = null,
   googleMapsReviewLabel,
   surfaceTone = "surface",
@@ -58,6 +92,11 @@ const {
 const reviewLink = buildSafeGoogleMapsReviewLink(googleMapsReviewUrl, {
   label: googleMapsReviewLabel,
 });
+const scheduleDateBounds = getPreferredDateBounds({
+  nowMs,
+  timeZone: tenantTimeZone,
+});
+const activeBranchOptions = sanitizeContactBranchOptions(branches);
 
 const headingId = `section-${id}-heading`;
 const resolvedPath = sourcePath ?? (Astro.url.pathname || "/");
@@ -87,7 +126,7 @@ function errorMessageForCode(code: string | null): string {
       return "Permintaan sebelumnya berbeda dengan formulir ini. Muat ulang halaman untuk mengirim pesan baru.";
     case "VALIDATION_ERROR":
     default:
-      return "Mohon lengkapi nama, nomor WhatsApp yang valid (contoh: 081234567890), pesan, dan persetujuan privasi.";
+      return "Mohon lengkapi nama, nomor WhatsApp yang valid (contoh: 081234567890), pesan, persetujuan privasi, serta pastikan tanggal, waktu, atau cabang permintaan jadwal (jika diisi) masih valid.";
   }
 }
 
@@ -265,6 +304,90 @@ const cleanTurnstileSiteKey = turnstileSiteKey?.trim() || "";
           ></textarea>
         </div>
 
+        {showScheduleFields && (
+          <fieldset
+            class="ps-lead-schedule"
+            data-testid="lead-schedule-fieldset"
+            data-tenant-timezone={scheduleDateBounds.timeZone}
+          >
+            <legend class="ps-lead-schedule-legend">
+              Permintaan Jadwal <span class="ps-lead-optional">(Opsional)</span>
+            </legend>
+            <p class="ps-lead-hint ps-lead-schedule-note" data-testid="lead-schedule-disclaimer">
+              Isian ini merupakan <strong>permintaan jadwal</strong> awal, bukan ketersediaan slot
+              atau konfirmasi otomatis. Tim {businessName} akan mengonfirmasi waktu yang tersedia
+              melalui WhatsApp atau telepon.
+            </p>
+
+            <div
+              class:list={[
+                "ps-lead-schedule-grid",
+                activeBranchOptions.length > 0 && "ps-lead-schedule-grid--with-branch",
+              ]}
+            >
+              <div class="ps-lead-field">
+                <label for={`${id}-preferred-date`} class="ps-lead-label">
+                  Tanggal Pilihan <span class="ps-lead-optional">(Opsional)</span>
+                </label>
+                <input
+                  id={`${id}-preferred-date`}
+                  name="preferred_date"
+                  type="date"
+                  min={scheduleDateBounds.minDate}
+                  max={scheduleDateBounds.maxDate}
+                  aria-describedby={`${id}-preferred-date-hint`}
+                  class="ps-lead-input"
+                  data-testid="lead-preferred-date"
+                  disabled={isPreview}
+                />
+                <p id={`${id}-preferred-date-hint`} class="ps-lead-hint">
+                  Pilih tanggal mulai hari ini hingga 180 hari ke depan.
+                </p>
+              </div>
+
+              <div class="ps-lead-field">
+                <label for={`${id}-preferred-time`} class="ps-lead-label">
+                  Waktu Pilihan <span class="ps-lead-optional">(Opsional)</span>
+                </label>
+                <select
+                  id={`${id}-preferred-time`}
+                  name="preferred_time"
+                  class="ps-lead-input ps-lead-select"
+                  data-testid="lead-preferred-time"
+                  disabled={isPreview}
+                >
+                  <option value="">Pilih waktu (opsional)</option>
+                  {PREFERRED_TIME_WINDOWS.map((windowKey) => (
+                    <option value={windowKey}>{PREFERRED_TIME_LABELS_ID[windowKey]}</option>
+                  ))}
+                </select>
+              </div>
+
+              {activeBranchOptions.length > 0 && (
+                <div class="ps-lead-field ps-lead-schedule-branch">
+                  <label for={`${id}-branch`} class="ps-lead-label">
+                    Cabang Tujuan <span class="ps-lead-optional">(Opsional)</span>
+                  </label>
+                  <select
+                    id={`${id}-branch`}
+                    name="branch_id"
+                    class="ps-lead-input ps-lead-select"
+                    data-testid="lead-preferred-branch"
+                    disabled={isPreview}
+                  >
+                    <option value="">Pilih cabang (opsional)</option>
+                    {activeBranchOptions.map((branch) => (
+                      <option value={String(branch.id)} data-branch-name={branch.name}>
+                        {branch.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          </fieldset>
+        )}
+
         {cleanTurnstileSiteKey && !isPreview && (
           <div class="ps-lead-field" data-testid="lead-turnstile-slot">
             <div
@@ -318,6 +441,20 @@ const cleanTurnstileSiteKey = turnstileSiteKey?.trim() || "";
           </p>
         </div>
       </form>
+
+      {whatsappPhone && (
+        <ScheduleInquiryCta
+          formId={id}
+          whatsappPhone={whatsappPhone}
+          businessName={businessName}
+          itemTitle={itemTitle ?? businessName}
+          template={whatsappTemplate}
+          ctaLabel={whatsappCtaLabel}
+          primaryOrigin={primaryOrigin}
+          canonicalPath={resolvedPath}
+          isPreview={isPreview}
+        />
+      )}
 
       {reviewLink && (
         <div class="ps-lead-review-box" data-testid="contact-google-review">
@@ -466,6 +603,49 @@ const cleanTurnstileSiteKey = turnstileSiteKey?.trim() || "";
     resize: vertical;
   }
 
+  .ps-lead-select {
+    appearance: auto;
+  }
+
+  .ps-lead-schedule {
+    margin: 0;
+    padding: 1rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius, 8px);
+    background-color: var(--ps-surface-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+    min-width: 0;
+  }
+
+  .ps-lead-schedule-legend {
+    padding: 0 0.25rem;
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--ps-ink);
+  }
+
+  .ps-lead-schedule-note {
+    margin: 0;
+  }
+
+  .ps-lead-schedule-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.875rem;
+  }
+
+  @media (min-width: 640px) {
+    .ps-lead-schedule-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .ps-lead-schedule-branch {
+      grid-column: 1 / -1;
+    }
+  }
+
   .ps-lead-input:focus-visible,
   .ps-lead-textarea:focus-visible,
   .ps-lead-checkbox:focus-visible {
@@ -594,21 +774,189 @@ const cleanTurnstileSiteKey = turnstileSiteKey?.trim() || "";
 {!isPreview && (
   <script is:inline>
     (() => {
+      const MONTHS_ID = [
+        "Januari", "Februari", "Maret", "April", "Mei", "Juni",
+        "Juli", "Agustus", "September", "Oktober", "November", "Desember",
+      ];
+      const TIME_LABELS = { pagi: "Pagi", siang: "Siang", sore: "Sore", malam: "Malam" };
+      const ALLOWED_TOKENS = new Set([
+        "item_title", "item_price", "page_url",
+        "preferred_date", "preferred_time", "branch",
+      ]);
+      const SCHEDULE_TOKENS = new Set(["preferred_date", "preferred_time", "branch"]);
+
+      function formatIsoDateId(iso) {
+        if (typeof iso !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return "";
+        const parts = iso.split("-");
+        const y = Number(parts[0]);
+        const m = Number(parts[1]);
+        const d = Number(parts[2]);
+        const dt = new Date(Date.UTC(y, m - 1, d));
+        if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) {
+          return "";
+        }
+        return `${d} ${MONTHS_ID[m - 1] || parts[1]} ${y}`;
+      }
+
+      function splitSentences(line) {
+        const out = [];
+        let start = 0;
+        let i = 0;
+        while (i < line.length) {
+          const ch = line[i];
+          if (ch === "." || ch === "!" || ch === "?") {
+            let end = i + 1;
+            while (end < line.length && (line[end] === "." || line[end] === "!" || line[end] === "?")) {
+              end += 1;
+            }
+            if (end === line.length || line[end] === " " || line[end] === "\t") {
+              const seg = line.slice(start, end).trim();
+              if (seg) out.push(seg);
+              let next = end;
+              while (next < line.length && (line[next] === " " || line[next] === "\t")) next += 1;
+              start = next;
+              i = next;
+              continue;
+            }
+          }
+          i += 1;
+        }
+        const tail = line.slice(start).trim();
+        if (tail) out.push(tail);
+        return out;
+      }
+
+      function expandSinglePass(segment, vals) {
+        const parts = [];
+        let cursor = 0;
+        while (cursor < segment.length) {
+          const openIdx = segment.indexOf("{{", cursor);
+          if (openIdx === -1) {
+            parts.push(segment.slice(cursor));
+            break;
+          }
+          parts.push(segment.slice(cursor, openIdx));
+          const closeIdx = segment.indexOf("}}", openIdx + 2);
+          if (closeIdx === -1) return null;
+          const token = segment.slice(openIdx + 2, closeIdx);
+          if (!ALLOWED_TOKENS.has(token)) return null;
+          parts.push(typeof vals[token] === "string" ? vals[token] : "");
+          cursor = closeIdx + 2;
+        }
+        return parts.join("");
+      }
+
+      function renderScheduleWaMessage(template, vals) {
+        const emptySet = new Set();
+        for (const key of SCHEDULE_TOKENS) {
+          const v = vals[key];
+          if (typeof v !== "string" || v.trim().length === 0) emptySet.add(key);
+        }
+        const lines = template.split("\n");
+        const renderedLines = [];
+        for (const rawLine of lines) {
+          if (!rawLine.trim()) {
+            renderedLines.push("");
+            continue;
+          }
+          const sentences = splitSentences(rawLine);
+          const kept = [];
+          for (const sentence of sentences) {
+            let drop = false;
+            let c = 0;
+            while (c < sentence.length) {
+              const o = sentence.indexOf("{{", c);
+              if (o === -1) break;
+              const cl = sentence.indexOf("}}", o + 2);
+              if (cl === -1) return null;
+              const tok = sentence.slice(o + 2, cl);
+              if (!ALLOWED_TOKENS.has(tok)) return null;
+              if (emptySet.has(tok)) {
+                drop = true;
+                break;
+              }
+              c = cl + 2;
+            }
+            if (drop) continue;
+            const expanded = expandSinglePass(sentence, vals);
+            if (expanded === null) return null;
+            kept.push(expanded);
+          }
+          if (kept.length > 0) renderedLines.push(kept.join(" "));
+        }
+        while (renderedLines.length > 0 && renderedLines[0] === "") renderedLines.shift();
+        while (renderedLines.length > 0 && renderedLines[renderedLines.length - 1] === "") {
+          renderedLines.pop();
+        }
+        return renderedLines.join("\n");
+      }
+
       const forms = document.querySelectorAll('form[data-lead-form="true"]');
       for (const form of forms) {
         if (form.dataset.psEnhanced === "1") continue;
         form.dataset.psEnhanced = "1";
+
+        const card = form.closest(".ps-lead-form-card");
+        const waLink = card ? card.querySelector('a[data-wa-schedule-link="true"]') : null;
+        const dateEl = form.querySelector('input[name="preferred_date"]');
+        const timeEl = form.querySelector('select[name="preferred_time"]');
+        const branchEl = form.querySelector('select[name="branch_id"]');
+
+        const syncWhatsAppScheduleHref = () => {
+          if (!waLink) return;
+          const phone = waLink.dataset.waPhone || "";
+          const template = waLink.dataset.waTemplate || "";
+          const defaultHref = waLink.dataset.waDefaultHref || "";
+          if (!phone || !template) return;
+
+          const formattedDate = dateEl ? formatIsoDateId(dateEl.value) : "";
+          const rawTime = timeEl ? String(timeEl.value || "").trim().toLowerCase() : "";
+          const formattedTime = TIME_LABELS[rawTime] || "";
+          let branchLabel = "";
+          if (branchEl && branchEl.value) {
+            const opt = branchEl.options[branchEl.selectedIndex];
+            branchLabel = opt ? (opt.dataset.branchName || opt.textContent || "").trim() : "";
+          }
+
+          const message = renderScheduleWaMessage(template, {
+            item_title: waLink.dataset.waItemTitle || "",
+            page_url: waLink.dataset.waPageUrl || "",
+            preferred_date: formattedDate,
+            preferred_time: formattedTime,
+            branch: branchLabel,
+          });
+          if (message === null) {
+            if (defaultHref) waLink.setAttribute("href", defaultHref);
+            return;
+          }
+          waLink.setAttribute(
+            "href",
+            message.length > 0
+              ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+              : `https://wa.me/${phone}`,
+          );
+        };
+
+        if (waLink) {
+          if (dateEl) dateEl.addEventListener("change", syncWhatsAppScheduleHref);
+          if (timeEl) timeEl.addEventListener("change", syncWhatsAppScheduleHref);
+          if (branchEl) branchEl.addEventListener("change", syncWhatsAppScheduleHref);
+        }
+
         form.addEventListener("submit", async (event) => {
           event.preventDefault();
           const submitBtn = form.querySelector('button[type="submit"]');
-          const card = form.closest(".ps-lead-form-card");
           const liveBanner = card ? card.querySelector('[data-testid="lead-form-live-status"]') : null;
           if (submitBtn) submitBtn.disabled = true;
 
           const fd = new FormData(form);
           const payload = {};
           for (const [k, v] of fd.entries()) {
-            if (typeof v === "string") payload[k] = v;
+            if (typeof v !== "string") continue;
+            if ((k === "preferred_date" || k === "preferred_time" || k === "branch_id") && v.trim() === "") {
+              continue;
+            }
+            payload[k] = v;
           }
           payload.privacyConsent = fd.get("privacyConsent") === "true";
           const idemInput = form.querySelector('input[name="idempotencyKey"]');
@@ -646,6 +994,7 @@ const cleanTurnstileSiteKey = turnstileSiteKey?.trim() || "";
                 liveBanner.textContent = (data && data.confirmationMessage ? data.confirmationMessage : "Terima kasih! Pesan Anda telah kami terima.") + ref;
                 form.reset();
                 if (idemInput) idemInput.value = "";
+                syncWhatsAppScheduleHref();
               } else {
                 liveBanner.classList.add("ps-lead-banner--error");
                 liveBanner.setAttribute("role", "alert");
