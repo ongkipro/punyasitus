@@ -1,0 +1,129 @@
+---
+import { env } from "cloudflare:workers";
+import "../../../../../styles/admin/globals.css";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import {
+  getTenantNotificationPreferences,
+  listRecentMonthlyReportDeliveries,
+} from "@/worker/queues/reports/preferences";
+import { NotificationSettingsClient } from "./_NotificationSettingsClient";
+import {
+  NOTIFICATION_SETTINGS_SSR_SECURITY_HEADERS,
+  evaluateNotificationSettingsSsrGate,
+  serviceUnavailableNotificationSsrResponse,
+} from "./_ssr-gate";
+
+const gate = evaluateNotificationSettingsSsrGate({
+  rawHandle: Astro.params.handle,
+  surface: Astro.locals.surface,
+  isLocalLoopback: Astro.locals.isLocalLoopback,
+  isLocalEnv: env.APP_ENV === "local",
+  authUser: Astro.locals.authUser,
+  authorized: Astro.locals.authorizedTenantMember,
+});
+
+if (!gate.ok) {
+  return gate.response;
+}
+
+if (!env.PLATFORM_DB) {
+  return serviceUnavailableNotificationSsrResponse();
+}
+
+const authorized = Astro.locals.authorizedTenantMember!;
+const authUser = Astro.locals.authUser!;
+const nowMs = Date.now();
+
+const [preferences, recentDeliveries, metaRow] = await Promise.all([
+  getTenantNotificationPreferences(env.PLATFORM_DB, authorized.tenantId),
+  listRecentMonthlyReportDeliveries(env.PLATFORM_DB, authorized.tenantId, 6),
+  env.PLATFORM_DB.prepare(
+    `SELECT t.vertical, t.status, t.operator_hold_reason, t.trial_ends_at,
+            ph.host AS primary_host
+     FROM tenants t
+     LEFT JOIN tenant_hosts ph
+       ON ph.tenant_id = t.id
+      AND ph.is_primary = 1
+      AND ph.status = 'active'
+      AND ph.ssl_status = 'active'
+     WHERE t.id = ?
+     LIMIT 1`,
+  )
+    .bind(authorized.tenantId)
+    .first<{
+      readonly vertical: string;
+      readonly status: string;
+      readonly operator_hold_reason: string | null;
+      readonly trial_ends_at: number | null;
+      readonly primary_host: string | null;
+    }>()
+    .catch(() => null),
+]);
+
+Astro.response.headers.set(
+  "Cache-Control",
+  NOTIFICATION_SETTINGS_SSR_SECURITY_HEADERS["Cache-Control"],
+);
+Astro.response.headers.set(
+  "X-Robots-Tag",
+  NOTIFICATION_SETTINGS_SSR_SECURITY_HEADERS["X-Robots-Tag"],
+);
+
+const saasZone = env.SAAS_ZONE || "situsku.click";
+const workspaceSubtitle = metaRow?.primary_host ?? `${authorized.handle}.${saasZone}`;
+const basePath = `/dashboard/${authorized.handle}`;
+const publicSiteHref = `https://${workspaceSubtitle}`;
+const offeringLabel =
+  metaRow?.vertical === "catalog" || metaRow?.vertical === "resto"
+    ? "Produk"
+    : metaRow?.vertical === "travel"
+      ? "Paket Tur"
+      : metaRow?.vertical === "dealer"
+        ? "Kendaraan"
+        : "Layanan";
+
+const effectiveStatus =
+  Astro.locals.tenantEntitlement?.evaluation.effectiveStatus ?? authorized.tenantStatus;
+const lifecycleStatus: LifecycleStatus =
+  effectiveStatus === "trial" ||
+  effectiveStatus === "active" ||
+  effectiveStatus === "grace" ||
+  effectiveStatus === "locked" ||
+  effectiveStatus === "suspended"
+    ? effectiveStatus
+    : "suspended";
+
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof metaRow?.trial_ends_at === "number"
+    ? Math.max(0, Math.ceil((metaRow.trial_ends_at - nowMs) / 86_400_000))
+    : undefined;
+
+const userDisplayName = authUser.name || authUser.email || "Pemilik Situs";
+---
+
+<DashboardLayout
+  title={`Notifikasi Email — ${authorized.tenantName}`}
+  surface="dashboard"
+  workspaceName={authorized.tenantName}
+  workspaceSubtitle={workspaceSubtitle}
+  activeNavId="settings"
+  basePath={basePath}
+  offeringLabel={offeringLabel}
+  lifecycleStatus={lifecycleStatus}
+  lifecycleDaysRemaining={lifecycleDaysRemaining}
+  lifecycleReason={metaRow?.operator_hold_reason ?? undefined}
+  publicSiteHref={publicSiteHref}
+  userDisplayName={userDisplayName}
+  userRoleLabel="Pemilik Situs"
+>
+  <NotificationSettingsClient
+    client:load
+    handle={authorized.handle}
+    workspaceName={authorized.tenantName}
+    basePath={basePath}
+    initialMonthlyReportEnabled={preferences.monthlyPerformanceReportEnabled}
+    initialUpdatedAt={preferences.updatedAt}
+    recentDeliveries={recentDeliveries}
+  />
+</DashboardLayout>

@@ -16,6 +16,7 @@ export const EMAIL_TEMPLATE_NAMES = [
   "custom-theme-request-operator-notice",
   "gtm-kill-switch-owner-notice",
   "abuse-moderation-notice",
+  "monthly-owner-performance-report",
 ] as const;
 
 export type EmailTemplateName = (typeof EMAIL_TEMPLATE_NAMES)[number];
@@ -113,13 +114,21 @@ function greeting(recipientName?: string): { html: string; text: string } {
   };
 }
 
+function formatCountId(value: number): string {
+  const safe = Math.max(0, Math.round(value));
+  return String(safe).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
 function wrapIndonesianHtmlEmail(params: {
   readonly title: string;
   readonly preheader: string;
   readonly bodyHtml: string;
+  readonly headerBgColor?: string;
+  readonly footerExtraHtml?: string;
 }): string {
   const safeTitle = escapeHtml(sanitizeHeaderValue(params.title));
   const safePreheader = escapeHtml(sanitizeHeaderValue(params.preheader));
+  const headerBg = params.headerBgColor ?? "#0f172a";
 
   return [
     "<!doctype html>",
@@ -129,16 +138,17 @@ function wrapIndonesianHtmlEmail(params: {
     '<meta name="viewport" content="width=device-width,initial-scale=1">',
     `<title>${safeTitle}</title>`,
     "</head>",
-    '<body style="margin:0;padding:0;background-color:#f8fafc;color:#0f172a;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;">',
+    '<body style="margin:0;padding:0;background-color:#f8faf9;color:#182522;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Roboto,Helvetica,Arial,sans-serif;">',
     `<div style="display:none;max-height:0;overflow:hidden;opacity:0;">${safePreheader}</div>`,
-    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f8fafc;padding:24px 12px;">',
+    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background-color:#f8faf9;padding:20px 10px;">',
     "<tr>",
     '<td align="center">',
-    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:560px;background-color:#ffffff;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">',
-    '<tr><td style="padding:20px 24px;border-bottom:1px solid #e2e8f0;background-color:#0f172a;color:#ffffff;font-size:16px;font-weight:700;">PunyaSitus</td></tr>',
-    `<tr><td style="padding:24px;font-size:15px;line-height:1.6;color:#0f172a;">${params.bodyHtml}</td></tr>`,
-    '<tr><td style="padding:16px 24px;border-top:1px solid #e2e8f0;background-color:#f8fafc;font-size:12px;line-height:1.5;color:#64748b;">',
+    '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:580px;background-color:#ffffff;border:1px solid #d9e2dd;border-radius:12px;overflow:hidden;">',
+    `<tr><td style="padding:18px 22px;border-bottom:1px solid #d9e2dd;background-color:${headerBg};color:#ffffff;font-size:16px;font-weight:700;letter-spacing:-0.01em;">PunyaSitus</td></tr>`,
+    `<tr><td style="padding:22px;font-size:15px;line-height:1.6;color:#182522;">${params.bodyHtml}</td></tr>`,
+    '<tr><td style="padding:16px 22px;border-top:1px solid #d9e2dd;background-color:#f8faf9;font-size:12px;line-height:1.55;color:#52635c;">',
     "Email ini dikirim secara otomatis oleh sistem notifikasi PunyaSitus (noreply@notif.punyasitus.com). Mohon jangan membalas email ini.",
+    ...(params.footerExtraHtml ? [`<div style="margin-top:8px;">${params.footerExtraHtml}</div>`] : []),
     "</td></tr>",
     "</table>",
     "</td>",
@@ -308,6 +318,40 @@ export const AbuseModerationNoticeTemplateDataSchema = z.strictObject({
   dashboardUrl: z.string().trim().min(1).max(2048),
 });
 
+export const MonthlyMetricDeltaTemplateSchema = z.strictObject({
+  direction: z.enum(["up", "down", "flat", "new"]),
+  labelId: z.string().trim().min(1).max(120),
+});
+
+export const MonthlyTopOfferingTemplateSchema = z.strictObject({
+  title: z.string().trim().min(1).max(120),
+  path: z.string().trim().min(1).max(200),
+  visits: z.number().int().nonnegative(),
+  whatsappClicks: z.number().int().nonnegative(),
+  leads: z.number().int().nonnegative(),
+});
+
+export const MonthlyOwnerPerformanceReportTemplateDataSchema = z.strictObject({
+  recipientName: z.string().trim().max(120).optional(),
+  tenantName: z.string().trim().min(1).max(160),
+  tenantHandle: z.string().trim().min(1).max(64),
+  reportMonth: z.string().trim().regex(/^\d{4}-(0[1-9]|1[0-2])$/),
+  reportMonthLabel: z.string().trim().min(1).max(64),
+  comparisonMonthLabel: z.string().trim().min(1).max(64),
+  visits: z.number().int().nonnegative(),
+  leads: z.number().int().nonnegative(),
+  whatsappClicks: z.number().int().nonnegative(),
+  aiAssistantReferrals: z.number().int().nonnegative(),
+  momVisits: MonthlyMetricDeltaTemplateSchema,
+  momLeads: MonthlyMetricDeltaTemplateSchema,
+  momWhatsappClicks: MonthlyMetricDeltaTemplateSchema,
+  momAiAssistantReferrals: MonthlyMetricDeltaTemplateSchema,
+  topOffering: MonthlyTopOfferingTemplateSchema.nullable().optional(),
+  actionableTip: z.string().trim().min(1).max(600),
+  dashboardInsightsUrl: z.string().trim().min(1).max(2048),
+  notificationSettingsUrl: z.string().trim().min(1).max(2048),
+});
+
 export interface EmailTemplateDataMap {
   readonly "verify-email": z.input<typeof VerifyEmailTemplateDataSchema>;
   readonly "reset-password": z.input<typeof ResetPasswordTemplateDataSchema>;
@@ -325,6 +369,9 @@ export interface EmailTemplateDataMap {
     typeof GtmKillSwitchOwnerNoticeTemplateDataSchema
   >;
   readonly "abuse-moderation-notice": z.input<typeof AbuseModerationNoticeTemplateDataSchema>;
+  readonly "monthly-owner-performance-report": z.input<
+    typeof MonthlyOwnerPerformanceReportTemplateDataSchema
+  >;
 }
 
 export interface RenderedEmailTemplate {
@@ -1024,6 +1071,142 @@ export function renderEmailTemplate<T extends EmailTemplateName>(
           title: subject,
           preheader: `${actionLabel} — ${tenant} (${reportId})`,
           bodyHtml,
+        }),
+        text,
+      };
+    }
+
+    case "monthly-owner-performance-report": {
+      const data = MonthlyOwnerPerformanceReportTemplateDataSchema.parse(rawData);
+      const greet = greeting(data.recipientName);
+      const tenantName = sanitizePlainText(data.tenantName);
+      const tenantHandle = sanitizePlainText(data.tenantHandle);
+      const reportMonthLabel = sanitizePlainText(data.reportMonthLabel);
+      const comparisonMonthLabel = sanitizePlainText(data.comparisonMonthLabel);
+      const actionableTip = sanitizePlainText(data.actionableTip);
+      const safeInsightsUrl = sanitizeActionUrl(data.dashboardInsightsUrl);
+      const safeNotifSettingsUrl = sanitizeActionUrl(data.notificationSettingsUrl);
+
+      const topOffering = data.topOffering
+        ? {
+            title: sanitizePlainText(data.topOffering.title),
+            path: sanitizePlainText(data.topOffering.path),
+            visits: data.topOffering.visits,
+            whatsappClicks: data.topOffering.whatsappClicks,
+            leads: data.topOffering.leads,
+          }
+        : null;
+
+      const subject = sanitizeHeaderValue(
+        `Laporan Performa ${reportMonthLabel} — ${tenantName} — PunyaSitus`,
+      );
+      const preheader = `${formatCountId(data.visits)} kunjungan, ${formatCountId(data.leads)} pesan masuk, ${formatCountId(data.whatsappClicks)} klik WhatsApp pada ${reportMonthLabel}.`;
+
+      const deltaBadgeStyle = (dir: "up" | "down" | "flat" | "new"): string => {
+        if (dir === "up" || dir === "new") {
+          return "color:#176b51;background-color:#ecfdf5;border:1px solid #a7f3d0;";
+        }
+        if (dir === "down") {
+          return "color:#b42318;background-color:#fef3f2;border:1px solid #fecdca;";
+        }
+        return "color:#52635c;background-color:#eef3f0;border:1px solid #d9e2dd;";
+      };
+
+      const renderMetricCell = (
+        label: string,
+        value: number,
+        delta: { readonly direction: "up" | "down" | "flat" | "new"; readonly labelId: string },
+      ): string =>
+        [
+          '<td width="50%" valign="top" style="padding:5px;">',
+          '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="border:1px solid #d9e2dd;border-radius:8px;background-color:#ffffff;">',
+          '<tr><td style="padding:12px;">',
+          `<div style="font-size:12px;color:#52635c;font-weight:600;margin-bottom:4px;">${escapeHtml(label)}</div>`,
+          `<div style="font-size:24px;line-height:1.2;font-weight:700;color:#182522;margin-bottom:6px;">${escapeHtml(formatCountId(value))}</div>`,
+          `<div style="display:inline-block;font-size:11px;line-height:1.35;font-weight:600;padding:2px 7px;border-radius:999px;${deltaBadgeStyle(delta.direction)}">${escapeHtml(sanitizePlainText(delta.labelId))}</div>`,
+          "</td></tr>",
+          "</table>",
+          "</td>",
+        ].join("");
+
+      const topOfferingHtml = topOffering
+        ? [
+            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:14px 0 16px;border:1px solid #d9e2dd;border-radius:8px;background-color:#f8faf9;">',
+            '<tr><td style="padding:14px 16px;">',
+            '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:#52635c;margin-bottom:4px;">Penawaran Terpopuler</div>',
+            `<div style="font-size:16px;font-weight:700;color:#182522;margin-bottom:4px;">${escapeHtml(topOffering.title)}</div>`,
+            `<div style="font-size:12px;color:#52635c;margin-bottom:8px;word-break:break-word;"><code>${escapeHtml(topOffering.path)}</code></div>`,
+            `<div style="font-size:13px;color:#182522;"><strong>${escapeHtml(formatCountId(topOffering.visits))}</strong> kunjungan &middot; <strong>${escapeHtml(formatCountId(topOffering.whatsappClicks))}</strong> klik WhatsApp &middot; <strong>${escapeHtml(formatCountId(topOffering.leads))}</strong> pesan masuk</div>`,
+            "</td></tr>",
+            "</table>",
+          ].join("")
+        : [
+            '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:14px 0 16px;border:1px solid #d9e2dd;border-radius:8px;background-color:#f8faf9;">',
+            '<tr><td style="padding:14px 16px;">',
+            '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.04em;color:#52635c;margin-bottom:4px;">Penawaran Terpopuler</div>',
+            '<div style="font-size:14px;color:#52635c;">Belum ada halaman penawaran yang mencatat kunjungan pada bulan ini.</div>',
+            "</td></tr>",
+            "</table>",
+          ].join("");
+
+      const tipHtml = [
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 0 18px;border:1px solid #a7f3d0;border-left:4px solid #176b51;border-radius:8px;background-color:#ecfdf5;">',
+        '<tr><td style="padding:14px 16px;">',
+        '<div style="font-size:12px;font-weight:700;color:#176b51;margin-bottom:4px;">1 Saran Peningkatan Bulan Depan</div>',
+        `<div style="font-size:14px;line-height:1.55;color:#182522;">${escapeHtml(actionableTip)}</div>`,
+        "</td></tr>",
+        "</table>",
+      ].join("");
+
+      const bodyHtml = [
+        `<div style="font-size:12px;font-weight:700;color:#176b51;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;">Laporan Performa Bulanan</div>`,
+        `<h1 style="margin:0 0 6px;font-size:20px;line-height:1.3;color:#182522;">${escapeHtml(tenantName)}</h1>`,
+        `<p style="margin:0 0 16px;font-size:13px;color:#52635c;">Periode <strong>${escapeHtml(reportMonthLabel)}</strong> dibanding ${escapeHtml(comparisonMonthLabel)} &middot; <code>@${escapeHtml(tenantHandle)}</code></p>`,
+        `<p style="margin:0 0 14px;">${greet.html} Berikut ringkasan performa agregat website Anda bulan lalu (tanpa data pribadi pengunjung):</p>`,
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:0 -5px 8px;border-collapse:separate;">',
+        `<tr>${renderMetricCell("Kunjungan", data.visits, data.momVisits)}${renderMetricCell("Pesan Masuk", data.leads, data.momLeads)}</tr>`,
+        `<tr>${renderMetricCell("Klik WhatsApp", data.whatsappClicks, data.momWhatsappClicks)}${renderMetricCell("Rujukan Asisten AI", data.aiAssistantReferrals, data.momAiAssistantReferrals)}</tr>`,
+        "</table>",
+        topOfferingHtml,
+        tipHtml,
+        `<p style="margin:18px 0 14px;"><a href="${escapeHtml(safeInsightsUrl)}" style="display:inline-block;padding:12px 20px;background-color:#176b51;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px;">Buka Ringkasan Insights</a></p>`,
+        '<p style="margin:0;font-size:12px;line-height:1.5;color:#52635c;">Angka di atas merupakan estimasi agregat harian tanpa pelacakan individu dan tidak memuat data pribadi pengunjung.</p>',
+      ].join("");
+
+      const footerExtraHtml = `Ingin mematikan email laporan bulanan ini? <a href="${escapeHtml(safeNotifSettingsUrl)}" style="color:#176b51;font-weight:600;text-decoration:underline;">Kelola preferensi notifikasi</a>.`;
+
+      const text = [
+        greet.text,
+        "",
+        `Laporan Performa Bulanan — ${tenantName} (@${tenantHandle})`,
+        `Periode: ${reportMonthLabel} (dibanding ${comparisonMonthLabel})`,
+        "",
+        "Ringkasan Performa (estimasi agregat tanpa data pribadi pengunjung):",
+        `- Kunjungan: ${formatCountId(data.visits)} (${sanitizePlainText(data.momVisits.labelId)})`,
+        `- Pesan Masuk: ${formatCountId(data.leads)} (${sanitizePlainText(data.momLeads.labelId)})`,
+        `- Klik WhatsApp: ${formatCountId(data.whatsappClicks)} (${sanitizePlainText(data.momWhatsappClicks.labelId)})`,
+        `- Rujukan Asisten AI: ${formatCountId(data.aiAssistantReferrals)} (${sanitizePlainText(data.momAiAssistantReferrals.labelId)})`,
+        "",
+        topOffering
+          ? `Penawaran Terpopuler: ${topOffering.title} (${topOffering.path}) — ${formatCountId(topOffering.visits)} kunjungan, ${formatCountId(topOffering.whatsappClicks)} klik WhatsApp, ${formatCountId(topOffering.leads)} pesan masuk`
+          : "Penawaran Terpopuler: Belum ada halaman penawaran yang mencatat kunjungan bulan ini.",
+        "",
+        `1 Saran Peningkatan Bulan Depan:`,
+        actionableTip,
+        "",
+        `Buka Ringkasan Insights: ${safeInsightsUrl}`,
+        `Kelola atau matikan laporan bulanan: ${safeNotifSettingsUrl}`,
+      ].join("\n");
+
+      return {
+        template,
+        subject,
+        html: wrapIndonesianHtmlEmail({
+          title: subject,
+          preheader,
+          bodyHtml,
+          headerBgColor: "#176b51",
+          footerExtraHtml,
         }),
         text,
       };
