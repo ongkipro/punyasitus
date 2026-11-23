@@ -113,6 +113,10 @@ const canUpdateLeads =
   canPerform(authorized.role, "lead:update") &&
   lifecycleStatus !== "locked" &&
   lifecycleStatus !== "suspended";
+const canDeleteLeads =
+  canPerform(authorized.role, "lead:delete") &&
+  lifecycleStatus !== "locked" &&
+  lifecycleStatus !== "suspended";
 const isPayer = tenantMeta?.agency_id
   ? authorized.role === "agency_admin"
   : authorized.role === "owner" || authorized.role === "agency_admin";
@@ -233,6 +237,7 @@ const userRoleLabel =
       tenantName={authorized.tenantName}
       lifecycleStatus={lifecycleStatus}
       canUpdate={canUpdateLeads}
+      canDelete={canDeleteLeads}
       canExportCsv={canExportCsv}
       initialItems={initialItems}
       initialCounts={initialCounts}

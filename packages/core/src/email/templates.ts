@@ -15,6 +15,7 @@ export const EMAIL_TEMPLATE_NAMES = [
   "deletion-warning",
   "custom-theme-request-operator-notice",
   "gtm-kill-switch-owner-notice",
+  "abuse-moderation-notice",
 ] as const;
 
 export type EmailTemplateName = (typeof EMAIL_TEMPLATE_NAMES)[number];
@@ -295,6 +296,18 @@ export const GtmKillSwitchOwnerNoticeTemplateDataSchema = z.strictObject({
   analyticsSettingsUrl: z.string().trim().min(1).max(2048),
 });
 
+export const AbuseModerationActionNoticeSchema = z.enum(["dismiss", "unpublish", "suspend"]);
+
+export const AbuseModerationNoticeTemplateDataSchema = z.strictObject({
+  recipientName: z.string().trim().max(120).optional(),
+  tenantName: z.string().trim().min(1).max(160),
+  action: AbuseModerationActionNoticeSchema,
+  reportId: z.string().trim().min(1).max(64),
+  reportedPath: z.string().trim().max(200).optional(),
+  reason: z.string().trim().min(1).max(500),
+  dashboardUrl: z.string().trim().min(1).max(2048),
+});
+
 export interface EmailTemplateDataMap {
   readonly "verify-email": z.input<typeof VerifyEmailTemplateDataSchema>;
   readonly "reset-password": z.input<typeof ResetPasswordTemplateDataSchema>;
@@ -311,6 +324,7 @@ export interface EmailTemplateDataMap {
   readonly "gtm-kill-switch-owner-notice": z.input<
     typeof GtmKillSwitchOwnerNoticeTemplateDataSchema
   >;
+  readonly "abuse-moderation-notice": z.input<typeof AbuseModerationNoticeTemplateDataSchema>;
 }
 
 export interface RenderedEmailTemplate {
@@ -937,6 +951,78 @@ export function renderEmailTemplate<T extends EmailTemplateName>(
         html: wrapIndonesianHtmlEmail({
           title: subject,
           preheader,
+          bodyHtml,
+        }),
+        text,
+      };
+    }
+
+    case "abuse-moderation-notice": {
+      const data = AbuseModerationNoticeTemplateDataSchema.parse(rawData);
+      const greet = greeting(data.recipientName);
+      const tenant = sanitizePlainText(data.tenantName);
+      const reportId = sanitizePlainText(data.reportId);
+      const reportedPath = data.reportedPath ? sanitizePlainText(data.reportedPath) : null;
+      const reason = sanitizePlainText(data.reason);
+      const safeDashboardUrl = sanitizeActionUrl(data.dashboardUrl);
+
+      const actionLabel =
+        data.action === "suspend"
+          ? "Situs Ditangguhkan (Suspended)"
+          : data.action === "unpublish"
+            ? "Konten Dinonaktifkan (Unpublish)"
+            : "Laporan Ditolak (Tidak Melanggar)";
+
+      const subject = sanitizeHeaderValue(
+        data.action === "suspend"
+          ? `[PunyaSitus] Situs ${tenant} ditangguhkan oleh moderasi`
+          : data.action === "unpublish"
+            ? `[PunyaSitus] Konten situs ${tenant} dinonaktifkan oleh moderasi`
+            : `[PunyaSitus] Pemberitahuan tinjauan laporan untuk ${tenant}`,
+      );
+
+      const guidance =
+        data.action === "suspend"
+          ? "Akses publik situs sementara dialihkan ke halaman penangguhan. Silakan tinjau alasan di bawah ini dan hubungi dukungan PunyaSitus apabila Anda memerlukan peninjauan ulang."
+          : data.action === "unpublish"
+            ? "Konten terkait telah dikembalikan ke status draf agar tidak tampil ke publik. Anda dapat meninjau atau memperbaikinya melalui dashboard."
+            : "Laporan penyalahgunaan yang masuk untuk situs Anda telah ditinjau dan dinyatakan tidak memerlukan tindakan penghentian.";
+
+      const bodyHtml = [
+        `<p style="margin:0 0 12px;">${greet.html}</p>`,
+        `<p style="margin:0 0 16px;">Tim moderasi PunyaSitus telah memproses laporan penyalahgunaan untuk situs <strong>${escapeHtml(tenant)}</strong> dengan nomor referensi <code>${escapeHtml(reportId)}</code>.</p>`,
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="6" style="margin:0 0 16px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;">',
+        `<tr><td style="color:#64748b;width:36%;">Tindakan</td><td style="font-weight:600;">${escapeHtml(actionLabel)}</td></tr>`,
+        ...(reportedPath
+          ? [
+              `<tr><td style="color:#64748b;">Halaman</td><td><code>${escapeHtml(reportedPath)}</code></td></tr>`,
+            ]
+          : []),
+        `<tr><td style="color:#64748b;">Alasan</td><td>${escapeHtml(reason)}</td></tr>`,
+        "</table>",
+        `<p style="margin:0 0 16px;">${escapeHtml(guidance)}</p>`,
+        renderPrimaryButtonHtml("Buka Dashboard Situs", safeDashboardUrl),
+        `<p style="margin:0 0 12px;font-size:13px;color:#475569;word-break:break-all;">Tautan dashboard: ${escapeHtml(safeDashboardUrl)}</p>`,
+      ].join("");
+
+      const text = [
+        greet.text,
+        "",
+        `Tim moderasi PunyaSitus telah memproses laporan penyalahgunaan untuk situs ${tenant} dengan nomor referensi ${reportId}.`,
+        `Tindakan: ${actionLabel}`,
+        ...(reportedPath ? [`Halaman terkait: ${reportedPath}`] : []),
+        `Alasan: ${reason}`,
+        "",
+        guidance,
+        `Dashboard: ${safeDashboardUrl}`,
+      ].join("\n");
+
+      return {
+        template,
+        subject,
+        html: wrapIndonesianHtmlEmail({
+          title: subject,
+          preheader: `${actionLabel} — ${tenant} (${reportId})`,
           bodyHtml,
         }),
         text,
