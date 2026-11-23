@@ -7,6 +7,7 @@ import {
   type BillingPlanInterval,
   type EntitlementEvaluationResult,
   type RenewalReminderKind,
+  type SettlementEntitlementTransition,
 } from "@punyasitus/core/billing/index";
 import type { TenantStatus } from "@punyasitus/core/schemas";
 import { buildPlatformAuditStatement } from "../platform/audit.ts";
@@ -270,6 +271,36 @@ export interface ApplyVerifiedEntitlementGrantInput {
   readonly grantedBy: string;
   readonly nowMs?: number;
   readonly maxCasRetries?: number;
+  /**
+   * Optional statements prepended into the SAME atomic `db.batch([...])` transaction
+   * (used by `settleVerifiedPaymentAttempt` so settlement + attempt + obligation +
+   * entitlement grant + tenant update + `platform_audit` commit or roll back together).
+   */
+  readonly preGrantStatements?: (ctx: {
+    readonly tenantRow: TenantLifecycleRow;
+    readonly transition: SettlementEntitlementTransition;
+    readonly grantId: string;
+    readonly nowMs: number;
+  }) => readonly D1PreparedStatement[];
+  /**
+   * Optional statements prepended atomically when the tenant is in a terminal/non-commercial
+   * state (`provisioning`, `purging`, `purged`, `recovery`) so attempt/obligation review
+   * flags commit together with the deferred audit row.
+   */
+  readonly onDeferredTerminalStateStatements?: (ctx: {
+    readonly tenantRow: TenantLifecycleRow;
+    readonly nowMs: number;
+  }) => readonly D1PreparedStatement[];
+  /** When true, requires the `settlementId` row to exist in `settlements` before inserting grant. */
+  readonly requireSettlementRow?: boolean;
+  /** Optional custom audit action / role / reason / requestId / metadata merged into the grant audit row. */
+  readonly auditAction?: string;
+  readonly auditActorRole?: string;
+  readonly auditRequestId?: string | null;
+  readonly auditReason?: string | null;
+  readonly auditMetadata?: Readonly<Record<string, unknown>>;
+  /** When true, only inserts the audit row if the preceding tenant UPDATE modified 1 row (`changes() = 1`). */
+  readonly conditionalAuditOnTenantUpdate?: boolean;
 }
 
 export interface ApplyVerifiedEntitlementGrantResult {
@@ -280,6 +311,7 @@ export interface ApplyVerifiedEntitlementGrantResult {
   readonly tenantId: string;
   readonly settlementId: string;
   readonly grantId: string | null;
+  readonly auditId?: string | null;
   readonly nextStatus: TenantStatus;
   readonly operatorHoldPreserved: boolean;
   readonly periodStartAtMs: number;
@@ -336,15 +368,18 @@ export async function applyVerifiedEntitlementGrant(
     // Hard guard: NEVER resurrect or alter terminal/non-commercial states (`provisioning`, `purging`, `purged`, `recovery`).
     // Record an audited deferred-review entry instead so late money is tracked without reviving the tenant.
     if (NON_COMMERCIAL_TERMINAL_STATES.has(row.status)) {
-      const { statement: deferredAuditStmt } = buildPlatformAuditStatement(db, {
+      const { statement: deferredAuditStmt, entry: deferredAuditEntry } = buildPlatformAuditStatement(db, {
         actorUserId: input.grantedBy,
-        actorRole: "system",
+        actorRole: input.auditActorRole ?? "system",
         action: "billing.entitlement.deferred_terminal_state",
         targetType: "tenant",
         targetId: row.id,
         tenantId: row.id,
         outcome: "denied",
+        reason: input.auditReason ?? null,
+        requestId: input.auditRequestId ?? null,
         metadata: {
+          ...input.auditMetadata,
           settlementId: input.settlementId,
           plan: input.plan,
           storedStatus: row.status,
@@ -352,7 +387,14 @@ export async function applyVerifiedEntitlementGrant(
         },
         createdAtMs: nowMs,
       });
-      await deferredAuditStmt.run();
+      const deferredPre = input.onDeferredTerminalStateStatements
+        ? input.onDeferredTerminalStateStatements({ tenantRow: row, nowMs })
+        : [];
+      if (deferredPre.length > 0) {
+        await db.batch([...deferredPre, deferredAuditStmt]);
+      } else {
+        await deferredAuditStmt.run();
+      }
       return {
         applied: false,
         alreadyGranted: false,
@@ -361,6 +403,7 @@ export async function applyVerifiedEntitlementGrant(
         tenantId: row.id,
         settlementId: input.settlementId,
         grantId: null,
+        auditId: deferredAuditEntry.id,
         nextStatus: row.status,
         operatorHoldPreserved: row.operator_hold === 1,
         periodStartAtMs: nowMs,
@@ -380,89 +423,144 @@ export async function applyVerifiedEntitlementGrant(
     });
 
     const grantId = generateBillingUlid(nowMs);
-    const { statement: auditStmt } = buildPlatformAuditStatement(db, {
-      actorUserId: input.grantedBy,
-      actorRole: "system",
-      action: "billing.entitlement.grant_applied",
-      targetType: "tenant",
-      targetId: row.id,
-      tenantId: row.id,
-      outcome: "success",
-      metadata: {
-        settlementId: input.settlementId,
-        grantId,
-        plan: input.plan,
-        renewalAnchor: transition.renewalAnchor,
-        periodStartAtMs: transition.periodStartAtMs,
-        periodEndAtMs: transition.periodEndAtMs,
-        nextStatus: transition.nextStatus,
-        operatorHoldPreserved: transition.operatorHoldPreserved,
+    const { statement: auditStmt, entry: auditEntry } = buildPlatformAuditStatement(
+      db,
+      {
+        actorUserId: input.grantedBy,
+        actorRole: input.auditActorRole ?? "system",
+        action: input.auditAction ?? "billing.entitlement.grant_applied",
+        targetType: "tenant",
+        targetId: row.id,
+        tenantId: row.id,
+        outcome: "success",
+        reason: input.auditReason ?? null,
+        requestId: input.auditRequestId ?? null,
+        metadata: {
+          ...input.auditMetadata,
+          settlementId: input.settlementId,
+          grantId,
+          plan: input.plan,
+          renewalAnchor: transition.renewalAnchor,
+          periodStartAtMs: transition.periodStartAtMs,
+          periodEndAtMs: transition.periodEndAtMs,
+          nextStatus: transition.nextStatus,
+          operatorHoldPreserved: transition.operatorHoldPreserved,
+        },
+        createdAtMs: nowMs,
       },
-      createdAtMs: nowMs,
-    });
+      input.conditionalAuditOnTenantUpdate ? { onlyIfPreviousChanged: true } : undefined,
+    );
+
+    const preStmts = input.preGrantStatements
+      ? input.preGrantStatements({ tenantRow: row, transition, grantId, nowMs })
+      : [];
+
+    const grantInsertStmt = input.requireSettlementRow
+      ? db
+          .prepare(
+            `INSERT INTO entitlement_grants (
+               id, tenant_id, settlement_id, period_start, period_end, granted_by, created_at
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?
+             WHERE NOT EXISTS (
+               SELECT 1 FROM entitlement_grants WHERE settlement_id = ?
+             )
+             AND EXISTS (
+               SELECT 1 FROM settlements WHERE id = ? AND tenant_id = ?
+             )
+             AND EXISTS (
+               SELECT 1 FROM tenants
+               WHERE id = ?
+                 AND version = ?
+                 AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')
+             )`,
+          )
+          .bind(
+            grantId,
+            row.id,
+            input.settlementId,
+            transition.periodStartAtMs,
+            transition.periodEndAtMs,
+            input.grantedBy,
+            nowMs,
+            input.settlementId,
+            input.settlementId,
+            row.id,
+            row.id,
+            row.version,
+          )
+      : db
+          .prepare(
+            `INSERT INTO entitlement_grants (
+               id, tenant_id, settlement_id, period_start, period_end, granted_by, created_at
+             )
+             SELECT ?, ?, ?, ?, ?, ?, ?
+             WHERE NOT EXISTS (
+               SELECT 1 FROM entitlement_grants WHERE settlement_id = ?
+             )
+             AND EXISTS (
+               SELECT 1 FROM tenants
+               WHERE id = ?
+                 AND version = ?
+                 AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')
+             )`,
+          )
+          .bind(
+            grantId,
+            row.id,
+            input.settlementId,
+            transition.periodStartAtMs,
+            transition.periodEndAtMs,
+            input.grantedBy,
+            nowMs,
+            input.settlementId,
+            row.id,
+            row.version,
+          );
+
+    const tenantUpdateStmt = db
+      .prepare(
+        `UPDATE tenants
+         SET status = CASE WHEN operator_hold = 1 THEN 'suspended' ELSE 'active' END,
+             paid_through = MAX(COALESCE(paid_through, 0), ?),
+             deletion_due_at = CASE WHEN operator_hold = 1 THEN deletion_due_at ELSE ? END,
+             cache_version = cache_version + 1,
+             version = version + 1,
+             updated_at = ?
+         WHERE id = ?
+           AND version = ?
+           AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')
+           AND EXISTS (
+             SELECT 1 FROM entitlement_grants WHERE id = ? AND settlement_id = ?
+           )`,
+      )
+      .bind(
+        transition.nextPaidThroughMs,
+        transition.nextDeletionDueAtMs,
+        nowMs,
+        row.id,
+        row.version,
+        grantId,
+        input.settlementId,
+      );
 
     // Atomic batch:
+    // - Optional pre-grant statements (settlement + attempt + obligation updates)
     // - Insert grant ONLY if no grant for settlementId exists AND tenant version still matches
     //   AND tenant is NOT in a terminal/non-commercial state (`provisioning`, `purging`, `purged`, `recovery`).
     // - Update tenant status/paid_through ONLY if version still matches, status is commercial,
     //   and grant was just inserted for this settlementId (preserving `operator_hold = 1 -> 'suspended'`
     //   and keeping `deletion_due_at` paused/unchanged while under operator hold!).
-    const [grantInsertRes, tenantUpdateRes] = await db.batch([
-      db
-        .prepare(
-          `INSERT INTO entitlement_grants (
-             id, tenant_id, settlement_id, period_start, period_end, granted_by, created_at
-           )
-           SELECT ?, ?, ?, ?, ?, ?, ?
-           WHERE NOT EXISTS (
-             SELECT 1 FROM entitlement_grants WHERE settlement_id = ?
-           )
-           AND EXISTS (
-             SELECT 1 FROM tenants
-             WHERE id = ?
-               AND version = ?
-               AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')
-           )`,
-        )
-        .bind(
-          grantId,
-          row.id,
-          input.settlementId,
-          transition.periodStartAtMs,
-          transition.periodEndAtMs,
-          input.grantedBy,
-          nowMs,
-          input.settlementId,
-          row.id,
-          row.version,
-        ),
-      db
-        .prepare(
-          `UPDATE tenants
-           SET status = CASE WHEN operator_hold = 1 THEN 'suspended' ELSE 'active' END,
-               paid_through = MAX(COALESCE(paid_through, 0), ?),
-               deletion_due_at = CASE WHEN operator_hold = 1 THEN deletion_due_at ELSE ? END,
-               cache_version = cache_version + 1,
-               version = version + 1,
-               updated_at = ?
-           WHERE id = ?
-             AND version = ?
-             AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')
-             AND EXISTS (
-               SELECT 1 FROM entitlement_grants WHERE id = ? AND settlement_id = ?
-             )`,
-        )
-        .bind(
-          transition.nextPaidThroughMs,
-          transition.nextDeletionDueAtMs,
-          nowMs,
-          row.id,
-          row.version,
-          grantId,
-          input.settlementId,
-        ),
+    // - Append `platform_audit` (rolls back entire batch if audit persistence fails!).
+    const batchResults = await db.batch([
+      ...preStmts,
+      grantInsertStmt,
+      tenantUpdateStmt,
       auditStmt,
     ]);
+
+    const grantInsertRes = batchResults[preStmts.length];
+    const tenantUpdateRes = batchResults[preStmts.length + 1];
 
     const grantInserted = (grantInsertRes?.meta?.changes ?? 0) === 1;
     const tenantUpdated = (tenantUpdateRes?.meta?.changes ?? 0) === 1;
@@ -475,6 +573,7 @@ export async function applyVerifiedEntitlementGrant(
         tenantId: row.id,
         settlementId: input.settlementId,
         grantId,
+        auditId: auditEntry.id,
         nextStatus: transition.nextStatus,
         operatorHoldPreserved: transition.operatorHoldPreserved,
         periodStartAtMs: transition.periodStartAtMs,

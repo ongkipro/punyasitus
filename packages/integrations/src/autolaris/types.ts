@@ -1,6 +1,7 @@
 import type {
   AllowedPaymentChannelKind,
   BillingPlanInterval,
+  RawAutoLarisAdviceObservation,
   ValidatedPaymentChannel,
 } from "@punyasitus/core/billing/index";
 
@@ -69,6 +70,11 @@ export interface ValidatedAutoLarisSubmitResult {
   readonly expiresAtIso: string | null;
 }
 
+export interface CheckAutoLarisAdviceInput {
+  /** Strictly the provider-issued `transaction_id`; NEVER a local `reff_id`. */
+  readonly providerTransactionId: string;
+}
+
 export interface AutoLarisBillingClient {
   readonly providerAccountId: string;
   readonly relayOrigin: string;
@@ -76,4 +82,7 @@ export interface AutoLarisBillingClient {
   submitDigitalSubscriptionOrder(
     input: SubmitDigitalOrderInput,
   ): Promise<ValidatedAutoLarisSubmitResult>;
+  checkTransactionAdvice(
+    input: CheckAutoLarisAdviceInput,
+  ): Promise<RawAutoLarisAdviceObservation>;
 }

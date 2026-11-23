@@ -11,7 +11,9 @@ import {
   assertExactIdrInteger,
   classifyAllowedChannel,
   filterAllowedAutoLarisChannels,
+  parseExactProviderInteger,
   validateProviderCosts,
+  type RawAutoLarisAdviceObservation,
   type RawAutoLarisPaymentChannel,
   type ValidatedPaymentChannel,
 } from "@punyasitus/core/billing/index";
@@ -19,6 +21,7 @@ import type {
   AutoLarisBillingClient,
   AutoLarisDigitalProfileConfig,
   AutoLarisRelayConfig,
+  CheckAutoLarisAdviceInput,
   SubmitDigitalOrderInput,
   ValidatedAutoLarisSubmitResult,
 } from "./types.ts";
@@ -44,6 +47,7 @@ const MAX_TIMEOUT_MS = 30_000;
 const PERMITTED_AUTOLARIS_PATHS = new Set<string>([
   "/api/h2h/list_payment",
   "/api/h2h/submit",
+  "/api/h2h/advice",
 ]);
 
 const DEFAULT_ALLOWED_REDIRECT_SUFFIXES: readonly string[] = [
@@ -690,6 +694,177 @@ export function createAutoLarisClient(config: AutoLarisRelayConfig): AutoLarisBi
         paymentRedirectUrl,
         expiresAtMs,
         expiresAtIso,
+      };
+    },
+
+    async checkTransactionAdvice(
+      input: CheckAutoLarisAdviceInput,
+    ): Promise<RawAutoLarisAdviceObservation> {
+      const providerTransactionId = input.providerTransactionId.trim();
+      if (
+        !providerTransactionId ||
+        providerTransactionId.length > 80 ||
+        /[\s\p{Cc}]/u.test(providerTransactionId)
+      ) {
+        throw new BillingValidationError(
+          "MISSING_PROVIDER_TRANSACTION_ID",
+          "Advice wajib menggunakan provider transaction_id yang valid (bukan reff_id lokal).",
+          [
+            {
+              field: "providerTransactionId",
+              code: "MISSING_PROVIDER_TRANSACTION_ID",
+              message: "A valid non-empty provider transaction_id is required for /api/h2h/advice.",
+            },
+          ],
+        );
+      }
+
+      const url = buildPermittedEndpointUrl(relayBaseUrl, "/api/h2h/advice");
+      const { response, rawText } = await fetchJsonWithTimeout(
+        fetchImpl,
+        url,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            "Content-Type": "application/json",
+            Accept: "application/json",
+          },
+          body: JSON.stringify({ transaction_id: providerTransactionId }),
+        },
+        timeoutMs,
+      );
+
+      if (response.status >= 500) {
+        throw new BillingProviderError(
+          "uncertain_timeout_or_network",
+          `ADVICE_HTTP_${response.status}`,
+          "Relay AutoLaris Advice mengembalikan galat server; status transaksi belum pasti.",
+          { providerTransactionId },
+        );
+      }
+
+      if (response.status === 401 || response.status === 403) {
+        throw new BillingProviderError(
+          "definite_refusal",
+          "PROVIDER_AUTH_ERROR",
+          "Autentikasi relay AutoLaris Advice ditolak.",
+          { providerTransactionId },
+        );
+      }
+
+      if (!response.ok) {
+        throw new BillingProviderError(
+          "invalid_provider_payload",
+          `ADVICE_HTTP_${response.status}`,
+          "Endpoint Advice AutoLaris mengembalikan status HTTP non-sukses.",
+          { providerTransactionId },
+        );
+      }
+
+      let envelope: AutoLarisEnvelope;
+      try {
+        envelope = JSON.parse(rawText) as AutoLarisEnvelope;
+      } catch {
+        throw new BillingProviderError(
+          "invalid_provider_payload",
+          "ADVICE_MALFORMED_JSON",
+          "Respons Advice AutoLaris bukan JSON yang valid; masuk antrean tinjauan.",
+          { providerTransactionId },
+        );
+      }
+
+      if (!envelope || typeof envelope !== "object" || typeof envelope.rc !== "string") {
+        throw new BillingProviderError(
+          "invalid_provider_payload",
+          "ADVICE_MALFORMED_ENVELOPE",
+          "Struktur respons Advice AutoLaris tidak memiliki kode rc yang valid.",
+          { providerTransactionId },
+        );
+      }
+
+      const rc = envelope.rc.trim();
+      const ket =
+        typeof envelope.ket === "string" && envelope.ket.trim().length > 0
+          ? sanitizeText(envelope.ket, 120, "")
+          : null;
+
+      const dataObj =
+        envelope.data && typeof envelope.data === "object" && !Array.isArray(envelope.data)
+          ? (envelope.data as Record<string, unknown>)
+          : null;
+
+      const extractTrxId = (raw: unknown): string | null => {
+        if (typeof raw === "string") {
+          const trimmed = raw.trim();
+          return trimmed.length > 0 && trimmed.length <= 80 ? trimmed : null;
+        }
+        if (typeof raw === "number" && Number.isSafeInteger(raw)) {
+          return String(raw);
+        }
+        return null;
+      };
+
+      const extractSafeToken = (raw: unknown, maxLen = 64): string | null => {
+        if (typeof raw !== "string") return null;
+        const cleaned = sanitizeText(raw, maxLen, "");
+        return cleaned.length > 0 ? cleaned : null;
+      };
+
+      const observedTrxId =
+        dataObj !== null
+          ? extractTrxId(dataObj.transaction_id) ?? extractTrxId(dataObj.trx_id)
+          : null;
+      const observedReffId = dataObj !== null ? extractSafeToken(dataObj.reff_id, 64) : null;
+      const paymentStatus =
+        dataObj !== null
+          ? extractSafeToken(dataObj.payment_status) ??
+            extractSafeToken(dataObj.settlement_status) ??
+            extractSafeToken(dataObj.status)
+          : null;
+      const shippingStatus =
+        dataObj !== null
+          ? extractSafeToken(dataObj.stats) ?? extractSafeToken(dataObj.shipping_status)
+          : null;
+      const currency = dataObj !== null ? extractSafeToken(dataObj.currency, 16) : null;
+
+      const rawAmountCandidate =
+        dataObj !== null
+          ? (dataObj.paid_amount ?? dataObj.total ?? dataObj.amount ?? null)
+          : null;
+      let paidAmountIdr: number | null = null;
+      if (rawAmountCandidate !== null && rawAmountCandidate !== undefined && rawAmountCandidate !== "") {
+        try {
+          paidAmountIdr = parseExactProviderInteger(rawAmountCandidate, "advice_amount");
+        } catch {
+          throw new BillingProviderError(
+            "invalid_provider_payload",
+            "ADVICE_INVALID_AMOUNT",
+            "Nominal pembayaran pada respons Advice tidak valid; masuk antrean tinjauan.",
+            { providerTransactionId },
+          );
+        }
+      }
+
+      const rawSettledAt =
+        dataObj !== null ? (dataObj.settled_at ?? dataObj.paid_at ?? null) : null;
+      let settledAtMs: number | null = null;
+      if (typeof rawSettledAt === "number" && Number.isSafeInteger(rawSettledAt) && rawSettledAt > 0) {
+        settledAtMs = rawSettledAt;
+      } else if (typeof rawSettledAt === "string") {
+        settledAtMs = parseAutoLarisExpiredTimestamp(rawSettledAt);
+      }
+
+      return {
+        rc,
+        ket,
+        providerTransactionId: observedTrxId,
+        reffId: observedReffId,
+        paymentStatus,
+        shippingStatus,
+        paidAmountIdr,
+        currency,
+        settledAtMs,
       };
     },
   };
