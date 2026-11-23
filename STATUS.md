@@ -7,21 +7,21 @@ Review-Risk: R3
 Independent-Review: PASS
 Primary-Worker: agy-supervisor
 Independent-Reviewer: pi-claude-sonnet-5-5
-Independent-Review-Head: 086b018
+Independent-Review-Head: b4fa649
 
 ## Now
 
-**85 / 110 roadmap tasks (77.3% total; 85 / 85 = 100.0% of Phase 1 M1 COMPLETE — Wave 0 through Wave 6 100% landed!) completed, visually verified (360px/768px/1440px Playwright), independently cross-family reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, checkpointed, and pushed to `origin/main` (`086b018`):**
-- **Wave 0–5 (84/84 — 100%):** All 84 M1 foundation, routing, auth, CMS, billing, theme, SEO, analytics, plugin runtime, and protection tasks merged & verified.
-- **Wave 6 (`TASK-063` — 1/1 = 100% M1 Integration Gate, `086b018`, `REQ-041`, R3):** SHA-pinned `.github/workflows/ci.yml` (`actionlint` PASS), `scripts/verify/m1-gate.mjs` (per-job `contents: read`, broadened secret & deploy guards), `tests/performance/m1-budget.mjs` (`3.52 KiB` JS gzip, `17.66 KiB` assets, `504–596 ms` LCP; `M1-FU-08` cold CLS `0.1118` surfaced honestly), `tests/e2e-gate/m1-checkpoint.mjs` (`360`/`768`/`1440px`, `720x450 dpr=2` & `320x640` WCAG reflow, exact focus restoration, strict `404` A->B), and `docs/operations/release-checklist.md` (`DEC-030` non-release gate, `M1-FU-01..08` follow-up register, `EXT-01..10` `UNVERIFIED` external gates).
-- **Clean M1 Mainline (`086b018`):** `85/85` unit test files (`809/809` tests) PASS, `73/73` `workerd` integration files (`375/375` tests) PASS, `0` typecheck errors across `617` files, `14.07 MiB / 64 MiB` Worker bundle (`77 ms` startup), `delivery-ledger verify` PASS.
+**94 / 110 roadmap tasks (85.5% total; 85 / 85 = 100.0% Phase 1 M1 + 9 / 22 = 40.9% Wave 7 M2 landed!) completed, visually verified (360px/1440px Playwright), independently cross-family reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, checkpointed, and pushed to `origin/main` (`b4fa649`):**
+- **Wave 0–6 (85/85 — 100% M1):** All 85 M1 tasks including `TASK-063` Integration Checkpoint M1 (`086b018`, plus additive M2 migration forward-compatibility `36e9f2a`).
+- **Wave 7 M2 Landed (9/22):** `TASK-074` (`5bc711e`, AI Writing Suggestions, `platform/0029`), `TASK-072` (`967f25b`, First-Party Insights, `tenant/0022`), `TASK-075` (`c1eb1e4`, Tenant MCP Server + OAuth 2.1 PKCE/RFC 8707, `platform/0030`), `TASK-073` (`09867a0`, Google Maps Review Link & GBP Checklist), `TASK-083` (`e9e95f6`, Agency/Reseller Portal & Agency-Payer Billing, `platform/0028`), `TASK-109` (`305ca89`, Optional AI Draft Step in Onboarding), `TASK-064` (`90c7567`, Content Revision History & Draft-Only Restore, `tenant/0023`), `TASK-110` (`7839fcf`, Monthly Owner Performance Report Email), `TASK-019` (`b4fa649`, Offline Gerai Multi-Outlet Directory & Consent-Gated Maps).
+- **Clean Mainline (`b4fa649`):** `94/94` unit test files PASS, `0` typecheck errors across `682` files, `delivery-ledger verify` PASS.
 
 ## Next
 
-1. **Wave 7 (M2 — 22 tasks, 0/22 landed — Batch M2-A in flight!):**
-   - Active in isolated worktrees (4): `TASK-083` (Agency Portal, `platform/0028`), `TASK-072` (First-Party Insights, `tenant/0022`), `TASK-074` (AI Writing Suggestions, `platform/0029`), `TASK-075` (Tenant MCP Server, `platform/0030`).
-   - Next M2 batches: `TASK-064`, `TASK-073`, `TASK-019` -> `020` -> `035` -> `079` -> `066`/`071`, `TASK-084` -> `085` -> `086`, `TASK-098` -> `099`/`100`/`101`, `TASK-105`, `TASK-109`, `TASK-110`.
-2. **Wave 8 (`TASK-078` ASVS L2 / ZAP / BOLA -> `TASK-038` Full Production Release Gate).** (`TASK-062` deferred to Release 1.1 per DEC-035 C16.)
+1. **Wave 7 (M2 — 13 remaining of 22; 4 active in parallel!):**
+   - Active in isolated worktrees (4): `TASK-105` (WhatsApp Support Entry Point), `TASK-084` (Affiliate Enrollment & Attribution, `platform/0031`), `TASK-020` (Travel & Umrah Itinerary / DEC-042 `SK PPIU`), `TASK-071` (Preferred Schedule Fields for Inquiries, `tenant/0024`).
+   - Queued dependency chains (9): Verticals (`TASK-035` -> `TASK-079` -> `TASK-066`), Affiliates (`TASK-085` -> `TASK-086`), Plugins (`TASK-098` -> `TASK-099`, `TASK-100`, `TASK-101`).
+2. **Wave 8 (`TASK-078` ASVS L2 / ZAP / BOLA -> `TASK-038` Full Production Release Gate M1+M2).** (`TASK-062` deferred to Release 1.1 per DEC-035 C16.)
 
 ## Blockers
 
