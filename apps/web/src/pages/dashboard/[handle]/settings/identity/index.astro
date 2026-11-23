@@ -1,23 +1,68 @@
 ---
-import { getSiteIdentityForAdmin } from "@punyasitus/db/identity/index";
+import { env } from "cloudflare:workers";
+import { getStructuredBusinessProfileForAdmin } from "@punyasitus/db/business-profile/index";
 import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
 import DashboardLayout from "@/layouts/DashboardLayout.astro";
 import { IdentitySettingsClient } from "./_IdentitySettingsClient";
+import {
+  evaluateIdentitySettingsSsrGate,
+  IDENTITY_SSR_SECURITY_HEADERS,
+  serviceUnavailableIdentitySsrResponse,
+} from "./_ssr-gate";
 
+// Check operatorHold from PLATFORM_DB only (BEFORE any TenantStore DB reads!) — FAIL CLOSED on DB error!
+let operatorHold = false;
+const preAuthMember = Astro.locals.authorizedTenantMember;
+if (preAuthMember) {
+  if (!env.PLATFORM_DB) {
+    return serviceUnavailableIdentitySsrResponse();
+  }
+  try {
+    const holdRow = await env.PLATFORM_DB.prepare(
+      "SELECT operator_hold FROM tenants WHERE id = ? LIMIT 1",
+    )
+      .bind(preAuthMember.tenantId)
+      .first<{ readonly operator_hold: number | null }>();
+    operatorHold = Number(holdRow?.operator_hold ?? 0) === 1;
+  } catch {
+    return serviceUnavailableIdentitySsrResponse();
+  }
+}
+
+// 1. Enforce SSR Lifecycle & RBAC Gate BEFORE any TenantStore DB reads!
+const gate = evaluateIdentitySettingsSsrGate({
+  rawHandle: Astro.params.handle,
+  surface: Astro.locals.surface,
+  isLocalLoopback: Astro.locals.isLocalLoopback,
+  isLocalEnv: env.APP_ENV === "local",
+  authUser: Astro.locals.authUser,
+  authorized: preAuthMember,
+  operatorHold,
+});
+
+if (!gate.ok) {
+  return gate.response;
+}
+
+// 2. Bind verified TenantStore only after passing SSR Lifecycle & RBAC Gate
 const resolved = await resolveCmsAdminServerContext(Astro);
 if (!resolved.ok) {
   return resolved.response;
 }
 
+Astro.response.headers.set("Cache-Control", IDENTITY_SSR_SECURITY_HEADERS["Cache-Control"]);
+Astro.response.headers.set("X-Robots-Tag", IDENTITY_SSR_SECURITY_HEADERS["X-Robots-Tag"]);
+
 const { ctx } = resolved;
-const identity = await getSiteIdentityForAdmin(ctx.tenantDb);
+const identity = await getStructuredBusinessProfileForAdmin(ctx.tenantDb);
 
 const site = identity.siteSettings;
 const biz = identity.businessProfile;
+const brand = identity.brandAssets;
 ---
 
 <DashboardLayout
-  title={`Identitas Situs — ${ctx.workspaceName}`}
+  title={`Identitas & Profil Bisnis — ${ctx.workspaceName}`}
   surface="dashboard"
   workspaceName={ctx.workspaceName}
   workspaceSubtitle={ctx.workspaceSubtitle}
@@ -43,10 +88,15 @@ const biz = identity.businessProfile;
       locale: site?.locale ?? "id-ID",
       logoMediaId: site?.logoMediaId ?? null,
       faviconMediaId: site?.faviconMediaId ?? null,
+      ogImageMediaId: site?.ogImageMediaId ?? null,
       businessName: biz?.businessName ?? ctx.workspaceName,
-      businessCategory: biz?.businessCategory ?? "LocalBusiness",
+      legalName: biz?.legalName ?? "",
+      businessCategory: biz?.businessCategoryKey ?? "local_business",
+      personRoleTitle: biz?.personRoleTitle ?? "",
+      affiliatedOrgName: biz?.affiliatedOrgName ?? "",
       description: biz?.description ?? "",
       email: biz?.email ?? "",
+      privacyContact: biz?.privacyContact ?? "",
       phone: biz?.phone ?? "",
       whatsappE164: biz?.whatsappE164 ?? "",
       address: biz?.address ?? "",
@@ -56,6 +106,17 @@ const biz = identity.businessProfile;
       mapsUrl: biz?.mapsUrl ?? "",
       weekdayHours: biz?.weekdayHours ?? "",
       holidayHours: biz?.holidayHours ?? "",
+      closedDays: biz?.closedDays ?? [],
+      serviceAreas: biz?.serviceAreas ?? [],
+      socialLinks: biz?.socialLinks ?? [],
+      credentials: biz?.credentials ?? {},
+      brandAssets: {
+        faviconSource: brand.effective.faviconSource,
+        ogImageSource: brand.effective.ogImageSource,
+        derivedFavicon32Bytes: brand.derivedFavicon32?.bytes ?? null,
+        derivedAppleTouch180Bytes: brand.derivedAppleTouch180?.bytes ?? null,
+        derivedOgBytes: brand.derivedOg1200x630?.bytes ?? null,
+      },
       hasUnpublishedChanges: identity.hasUnpublishedChanges,
       version: identity.version,
     }}

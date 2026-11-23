@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import type { CloudflareSendEmailBinding } from "@punyasitus/core/email/index";
+import { publishStructuredBusinessProfile } from "@punyasitus/db/business-profile/index";
 import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
 import { publishSiteIdentity } from "@punyasitus/db/identity/index";
 import type { APIRoute } from "astro";
@@ -84,6 +85,40 @@ export async function handleTenantIdentityPublishRequest(
     const versionCheck = extractExpectedVersion(parsedBody.body, requestId);
     if (!versionCheck.ok) {
       return versionCheck.response;
+    }
+
+    // If 0011 structured business profile table exists, publish both atomically while keeping TASK-008 response shape
+    let hasStructuredTable = false;
+    try {
+      const probe = await tenantDb
+        .prepare("SELECT id FROM business_profile_structured WHERE id = 1 LIMIT 1")
+        .first<{ readonly id: number }>();
+      hasStructuredTable = probe !== null;
+    } catch {
+      hasStructuredTable = false;
+    }
+
+    if (hasStructuredTable) {
+      const published = await publishStructuredBusinessProfile(platformDb, tenantDb, {
+        tenantId: member.tenantId,
+        expectedVersion: versionCheck.expectedVersion,
+        actorUserId: member.userId,
+        actorRole: member.role,
+        nowMs: options.nowMs,
+      });
+
+      return identityJsonResponse(200, {
+        version: published.version,
+        versions: {
+          siteSettings: published.versions.siteSettings,
+          businessProfile: published.versions.businessProfile,
+        },
+        cacheVersion: published.cacheVersion,
+        publishedAt: published.publishedAt,
+        contentModifiedAt: published.contentModifiedAt,
+        published: published.published,
+        hasUnpublishedChanges: published.hasUnpublishedChanges,
+      });
     }
 
     const published = await publishSiteIdentity(platformDb, tenantDb, {

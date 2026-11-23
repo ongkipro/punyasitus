@@ -8,7 +8,10 @@ import {
   type PermissionAction,
 } from "@punyasitus/auth";
 import type { EmailPort } from "@punyasitus/core/email/index";
+import { sanitizeErrorCode, type JobEnvelopeInput } from "@punyasitus/core/jobs/index";
+import type { CloudflareImagesBinding } from "@punyasitus/core/media/index";
 import { FORBIDDEN_TENANT_SELECTOR_KEYS, type ApiErrorCode } from "@punyasitus/core/schemas";
+import type { StructuredBusinessProfileAdminDto } from "@punyasitus/db/business-profile/index";
 import {
   createTenantDb,
   openTenantStoreStub,
@@ -22,6 +25,12 @@ import {
   StaleRevisionError,
   type SiteIdentityAdminDto,
 } from "@punyasitus/db/identity/index";
+import { enqueueDurableJob, releaseUnstartedQueuedJob } from "@punyasitus/db/jobs/index";
+import {
+  deriveBrandAssetsFromLogo,
+  MEDIA_DERIVE_BRAND_ASSETS_TOPIC,
+  type MediaWorkerR2BucketLike,
+} from "../../../../../worker/queues/media/index.ts";
 import {
   resolveAuthEmailPort,
   resolvePlatformAuthHostContext,
@@ -45,8 +54,131 @@ export const NO_STORE_HEADERS = {
   "X-Robots-Tag": "noindex, nofollow",
 } as const;
 
+export interface BrandAssetsQueueProducerLike {
+  send(message: JobEnvelopeInput): Promise<unknown>;
+}
+
 export interface TenantIdentityRuntimeEnv extends AuthRuntimeEnv {
   readonly TENANT_STORE?: TenantStoreNamespaceLike | null;
+  readonly MEDIA_BUCKET?: MediaWorkerR2BucketLike | null;
+  readonly IMAGES?: CloudflareImagesBinding | null;
+  readonly JOBS_QUEUE?: BrandAssetsQueueProducerLike | null;
+}
+
+export interface TriggerBrandAssetsDerivationResult {
+  readonly mode: "enqueued" | "inline_derived" | "skipped" | "failed";
+  readonly idempotencyKey?: string;
+  readonly errorCode?: string;
+}
+
+/**
+ * Triggers `media.derive_brand_assets` after `logoMediaId` is set or changed:
+ * - When `JOBS_QUEUE` is bound (production / workerd queue mode): durably enqueues into
+ *   `PLATFORM_DB.job_ledger` and sends to `JOBS_QUEUE` (releasing the ledger row and logging a
+ *   sanitized error code if queue delivery fails — never silent `catch {}`).
+ * - When `JOBS_QUEUE` is NOT bound, and both `MEDIA_BUCKET` + `IMAGES` are bound (local/test mode):
+ *   executes `deriveBrandAssetsFromLogo` inline and logs a sanitized error code on failure.
+ */
+export async function triggerBrandAssetsDerivationForLogo(params: {
+  readonly tenantId: string;
+  readonly logoMediaId: number | null;
+  readonly previousLogoMediaId: number | null;
+  readonly savedVersion: number;
+  readonly requestId: string;
+  readonly platformDb: D1Database;
+  readonly tenantDb: D1Database;
+  readonly runtimeEnv: TenantIdentityRuntimeEnv;
+  readonly nowMs?: number;
+}): Promise<TriggerBrandAssetsDerivationResult> {
+  if (params.logoMediaId === null || !Number.isInteger(params.logoMediaId) || params.logoMediaId < 1) {
+    return { mode: "skipped" };
+  }
+  const logoChanged = params.logoMediaId !== params.previousLogoMediaId;
+  if (!logoChanged) {
+    return { mode: "skipped" };
+  }
+
+  const nowMs = Math.floor(params.nowMs ?? Date.now());
+  const { runtimeEnv } = params;
+
+  if (runtimeEnv.JOBS_QUEUE && typeof runtimeEnv.JOBS_QUEUE.send === "function") {
+    const idempotencyKey = `brand-assets:${params.tenantId}:logo:${params.logoMediaId}:v${params.savedVersion}`;
+    const envelope: JobEnvelopeInput = {
+      idempotencyKey,
+      topic: MEDIA_DERIVE_BRAND_ASSETS_TOPIC,
+      tenantId: params.tenantId,
+      payload: {
+        logoMediaId: params.logoMediaId,
+      },
+      maxAttempts: 3,
+      correlationId: params.requestId,
+      enqueuedAt: nowMs,
+    };
+
+    try {
+      const ledgerRes = await enqueueDurableJob(params.platformDb, {
+        idempotencyKey,
+        topic: MEDIA_DERIVE_BRAND_ASSETS_TOPIC,
+        tenantId: params.tenantId,
+        payload: envelope.payload,
+        nowMs,
+      });
+      if (ledgerRes.enqueued) {
+        await runtimeEnv.JOBS_QUEUE.send(envelope);
+      }
+      return { mode: "enqueued", idempotencyKey };
+    } catch (err) {
+      const errorCode = sanitizeErrorCode(err instanceof Error ? err.message : "E_QUEUE_ENQUEUE");
+      try {
+        await releaseUnstartedQueuedJob(params.platformDb, idempotencyKey);
+      } catch {
+        // Best-effort cleanup of unstarted row; sanitized error logged below
+      }
+      console.error(
+        JSON.stringify({
+          event: "brand_assets.enqueue_failed",
+          tenantId: params.tenantId,
+          logoMediaId: params.logoMediaId,
+          requestId: params.requestId,
+          errorCode,
+        }),
+      );
+      return { mode: "failed", idempotencyKey, errorCode };
+    }
+  }
+
+  // Inline synchronous fallback ONLY when no JOBS_QUEUE binding is supplied (local/test mode)
+  if (
+    runtimeEnv.MEDIA_BUCKET &&
+    runtimeEnv.IMAGES &&
+    typeof runtimeEnv.IMAGES.input === "function"
+  ) {
+    try {
+      await deriveBrandAssetsFromLogo({
+        tenantId: params.tenantId,
+        tenantDb: params.tenantDb,
+        logoMediaId: params.logoMediaId,
+        images: runtimeEnv.IMAGES,
+        mediaBucket: runtimeEnv.MEDIA_BUCKET,
+        nowMs,
+      });
+      return { mode: "inline_derived" };
+    } catch (err) {
+      const errorCode = sanitizeErrorCode(err instanceof Error ? err.message : "E_BRAND_DERIVE");
+      console.error(
+        JSON.stringify({
+          event: "brand_assets.inline_derive_failed",
+          tenantId: params.tenantId,
+          logoMediaId: params.logoMediaId,
+          requestId: params.requestId,
+          errorCode,
+        }),
+      );
+      return { mode: "failed", errorCode };
+    }
+  }
+
+  return { mode: "skipped" };
 }
 
 export interface TenantIdentityHandlerOptions {
@@ -117,6 +249,30 @@ export function formatIdentityAdminResponse(dto: SiteIdentityAdminDto): Record<s
     published: dto.published,
     version: dto.version,
     versions: dto.versions,
+    hasUnpublishedChanges: dto.hasUnpublishedChanges,
+    publishedAt: dto.publishedAt,
+    contentModifiedAt: dto.contentModifiedAt,
+    updatedAt: dto.updatedAt,
+  };
+}
+
+export function formatStructuredBusinessProfileResponse(
+  dto: StructuredBusinessProfileAdminDto,
+  options: { readonly includeStructuredVersionKey?: boolean } = {},
+): Record<string, unknown> {
+  return {
+    siteSettings: dto.siteSettings,
+    businessProfile: dto.businessProfile,
+    brandAssets: dto.brandAssets,
+    draft: dto.draft,
+    published: dto.published,
+    version: dto.version,
+    versions: options.includeStructuredVersionKey
+      ? dto.versions
+      : {
+          siteSettings: dto.versions.siteSettings,
+          businessProfile: dto.versions.businessProfile,
+        },
     hasUnpublishedChanges: dto.hasUnpublishedChanges,
     publishedAt: dto.publishedAt,
     contentModifiedAt: dto.contentModifiedAt,
