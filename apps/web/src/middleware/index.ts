@@ -2,8 +2,8 @@ import { env } from "cloudflare:workers";
 import type { CloudflareSendEmailBinding } from "@punyasitus/core/email/index";
 import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
 import { defineMiddleware } from "astro:middleware";
-import { executeTenantMiddleware } from "../core/tenant.ts";
 import { executeAuthMiddleware, type AuthRuntimeEnv } from "./auth.ts";
+import { executeTenantWithConsentAwareCspMiddleware } from "./csp.ts";
 
 export const onRequest = defineMiddleware((context, next) => {
   const runtimeEnv = env as typeof env & {
@@ -30,7 +30,7 @@ export const onRequest = defineMiddleware((context, next) => {
     EMAIL: runtimeEnv.EMAIL as unknown as CloudflareSendEmailBinding | undefined,
   };
 
-  return executeTenantMiddleware(
+  return executeTenantWithConsentAwareCspMiddleware(
     context,
     () => {
       if (

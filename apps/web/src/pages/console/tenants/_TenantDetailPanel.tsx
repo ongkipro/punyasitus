@@ -35,10 +35,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import type { ConsoleTenantGtmStatusDto } from "@punyasitus/db/analytics-settings/index";
 import type {
   ConsoleAllowedStateAction,
   ConsoleTenantDetailDto,
 } from "@punyasitus/db/platform";
+import { TenantGtmKillSwitchCard } from "./_TenantGtmKillSwitchCard";
 
 export interface RegisteredCustomThemeSummary {
   readonly id: string;
@@ -52,6 +54,7 @@ export interface RegisteredCustomThemeSummary {
 
 export interface TenantDetailPanelProps {
   readonly initialDetail: ConsoleTenantDetailDto;
+  readonly initialGtmStatus?: ConsoleTenantGtmStatusDto | null;
   readonly registeredCustomThemes: readonly RegisteredCustomThemeSummary[];
   readonly stepUpFresh: boolean;
 }
@@ -138,6 +141,7 @@ function statusBadgeProps(
 
 export function TenantDetailPanel({
   initialDetail,
+  initialGtmStatus = null,
   registeredCustomThemes,
   stepUpFresh,
 }: TenantDetailPanelProps) {
@@ -867,6 +871,20 @@ export function TenantDetailPanel({
           </CardContent>
         </Card>
       </div>
+
+      {/* Row 2b: Operator Google Tag Manager Kill Switch (REQ-027, TASK-076) */}
+      <TenantGtmKillSwitchCard
+        tenantId={tenant.id}
+        tenantHandle={tenant.handle}
+        tenantName={tenant.name}
+        tenantVersion={tenant.version}
+        detailPath={detailPath}
+        initialGtmStatus={initialGtmStatus}
+        onMutated={async (message) => {
+          setGlobalSuccess(message);
+          await refreshDetail();
+        }}
+      />
 
       {/* Row 3: Recent Scoped Redacted Audit History */}
       <Card data-testid="detail-audit-history-card">
