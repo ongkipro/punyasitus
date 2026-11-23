@@ -1,3 +1,4 @@
+import { sanitizeClientEventId } from "./dedup.ts";
 import {
   ANALYTICS_PROVIDER_DESCRIPTORS,
   DIRECT_ANALYTICS_PROVIDERS,
@@ -880,7 +881,7 @@ export function buildPsPageViewEvent(input: {
   return {
     event: "ps_page_view",
     ps_schema_version: GTM_DATALAYER_CONTRACT_VERSION,
-    event_id: sanitizeSafeIdentifier(input.eventId) ?? "evt_page_view",
+    event_id: sanitizeClientEventId(input.eventId) ?? "evt_page_view",
     page_type: normalizeGtmPageType(input.pageType),
     content_id: sanitizeSafeIdentifier(input.contentId),
     page_path: sanitizeSignalPagePath(input.pagePath) ?? "/",
@@ -897,7 +898,7 @@ export function buildPsWaClickEvent(input: {
   return {
     event: "ps_wa_click",
     ps_schema_version: GTM_DATALAYER_CONTRACT_VERSION,
-    event_id: sanitizeSafeIdentifier(input.eventId) ?? "evt_wa_click",
+    event_id: sanitizeClientEventId(input.eventId) ?? "evt_wa_click",
     item_id: sanitizeSafeIdentifier(input.itemId),
     item_title: sanitizeNonPiiTitle(input.itemTitle),
     placement: normalizeGtmPlacement(input.placement),
@@ -917,7 +918,7 @@ export function buildPsExternalClickEvent(input: {
   return {
     event: "ps_external_click",
     ps_schema_version: GTM_DATALAYER_CONTRACT_VERSION,
-    event_id: sanitizeSafeIdentifier(input.eventId) ?? "evt_external_click",
+    event_id: sanitizeClientEventId(input.eventId) ?? "evt_external_click",
     item_id: sanitizeSafeIdentifier(input.itemId),
     destination_host: host,
     page_path: sanitizeSignalPagePath(input.pagePath) ?? "/",
@@ -932,7 +933,7 @@ export function buildPsLeadSubmittedEvent(input: {
   return {
     event: "ps_lead_submitted",
     ps_schema_version: GTM_DATALAYER_CONTRACT_VERSION,
-    event_id: sanitizeSafeIdentifier(input.eventId) ?? "evt_lead_submitted",
+    event_id: sanitizeClientEventId(input.eventId) ?? "evt_lead_submitted",
     form_id: sanitizeSafeIdentifier(input.formId) ?? "contact_default",
     page_path: sanitizeSignalPagePath(input.pagePath) ?? "/",
   };

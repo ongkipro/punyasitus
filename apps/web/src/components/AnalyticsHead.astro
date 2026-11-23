@@ -52,6 +52,10 @@ export interface Props {
   readonly cspProfile?: PublicCspProfile;
   readonly pageType?: GtmPageType;
   readonly contentId?: string | null;
+  /** Optional tenant scope (verified host/handle) for 24h client-side event dedup isolation (TASK-065). */
+  readonly tenantScope?: string | null;
+  /** Explicit opt-in to emit cookieless first-party event bootstrap even with zero third-party/GTM tags. */
+  readonly enableFirstPartyOnly?: boolean;
   /** Explicit runtime environment string (`"local" | "test" | "staging" | "production"`). */
   readonly appEnv?: string;
   /**
@@ -79,6 +83,8 @@ const {
   cspProfile,
   pageType = "page",
   contentId = null,
+  tenantScope = null,
+  enableFirstPartyOnly = false,
   appEnv,
   vendorScriptOverrides,
   gtmScriptUrlOverride,
@@ -117,6 +123,13 @@ const resolvedNonce = isValidCspNonce(cspNonce)
 const resolvedCspProfile: PublicCspProfile =
   cspProfile ?? Astro.locals?.cspProfile ?? (hasAnalyticsConsent && resolvedNonce ? "gtm-relaxed" : "strict");
 
+const resolvedTenantScope =
+  tenantScope ??
+  (Astro.locals as { readonly tenant?: { readonly host?: string; readonly handle?: string } | null })
+    ?.tenant?.host ??
+  Astro.request?.headers?.get("host") ??
+  null;
+
 // Probe payload first to determine whether GTM is actually active after mutual exclusion & kill switch
 const probePayload = buildAnalyticsHeadBootstrapPayload({
   config,
@@ -127,6 +140,8 @@ const probePayload = buildAnalyticsHeadBootstrapPayload({
   policyVersion,
   cookieName,
   autoPageView,
+  tenantScope: resolvedTenantScope,
+  enableFirstPartyOnly,
   cspProfile: resolvedCspProfile,
   cspNonce: resolvedNonce,
   gtmSsrLoaded: false,
@@ -173,6 +188,8 @@ const bootstrapPayload =
         policyVersion,
         cookieName,
         autoPageView,
+        tenantScope: resolvedTenantScope,
+        enableFirstPartyOnly,
         cspProfile: resolvedCspProfile,
         cspNonce: resolvedNonce,
         gtmSsrLoaded: true,

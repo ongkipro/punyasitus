@@ -1,5 +1,9 @@
 import {
+  ANALYTICS_EVENT_DEDUP_TTL_MS,
+  createCtaClickActionGuard,
+  normalizeTenantDedupScope,
   type AnalyticsHeadBootstrapPayload,
+  type ClientDedupStorageLike,
 } from "@punyasitus/core/analytics/config";
 import {
   type GoogleConsentModeV2DefaultParams,
@@ -13,6 +17,7 @@ import {
 import {
   createAnalyticsSignalDispatcher,
   type AnalyticsConsentState,
+  type AnalyticsFirstPartyAdapter,
   type AnalyticsGtmAdapter,
   type AnalyticsProviderAdapter,
   type AnalyticsSignalDispatcher,
@@ -92,7 +97,7 @@ export interface TikTokQueueGlobal extends Array<unknown> {
   setAndDefer?: (target: TikTokInstanceQueue | TikTokQueueGlobal, method: string) => void;
   instance?: (pixelId: string) => TikTokInstanceQueue;
   load?: (pixelId: string, options?: Record<string, unknown>) => void;
-  page?: (props?: Record<string, unknown>) => void;
+  page?: (props?: Record<string, unknown>, opts?: Record<string, unknown>) => void;
   track?: (
     event: string,
     props?: Record<string, unknown>,
@@ -492,7 +497,7 @@ export function createBrowserProviderAdapter(
         const ttParams: Record<string, string | number | boolean> = { ...params };
         delete ttParams.event_id;
         if (meta.tiktokMethod === "page") {
-          win.ttq?.page?.(ttParams);
+          win.ttq?.page?.(ttParams, { event_id: meta.eventId });
         } else {
           win.ttq?.track?.(providerEventName, ttParams, { event_id: meta.eventId });
         }
@@ -541,6 +546,66 @@ export function createBrowserGtmAdapter(
       removeGtm();
     },
   };
+}
+
+/**
+ * Fault-isolated cookieless first-party event transport (`POST /api/events`; TASK-065).
+ * Uses `credentials: "omit"` (zero cookies sent) and `keepalive: true` so CTA clicks survive
+ * navigation without ever blocking or throwing on network/endpoint failure.
+ */
+export function createBrowserFirstPartyAdapter(
+  endpoint = "/api/events",
+  fetchImpl?: (input: string, init: RequestInit) => Promise<unknown>,
+): AnalyticsFirstPartyAdapter {
+  const safeEndpoint =
+    typeof endpoint === "string" && /^\/(?!\/)[^\s?#]+$/.test(endpoint.trim())
+      ? endpoint.trim()
+      : "/api/events";
+
+  return {
+    sendEvent(payload) {
+      try {
+        const doFetch =
+          fetchImpl ??
+          (typeof window !== "undefined" && typeof window.fetch === "function"
+            ? (input: string, init: RequestInit) => window.fetch(input, init)
+            : null);
+        if (!doFetch) return;
+        const result = doFetch(safeEndpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "omit",
+          keepalive: true,
+          body: JSON.stringify(payload),
+        });
+        if (result && typeof (result as Promise<unknown>).catch === "function") {
+          (result as Promise<unknown>).catch(() => {
+            // Fault-isolated: never surface unhandled promise rejection or break CTAs
+          });
+        }
+      } catch {
+        // Fault-isolated
+      }
+    },
+  };
+}
+
+function resolveBrowserDedupStorage(): ClientDedupStorageLike | null {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) {
+      return window.localStorage;
+    }
+  } catch {
+    // Fall back to sessionStorage
+  }
+  try {
+    if (typeof window !== "undefined" && window.sessionStorage) {
+      return window.sessionStorage;
+    }
+  } catch {
+    // Private browsing / disabled storage -> in-memory dedup fallback
+  }
+  return null;
 }
 
 function isWhatsAppHref(href: string): boolean {
@@ -710,6 +775,13 @@ function attachLeadPersistenceObservers(dispatcher: AnalyticsSignalDispatcher): 
 }
 
 function attachNonBlockingCtaListeners(dispatcher: AnalyticsSignalDispatcher): void {
+  // Repeatable CTAs (WhatsApp / external links / explicit event buttons) ALWAYS generate a fresh
+  // per-click UUID via `createCtaClickActionGuard()` (reusing the same UUID only within the short
+  // rapid double-click window so accidental double-clicks are deduplicated while intentional
+  // clicks later still count). Static `data-ps-event-id` attributes on repeatable CTAs are
+  // intentionally ignored to prevent permanently swallowing subsequent clicks for 24 hours.
+  const ctaGuard = createCtaClickActionGuard();
+
   document.addEventListener(
     "click",
     (event) => {
@@ -725,7 +797,10 @@ function attachNonBlockingCtaListeners(dispatcher: AnalyticsSignalDispatcher): v
               explicitEl instanceof HTMLAnchorElement
                 ? explicitEl.getAttribute("href") || undefined
                 : explicitEl.closest<HTMLAnchorElement>("a[href]")?.getAttribute("href") || undefined;
+            const actionKey = `explicit:${eventName}:${explicitEl.dataset.psItemId || explicitEl.id || href || ""}`;
+            const eventId = ctaGuard.resolveEventId(actionKey);
             dispatcher.dispatch(eventName, {
+              event_id: eventId,
               page_path: window.location.pathname || "/",
               content_category: explicitEl.dataset.psAnalyticsCategory,
               content_type: explicitEl.dataset.psAnalyticsContentType,
@@ -745,7 +820,10 @@ function attachNonBlockingCtaListeners(dispatcher: AnalyticsSignalDispatcher): v
         if (!href) return;
 
         if (isWhatsAppHref(href)) {
+          const actionKey = `wa:${anchor.dataset.psItemId || anchor.dataset.psPlacement || href}`;
+          const eventId = ctaGuard.resolveEventId(actionKey);
           dispatcher.dispatch("whatsapp_click", {
+            event_id: eventId,
             page_path: window.location.pathname || "/",
             cta_mode: "whatsapp",
             content_type: "whatsapp",
@@ -754,7 +832,10 @@ function attachNonBlockingCtaListeners(dispatcher: AnalyticsSignalDispatcher): v
             placement: anchor.dataset.psPlacement ?? "other",
           });
         } else if (anchor.dataset.psExternalCta === "true") {
+          const actionKey = `ext:${anchor.dataset.psItemId || href}`;
+          const eventId = ctaGuard.resolveEventId(actionKey);
           dispatcher.dispatch("external_click", {
+            event_id: eventId,
             page_path: window.location.pathname || "/",
             cta_mode: "external_link",
             content_type: "external",
@@ -795,9 +876,19 @@ export function initAnalyticsDispatcher(): PunyaSitusAnalyticsGlobal | null {
     bootstrap.policyVersion,
   );
 
+  const tenantScope = normalizeTenantDedupScope(
+    bootstrap.tenantScope ?? window.location.host ?? "default",
+  );
+
   const dispatcher = createAnalyticsSignalDispatcher({
     config: bootstrap.providers,
     adapter: createBrowserProviderAdapter(win),
+    firstPartyAdapter: bootstrap.firstPartyEndpoint
+      ? createBrowserFirstPartyAdapter(bootstrap.firstPartyEndpoint)
+      : undefined,
+    tenantScope,
+    dedupTtlMs: bootstrap.dedupTtlMs ?? ANALYTICS_EVENT_DEDUP_TTL_MS,
+    dedupStorage: resolveBrowserDedupStorage(),
     gtm: bootstrap.gtm
       ? {
           enabled: bootstrap.gtm.enabled,

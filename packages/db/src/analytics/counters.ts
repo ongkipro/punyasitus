@@ -51,6 +51,10 @@ export type AnalyticsSourceCategory = (typeof ALLOWED_SOURCE_CATEGORIES)[number]
 
 export const DEFAULT_ANALYTICS_TIMEZONE = "Asia/Jakarta";
 export const MAX_EVENT_PATH_LENGTH = 200;
+export const DEFAULT_EVENT_DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
+export const DEFAULT_EVENT_DEDUP_PRUNE_BATCH_SIZE = 50;
+export const MAX_EVENT_DEDUP_PRUNE_BATCH_SIZE = 200;
+export const MAX_EVENT_ID_LENGTH = 64;
 
 const ALLOWED_EVENT_SET: ReadonlySet<string> = new Set(ALLOWED_FIRST_PARTY_EVENTS);
 const ALLOWED_RESOURCE_TYPE_SET: ReadonlySet<string> = new Set(ALLOWED_RESOURCE_TYPES);
@@ -170,9 +174,22 @@ export type RecordFirstPartyEventResult =
   | {
       readonly ok: true;
       readonly recorded: true;
+      readonly deduplicated: false;
+      readonly eventId?: string;
       readonly day: string;
       readonly path: string;
       readonly eventType: FirstPartyEventType;
+      readonly prunedExpiredCount?: number;
+    }
+  | {
+      readonly ok: true;
+      readonly recorded: false;
+      readonly deduplicated: true;
+      readonly eventId: string;
+      readonly day: string;
+      readonly path: string;
+      readonly eventType: FirstPartyEventType;
+      readonly prunedExpiredCount?: number;
     }
   | {
       readonly ok: false;
@@ -181,6 +198,27 @@ export type RecordFirstPartyEventResult =
       readonly message: string;
       readonly fields: readonly EventValidationFieldError[];
     }
+  | {
+      readonly ok: false;
+      readonly status: 503;
+      readonly code: "SERVICE_UNAVAILABLE";
+      readonly message: string;
+    };
+
+export interface RecordFirstPartyEventOptions {
+  readonly nowMs?: number;
+  readonly timeZone?: string;
+  /** Per-event dedup TTL in milliseconds (defaults to 24h per PLAN §5 / TASK-065). */
+  readonly dedupTtlMs?: number;
+  /**
+   * Bounded number of expired `analytics_event_dedup` rows opportunistically pruned
+   * at the end of each deduplicated event batch (defaults to 50; 0 disables opportunistic prune).
+   */
+  readonly pruneBatchSize?: number;
+}
+
+export type PruneAnalyticsEventDedupResult =
+  | { readonly ok: true; readonly deleted: number }
   | {
       readonly ok: false;
       readonly status: 503;
@@ -397,13 +435,31 @@ export function validateFirstPartyEventPayload(rawPayload: unknown): ValidateEve
   }
   const eventType = resolvedEvent as FirstPartyEventType;
 
-  // 4. Optional eventId (UUID format; per-event dedup arrives in TASK-065).
+  // 4. Optional eventId (strict RFC 4122 UUID; atomic 24h per-tenant dedup in TASK-065).
+  // Rejects non-UUIDs, PII (emails/phones/names), query strings, control chars, and oversized values.
   let eventId: string | undefined;
   if (record.eventId !== undefined) {
-    if (typeof record.eventId !== "string" || !UUID_RE.test(record.eventId.trim())) {
-      return validationFailure("INVALID_EVENT_ID", "eventId", "eventId harus berupa UUID yang valid.");
+    if (typeof record.eventId !== "string") {
+      return validationFailure(
+        "INVALID_EVENT_ID",
+        "eventId",
+        "eventId harus berupa UUID yang valid tanpa PII atau query string.",
+      );
     }
-    eventId = record.eventId.trim().toLowerCase();
+    const trimmedEventId = record.eventId.trim();
+    if (
+      trimmedEventId.length !== 36 ||
+      trimmedEventId.length > MAX_EVENT_ID_LENGTH ||
+      /[?&#=/:\\\s@]/.test(trimmedEventId) ||
+      !UUID_RE.test(trimmedEventId)
+    ) {
+      return validationFailure(
+        "INVALID_EVENT_ID",
+        "eventId",
+        "eventId harus berupa UUID yang valid tanpa PII atau query string.",
+      );
+    }
+    eventId = trimmedEventId.toLowerCase();
   }
 
   // 5. Path validation (no query strings, no PII).
@@ -660,16 +716,92 @@ export async function verifyPublishedResourceExists(
 }
 
 /**
+ * Builds the canonical, bounded-cardinality, PII-free `analytics_event_dedup.dedup_key`
+ * stored inside the tenant's physically isolated `TenantStore` SQLite Durable Object.
+ */
+export function buildAnalyticsEventDedupKey(eventId: string): string {
+  const normalized = eventId.trim().toLowerCase();
+  if (!UUID_RE.test(normalized)) {
+    throw new RangeError("INVALID_EVENT_ID: eventId must be a valid RFC 4122 UUID");
+  }
+  return `evt:${normalized}`;
+}
+
+/**
+ * Deletes expired entries (`expires_at <= nowMs`) from `analytics_event_dedup`.
+ * Supports an optional bounded `limit` so callers can prune incrementally without stalling the DO.
+ */
+export async function pruneExpiredAnalyticsEventDedup(
+  tenantDb: D1Database | null | undefined,
+  options?: {
+    readonly nowMs?: number;
+    readonly limit?: number;
+  },
+): Promise<PruneAnalyticsEventDedupResult> {
+  if (!tenantDb) {
+    return {
+      ok: false,
+      status: 503,
+      code: "SERVICE_UNAVAILABLE",
+      message: "Layanan penyimpanan analitik sementara tidak tersedia.",
+    };
+  }
+
+  const nowMs = Math.floor(options?.nowMs ?? Date.now());
+  try {
+    if (options?.limit !== undefined) {
+      const safeLimit = Math.max(
+        1,
+        Math.min(10_000, Math.floor(options.limit)),
+      );
+      const res = await tenantDb
+        .prepare(
+          `DELETE FROM analytics_event_dedup
+           WHERE dedup_key IN (
+             SELECT dedup_key
+             FROM analytics_event_dedup
+             WHERE expires_at <= ?
+             ORDER BY expires_at ASC
+             LIMIT ?
+           )`,
+        )
+        .bind(nowMs, safeLimit)
+        .run();
+      return { ok: true, deleted: res.meta?.changes ?? 0 };
+    }
+
+    const res = await tenantDb
+      .prepare("DELETE FROM analytics_event_dedup WHERE expires_at <= ?")
+      .bind(nowMs)
+      .run();
+    return { ok: true, deleted: res.meta?.changes ?? 0 };
+  } catch {
+    return {
+      ok: false,
+      status: 503,
+      code: "SERVICE_UNAVAILABLE",
+      message: "Layanan penyimpanan analitik sementara tidak tersedia.",
+    };
+  }
+}
+
+/**
  * Validates an event payload, verifies any referenced published resource exists in `TenantStore`,
  * and atomically increments the matching daily counter column in `analytics_daily`.
+ *
+ * When `eventId` is present (TASK-065, REQ-027, PLAN §5.2, §7.3):
+ * Executes inside ONE atomic `TenantStore` `batch()` (`transactionSync`):
+ * 1. Prunes this `dedup_key` only if already expired (`expires_at <= nowMs`) so keys past 24h can be reused.
+ * 2. Claims `(dedup_key, expires_at, created_at)` via `INSERT OR IGNORE` (`changes() = 1` iff first claim).
+ * 3. Increments `analytics_daily` strictly gated on `WHERE changes() = 1` so duplicate retries,
+ *    double-clicks, or concurrent races NEVER double-count.
+ * 4. Opportunistically prunes up to `pruneBatchSize` expired rows (default 50) AFTER the counter
+ *    statement so `changes()` is untouched and `TenantStore` storage remains bounded.
  */
 export async function recordFirstPartyEvent(
   tenantDb: D1Database | null | undefined,
   rawPayload: unknown,
-  options?: {
-    readonly nowMs?: number;
-    readonly timeZone?: string;
-  },
+  options?: RecordFirstPartyEventOptions,
 ): Promise<RecordFirstPartyEventResult> {
   const validated = validateFirstPartyEventPayload(rawPayload);
   if (!validated.ok) {
@@ -689,6 +821,11 @@ export async function recordFirstPartyEvent(
   const nowMs = Math.floor(options?.nowMs ?? Date.now());
   const timeZone = options?.timeZone?.trim() || DEFAULT_ANALYTICS_TIMEZONE;
   const day = formatAnalyticsDay(nowMs, timeZone);
+
+  const ttlMs = options?.dedupTtlMs ?? DEFAULT_EVENT_DEDUP_TTL_MS;
+  if (!Number.isInteger(ttlMs) || ttlMs < 1_000) {
+    throw new RangeError("INVALID_EVENT_DEDUP_TTL: dedupTtlMs must be an integer >= 1000");
+  }
 
   try {
     if (
@@ -722,6 +859,106 @@ export async function recordFirstPartyEvent(
     const waClicksInc = event.eventType === "wa_click" ? 1 : 0;
     const externalClicksInc = event.eventType === "external_click" ? 1 : 0;
     const leadSubmitsInc = event.eventType === "lead_submitted" ? 1 : 0;
+
+    if (event.eventId) {
+      const dedupKey = buildAnalyticsEventDedupKey(event.eventId);
+      const expiresAt = nowMs + ttlMs;
+      const pruneBatchSize = Math.max(
+        0,
+        Math.min(
+          MAX_EVENT_DEDUP_PRUNE_BATCH_SIZE,
+          Math.floor(options?.pruneBatchSize ?? DEFAULT_EVENT_DEDUP_PRUNE_BATCH_SIZE),
+        ),
+      );
+
+      const statements: D1PreparedStatement[] = [
+        tenantDb
+          .prepare("DELETE FROM analytics_event_dedup WHERE dedup_key = ? AND expires_at <= ?")
+          .bind(dedupKey, nowMs),
+        tenantDb
+          .prepare(
+            `INSERT OR IGNORE INTO analytics_event_dedup (dedup_key, expires_at, created_at)
+             VALUES (?, ?, ?)`,
+          )
+          .bind(dedupKey, expiresAt, nowMs),
+        tenantDb
+          .prepare(
+            `INSERT INTO analytics_daily (
+               day,
+               path,
+               pageviews,
+               unique_visitors,
+               wa_clicks,
+               external_clicks,
+               lead_submits,
+               updated_at
+             )
+             SELECT ?, ?, ?, 0, ?, ?, ?, ?
+             WHERE changes() = 1
+             ON CONFLICT(day, path) DO UPDATE SET
+               pageviews = analytics_daily.pageviews + excluded.pageviews,
+               wa_clicks = analytics_daily.wa_clicks + excluded.wa_clicks,
+               external_clicks = analytics_daily.external_clicks + excluded.external_clicks,
+               lead_submits = analytics_daily.lead_submits + excluded.lead_submits,
+               updated_at = excluded.updated_at`,
+          )
+          .bind(
+            day,
+            event.path,
+            pageviewsInc,
+            waClicksInc,
+            externalClicksInc,
+            leadSubmitsInc,
+            nowMs,
+          ),
+      ];
+
+      if (pruneBatchSize > 0) {
+        statements.push(
+          tenantDb
+            .prepare(
+              `DELETE FROM analytics_event_dedup
+               WHERE dedup_key IN (
+                 SELECT dedup_key
+                 FROM analytics_event_dedup
+                 WHERE expires_at <= ?
+                 ORDER BY expires_at ASC
+                 LIMIT ?
+               )`,
+            )
+            .bind(nowMs, pruneBatchSize),
+        );
+      }
+
+      const batchResults = await tenantDb.batch(statements);
+      const claimed = (batchResults[1]?.meta?.changes ?? 0) === 1;
+      const prunedExpiredCount =
+        pruneBatchSize > 0 ? (batchResults[3]?.meta?.changes ?? 0) : 0;
+
+      if (!claimed) {
+        return {
+          ok: true,
+          recorded: false,
+          deduplicated: true,
+          eventId: event.eventId,
+          day,
+          path: event.path,
+          eventType: event.eventType,
+          prunedExpiredCount,
+        };
+      }
+
+      return {
+        ok: true,
+        recorded: true,
+        deduplicated: false,
+        eventId: event.eventId,
+        day,
+        path: event.path,
+        eventType: event.eventType,
+        prunedExpiredCount,
+      };
+    }
 
     await tenantDb
       .prepare(
@@ -757,6 +994,7 @@ export async function recordFirstPartyEvent(
     return {
       ok: true,
       recorded: true,
+      deduplicated: false,
       day,
       path: event.path,
       eventType: event.eventType,

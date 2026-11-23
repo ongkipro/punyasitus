@@ -3,6 +3,10 @@ import {
   type PublicCspProfile,
 } from "./csp.ts";
 import {
+  ANALYTICS_EVENT_DEDUP_TTL_MS,
+  normalizeTenantDedupScope,
+} from "./dedup.ts";
+import {
   isValidGtmContainerId,
   normalizeGtmPageType,
   parseStoredAnalyticsSettings,
@@ -44,6 +48,9 @@ export interface AnalyticsHeadBootstrapPayload {
   readonly policyVersion: number;
   readonly cookieName: string;
   readonly autoPageView: boolean;
+  readonly tenantScope?: string;
+  readonly firstPartyEndpoint?: string;
+  readonly dedupTtlMs?: number;
   readonly providers: DirectAnalyticsConfig;
   readonly gtm?: AnalyticsHeadGtmBootstrap;
   readonly testScriptOverrides?: ProviderScriptOverrides;
@@ -60,6 +67,14 @@ export interface BuildAnalyticsHeadOptions {
   readonly policyVersion?: number;
   readonly cookieName?: string;
   readonly autoPageView?: boolean;
+  /** Optional tenant host/handle scope for 24h client-side per-event dedup isolation (TASK-065). */
+  readonly tenantScope?: string | null;
+  /** Optional same-origin first-party event ingestion path (defaults to `"/api/events"` when enabled). */
+  readonly firstPartyEndpoint?: string | null;
+  /** Explicit opt-in to emit first-party bootstrap even when no third-party/GTM tags are configured. */
+  readonly enableFirstPartyOnly?: boolean;
+  /** Per-event dedup TTL in milliseconds (defaults to 24h per PLAN §5 / TASK-065). */
+  readonly dedupTtlMs?: number;
   /** Per-response CSP profile computed by middleware (`"strict"` before consent, `"gtm-relaxed"` after). */
   readonly cspProfile?: PublicCspProfile;
   /** Per-response cryptographic CSP nonce (only passed when GTM is consented on public pages). */
@@ -154,9 +169,32 @@ export function buildAnalyticsHeadBootstrapPayload(
     providers = parseStoredDirectAnalyticsConfig(options.config);
   }
 
-  if (!hasAnyConfiguredDirectProvider(providers) && !gtmBootstrap) {
+  if (
+    !hasAnyConfiguredDirectProvider(providers) &&
+    !gtmBootstrap &&
+    options.enableFirstPartyOnly !== true
+  ) {
     return null;
   }
+
+  const normalizedTenantScope = options.tenantScope
+    ? normalizeTenantDedupScope(options.tenantScope)
+    : undefined;
+
+  const rawEndpoint = options.firstPartyEndpoint;
+  const safeFirstPartyEndpoint =
+    rawEndpoint === null
+      ? undefined
+      : typeof rawEndpoint === "string" && /^\/(?!\/)[^\s?#]+$/.test(rawEndpoint.trim())
+        ? rawEndpoint.trim()
+        : "/api/events";
+
+  const resolvedDedupTtlMs =
+    typeof options.dedupTtlMs === "number" &&
+    Number.isInteger(options.dedupTtlMs) &&
+    options.dedupTtlMs >= 1_000
+      ? options.dedupTtlMs
+      : ANALYTICS_EVENT_DEDUP_TTL_MS;
 
   const policyVersion =
     typeof options.policyVersion === "number" &&
@@ -185,6 +223,9 @@ export function buildAnalyticsHeadBootstrapPayload(
     policyVersion,
     cookieName,
     autoPageView: options.autoPageView ?? true,
+    ...(normalizedTenantScope ? { tenantScope: normalizedTenantScope } : {}),
+    ...(safeFirstPartyEndpoint ? { firstPartyEndpoint: safeFirstPartyEndpoint } : {}),
+    dedupTtlMs: resolvedDedupTtlMs,
     providers,
     ...(gtmBootstrap ? { gtm: gtmBootstrap } : {}),
     ...(Object.keys(sanitizedOverrides).length > 0
@@ -207,6 +248,7 @@ export function safeSerializeAnalyticsBootstrap(payload: AnalyticsHeadBootstrapP
 }
 
 export * from "./csp.ts";
+export * from "./dedup.ts";
 export * from "./gtm-template.ts";
 export * from "./gtm.ts";
 export * from "./providers.ts";
