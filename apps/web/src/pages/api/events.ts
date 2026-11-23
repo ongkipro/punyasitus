@@ -1,5 +1,6 @@
 import { env } from "cloudflare:workers";
 import type { SurfaceKind } from "@punyasitus/core";
+import { isBotUserAgent } from "@punyasitus/core/analytics/insights";
 import {
   recordFirstPartyEvent,
   validateFirstPartyEventPayload,
@@ -33,6 +34,7 @@ import type { TenantMiddlewareLocals } from "../../core/tenant.ts";
 export interface PublicEventTenantScope {
   readonly id: string;
   readonly host: string;
+  readonly siteHosts?: readonly string[];
   readonly timeZone?: string;
 }
 
@@ -143,6 +145,13 @@ export async function handlePublicEventPost(
     );
   }
 
+  // 2b. Bot / crawler / headless scraper User-Agent drop (REQ-073, PLAN §18.4, TASK-072):
+  // Classify and quietly drop with `204` BEFORE rate-limit or aggregate writes.
+  // Never persists or logs the User-Agent header.
+  if (isBotUserAgent(request.headers.get("user-agent"))) {
+    return createNoContentResponse();
+  }
+
   // 3. Fail-closed check for tenant datastore and rate-limit salt.
   const rateLimitSalt = deps.rateLimitSalt?.trim();
   if (!deps.tenantDb || !rateLimitSalt) {
@@ -178,10 +187,12 @@ export async function handlePublicEventPost(
   }
 
   // 5. Verify referenced published resource (when supplied), deduplicate per-tenant eventId (24h),
-  //    and increment daily counter atomically inside one TenantStore batch (TASK-065).
+  //    and increment daily & insights aggregate counters atomically inside one TenantStore batch (TASK-065, TASK-072).
   const recorded = await recordFirstPartyEvent(deps.tenantDb, payloadCheck.data, {
     nowMs: deps.nowMs,
     timeZone: deps.tenant.timeZone,
+    siteHost: deps.tenant.host,
+    siteHosts: deps.tenant.siteHosts,
     dedupTtlMs: deps.dedupTtlMs,
     pruneBatchSize: deps.dedupPruneBatchSize,
   });
@@ -225,6 +236,9 @@ export const POST: APIRoute = async ({ request, locals }) => {
       ? {
           id: tenantLocals.tenant.id,
           host: tenantLocals.tenant.host,
+          siteHosts: tenantLocals.tenant.primaryHost
+            ? [tenantLocals.tenant.host, tenantLocals.tenant.primaryHost]
+            : [tenantLocals.tenant.host],
         }
       : null,
     tenantDb: tenantLocals.tenantDb,

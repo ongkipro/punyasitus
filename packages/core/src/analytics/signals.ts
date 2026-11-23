@@ -27,6 +27,11 @@ import {
   type PsDataLayerEventPayload,
   type VendorDeliveryModes,
 } from "./gtm.ts";
+import type {
+  InsightContentKind,
+  InsightSourceBucket,
+  PersistedArrivalSource,
+} from "./insights.ts";
 import {
   ANALYTICS_PROVIDER_DESCRIPTORS,
   ANALYTICS_PROVIDER_EVENT_MAPPINGS,
@@ -107,6 +112,11 @@ export interface FirstPartyEventPayload {
   readonly eventId: string;
   readonly eventName: FirstPartySignalEventName;
   readonly path: string;
+  readonly routeKind?: InsightContentKind;
+  readonly sourceCategory?: InsightSourceBucket;
+  readonly referrerHost?: string;
+  readonly utmSource?: string;
+  readonly utmMedium?: string;
 }
 
 export interface AnalyticsFirstPartyAdapter {
@@ -208,6 +218,10 @@ export interface AnalyticsDispatcherOptions {
   readonly initialConsent?: Partial<AnalyticsConsentState> | null;
   readonly autoPageView?: boolean;
   readonly currentPath?: () => string;
+  /** Optional tab-scoped arrival source resolver (`sessionStorage`, zero cookies; TASK-072). */
+  readonly getArrivalSource?: () => PersistedArrivalSource | null;
+  /** Optional default route kind for cookieless first-party `page_view` / CTA events (TASK-072). */
+  readonly defaultRouteKind?: InsightContentKind;
   readonly generateEventId?: () => string;
   readonly testScriptOverrides?: ProviderScriptOverrides;
   readonly hasPersistedLeadMarker?: (leadKey: string) => boolean;
@@ -727,12 +741,26 @@ export function createAnalyticsSignalDispatcher(
       return false;
     }
 
+    let arrival: PersistedArrivalSource | null = null;
+    if (options.getArrivalSource) {
+      try {
+        arrival = options.getArrivalSource();
+      } catch {
+        arrival = null;
+      }
+    }
+
     dedupStore.claim(channelKey, nowMs);
     try {
       options.firstPartyAdapter.sendEvent({
         eventId,
         eventName: fpName,
         path: pagePath,
+        ...(options.defaultRouteKind ? { routeKind: options.defaultRouteKind } : {}),
+        ...(arrival?.sourceCategory ? { sourceCategory: arrival.sourceCategory } : {}),
+        ...(arrival?.referrerHost ? { referrerHost: arrival.referrerHost } : {}),
+        ...(arrival?.utmSource ? { utmSource: arrival.utmSource } : {}),
+        ...(arrival?.utmMedium ? { utmMedium: arrival.utmMedium } : {}),
       });
       return true;
     } catch (err) {
