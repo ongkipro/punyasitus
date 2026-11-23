@@ -4,18 +4,23 @@ Updated: 2026-11-23
 Status: Active
 State: IMPLEMENTING
 Review-Risk: R3
-Independent-Review: PENDING
+Independent-Review: PASS
 Primary-Worker: agy-supervisor
-Independent-Reviewer: UNSET
-Independent-Review-Head: UNSET
+Independent-Reviewer: pi-claude-sonnet-5-5
+Independent-Review-Head: 2f5ea26b562eb164d12a4a5153eb1195ff04e26a
 
 ## Now
 
-Foundation Spine (`F0`–`F4`) and Wave 2 Closing (`TASK-045`, `TASK-049`, `TASK-067`, `TASK-090`) are implemented. `TASK-090` (`REQ-090`, `DEC-045`, `PLAN §4, §6, §17.2`, `DESIGN §4`) wires primary Google Sign-In (`Masuk dengan Google`) via Better Auth `1.7.27` `socialProviders.google` (with OIDC `iss`/`aud`/`exp` claim validation), strict verified-only account linking (anti-pre-hijacking `403 UNVERIFIED_EMAIL_ACCOUNT_LINK_DENIED`), `console.punyasitus.com` `CONSOLE_GOOGLE_ALLOWLIST` + active `platform_operators` enforcement (`403` + sanitized `platform_audit`, preserving `TASK-067` mandatory TOTP), live `DEC-045` idle and absolute session timeout ceilings with D1 revocation (tenant 8h/7d, agency & affiliate 60m/12h, superadmin/console 30m/8h), fail-closed action-bound Cloudflare Turnstile Siteverify + accessible honeypot guards (`@punyasitus/core/security/turnstile`, wired to auth password routes; downstream `/api/leads` and `/api/abuse-report` routes adopt it in `TASK-012`/`TASK-039`/`TASK-086`), `TASK-067` hygiene fixes, and Bahasa Indonesia `base-nova` `/auth/login`, `/auth/register`, and `/auth/reset-password` screens.
+**38 M1 tasks completed, independently reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, and pushed to `origin/main` (`2f5ea26`):**
+- **Wave 0 (1/1 — 100%):** `TASK-023`
+- **Wave 1 (5/5 — 100%):** `TASK-001`, `TASK-010`, `TASK-011`, `TASK-024`, `TASK-032`
+- **Wave 2 (12/12 — 100%):** `TASK-002`, `TASK-025`, `TASK-028`, `TASK-029`, `TASK-030`, `TASK-031`, `TASK-037`, `TASK-045`, `TASK-049`, `TASK-067`, `TASK-077`, `TASK-090`
+- **Wave 3 (16/16 — 100%):** `TASK-004`, `TASK-005`, `TASK-006`, `TASK-007`, `TASK-008`, `TASK-009`, `TASK-012`, `TASK-013`, `TASK-014`, `TASK-015`, `TASK-016`, `TASK-017`, `TASK-027`, `TASK-050`, `TASK-051`, `TASK-089`
+- **Wave 4 (4/11 landed):** `TASK-055` (AutoLaris obligations), `TASK-048` (Console operators/audit/health/settings), `TASK-026` (Operator provisioning/invitations/service state), `TASK-059` (Timed entitlement gate, lockout, 503 maintenance, `/pay/renew`).
 
 ## Next
 
-Complete independent cross-family R3 review and `delivery-ledger finish` for `TASK-090` to close Wave 2, then fan out M1 feature waves in parallel.
+Complete remaining Wave 4 tasks (`TASK-003`, `TASK-056`, `TASK-058` in flight, then `TASK-057`, `TASK-081`, `TASK-082`, `TASK-095`) while fanning out unblocked Wave 5 Batch A tasks (`TASK-018`, `TASK-021`, `TASK-036`, `TASK-033`, `TASK-034`, etc.) in isolated worktrees toward `TASK-063` (M1 Gate).
 
 ## Blockers
 
