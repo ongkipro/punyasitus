@@ -1,25 +1,27 @@
-import { createBlogTaxonomy, listBlogTaxonomies } from "@punyasitus/db/posts/index";
+import { createTaxonomy, listTaxonomies } from "@punyasitus/db/taxonomy/index";
 import type { APIRoute } from "astro";
 import {
   authorizeTenantBlogRequest,
-  blogErrorResponse,
-  blogJsonResponse,
   buildBlogRuntimeEnv,
   createBlogRequestId,
-  formatTaxonomyRecordResponse,
-  mapBlogDomainErrorToResponse,
+  extractIndexOptInField,
+  formatTaxonomyResponse,
+  mapTaxonomyDomainErrorToResponse,
   parseListPaginationParams,
   parseStrictBlogJsonBody,
+  taxonomyErrorResponse,
+  taxonomyJsonResponse,
+  withPrivateNoStoreHeaders,
   type TenantBlogHandlerOptions,
   type TenantBlogRuntimeEnv,
-} from "../posts/_shared.ts";
+} from "../categories/_shared.ts";
 
 /**
  * Tenant-scoped Flat Blog Tags collection endpoint (`taxonomy_type = 'post_tag'`):
- * - `GET  /api/tenants/:tenantId/tags` -> paginated list
- * - `POST /api/tenants/:tenantId/tags` -> create a flat blog tag (201)
+ * - `GET  /api/tenants/:tenantId/tags` -> paginated list with published/draft counts
+ * - `POST /api/tenants/:tenantId/tags` -> create flat blog tag (201, rejects parentId, atomic audit)
  *
- * TASK-006 (`REQ-009`, `REQ-034`, `REQ-036`, `REQ-061`).
+ * TASK-006 + TASK-041 (`REQ-045`, `REQ-009`, `REQ-034`, `REQ-036`, `REQ-061`).
  */
 
 const CREATE_TAG_ALLOWED_KEYS = new Set([
@@ -29,6 +31,7 @@ const CREATE_TAG_ALLOWED_KEYS = new Set([
   "description",
   "parentId",
   "sortOrder",
+  "indexOptIn",
   "indexable",
 ]);
 
@@ -46,12 +49,13 @@ export async function handleTenantTagsCollectionRequest(
       ...options,
       requestId,
     });
-    if (!auth.ok) return auth.response;
-    return blogErrorResponse(
+    if (!auth.ok) return withPrivateNoStoreHeaders(auth.response);
+    return taxonomyErrorResponse(
       405,
       "BAD_REQUEST",
       "Metode HTTP tidak diizinkan untuk koleksi tag blog.",
       requestId,
+      undefined,
       undefined,
       { Allow: "GET, POST" },
     );
@@ -65,16 +69,16 @@ export async function handleTenantTagsCollectionRequest(
     requiredPermission,
     { ...options, requestId },
   );
-  if (!auth.ok) return auth.response;
+  if (!auth.ok) return withPrivateNoStoreHeaders(auth.response);
 
-  const { tenantDb } = auth.ctx;
+  const { tenantDb, platformDb, member } = auth.ctx;
 
   try {
     if (method === "GET") {
       const url = new URL(request.url);
       const rawKind = url.searchParams.get("kind")?.trim();
       if (rawKind && rawKind !== "post_tag") {
-        return blogErrorResponse(
+        return taxonomyErrorResponse(
           422,
           "VALIDATION_ERROR",
           'Endpoint tag blog hanya mendukung kind "post_tag".',
@@ -84,9 +88,9 @@ export async function handleTenantTagsCollectionRequest(
       }
 
       const pagination = parseListPaginationParams(url, requestId);
-      if (!pagination.ok) return pagination.response;
+      if (!pagination.ok) return withPrivateNoStoreHeaders(pagination.response);
 
-      const list = await listBlogTaxonomies(tenantDb, {
+      const list = await listTaxonomies(tenantDb, {
         kind: "post_tag",
         search: url.searchParams.get("search") ?? undefined,
         cursor: pagination.cursor,
@@ -94,19 +98,19 @@ export async function handleTenantTagsCollectionRequest(
         sortOrder: pagination.sortOrder,
       });
 
-      return blogJsonResponse(200, {
-        items: list.items.map(formatTaxonomyRecordResponse),
+      return taxonomyJsonResponse(200, {
+        items: list.items.map(formatTaxonomyResponse),
         page: list.page,
       });
     }
 
     // POST /api/tenants/:tenantId/tags
     const parsedBody = await parseStrictBlogJsonBody(request, CREATE_TAG_ALLOWED_KEYS, requestId);
-    if (!parsedBody.ok) return parsedBody.response;
+    if (!parsedBody.ok) return withPrivateNoStoreHeaders(parsedBody.response);
 
     const body = parsedBody.body;
     if (body.kind !== undefined && body.kind !== "post_tag") {
-      return blogErrorResponse(
+      return taxonomyErrorResponse(
         422,
         "VALIDATION_ERROR",
         'Field kind untuk tag blog harus "post_tag".',
@@ -115,19 +119,32 @@ export async function handleTenantTagsCollectionRequest(
       );
     }
 
-    const created = await createBlogTaxonomy(tenantDb, {
-      kind: "post_tag",
-      name: body.name as string,
-      ...(body.slug !== undefined ? { slug: body.slug as string } : {}),
-      ...(body.description !== undefined ? { description: body.description as string | null } : {}),
-      ...(body.parentId !== undefined ? { parentId: body.parentId as number | null } : {}),
-      ...(body.sortOrder !== undefined ? { sortOrder: body.sortOrder as number } : {}),
-      nowMs: options.nowMs,
-    });
+    const optInCheck = extractIndexOptInField(body, requestId);
+    if (!optInCheck.ok) return optInCheck.response;
 
-    return blogJsonResponse(201, formatTaxonomyRecordResponse(created));
+    const created = await createTaxonomy(
+      tenantDb,
+      {
+        kind: "post_tag",
+        name: body.name as string,
+        ...(body.slug !== undefined ? { slug: body.slug as string } : {}),
+        ...(body.description !== undefined ? { description: body.description as string | null } : {}),
+        ...(body.parentId !== undefined ? { parentId: body.parentId as number | null } : {}),
+        ...(body.sortOrder !== undefined ? { sortOrder: body.sortOrder as number } : {}),
+        ...(optInCheck.value !== undefined ? { indexOptIn: optInCheck.value } : {}),
+        nowMs: options.nowMs,
+      },
+      {
+        actorUserId: member.userId,
+        actorRole: member.role,
+        platformDb,
+        tenantId: member.tenantId,
+      },
+    );
+
+    return taxonomyJsonResponse(201, formatTaxonomyResponse(created));
   } catch (err) {
-    return mapBlogDomainErrorToResponse(err, requestId);
+    return mapTaxonomyDomainErrorToResponse(err, requestId);
   }
 }
 
