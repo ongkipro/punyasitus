@@ -1,5 +1,6 @@
 ---
 import { getPageById } from "@punyasitus/db/pages/index";
+import { isSeoAutopilotEnabledForTenant } from "@punyasitus/db/seo/index";
 import {
   neutralAdminNotFoundResponse,
   resolveCmsAdminServerContext,
@@ -18,7 +19,10 @@ if (!/^[1-9]\d{0,9}$/.test(rawId)) {
 }
 
 const { ctx } = resolved;
-const page = await getPageById(ctx.tenantDb, Number(rawId), { includeTrashed: true });
+const [page, seoAutopilotEnabled] = await Promise.all([
+  getPageById(ctx.tenantDb, Number(rawId), { includeTrashed: true }),
+  isSeoAutopilotEnabledForTenant(ctx.tenantDb),
+]);
 if (!page) {
   return neutralAdminNotFoundResponse();
 }
@@ -44,6 +48,9 @@ if (!page) {
     handle={ctx.handle}
     basePath={ctx.basePath}
     permissions={ctx.permissions}
+    siteName={ctx.workspaceName}
+    primaryHost={ctx.workspaceSubtitle}
+    seoAutopilotEnabled={seoAutopilotEnabled}
     initialPage={{
       id: page.id,
       title: page.title,
@@ -52,6 +59,7 @@ if (!page) {
       isHomepage: page.isHomepage,
       layoutMode: page.layoutMode,
       sections: page.sections,
+      seo: page.seo ?? null,
       hasUnpublishedChanges: page.hasUnpublishedChanges,
       version: page.version,
     }}

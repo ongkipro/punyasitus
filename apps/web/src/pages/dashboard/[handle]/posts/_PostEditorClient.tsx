@@ -1,5 +1,12 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import type { RestrictedRichTextDoc } from "@punyasitus/core/content/index";
+import {
+  extractChecklistSignalsFromRichTextDoc,
+  validateSearchAppearanceTemplateString,
+  type PeerPublishedSeoSummary,
+  type SeoEditorOverrideInput,
+} from "@punyasitus/core/seo/editor";
+import type { SiteVisibility } from "@punyasitus/core/seo/index";
 import {
   ArrowLeftIcon,
   EyeIcon,
@@ -24,6 +31,7 @@ import {
 } from "@/components/admin/editor";
 import type { CmsAdminPermissions } from "@/components/admin/editor/cms-server-context";
 import { MediaPickerSheet, type MediaLibraryItemDto } from "@/components/admin/media";
+import { SeoOverrideDrawer } from "@/components/admin/seo";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,6 +51,7 @@ export interface PostEditorInitialData {
   readonly categoryIds: readonly number[];
   readonly tagIds: readonly number[];
   readonly enableToc: boolean;
+  readonly seo?: SeoEditorOverrideInput | null;
   readonly hasUnpublishedChanges: boolean;
   readonly version: number;
 }
@@ -54,6 +63,11 @@ export interface PostEditorClientProps {
   readonly initialPost: PostEditorInitialData;
   readonly categories: readonly PostTaxonomyOptionDto[];
   readonly tags: readonly PostTaxonomyOptionDto[];
+  readonly siteName?: string;
+  readonly primaryHost?: string;
+  readonly siteVisibility?: SiteVisibility;
+  readonly seoAutopilotEnabled?: boolean;
+  readonly publishedPeers?: readonly PeerPublishedSeoSummary[];
 }
 
 export function PostEditorClient({
@@ -63,6 +77,11 @@ export function PostEditorClient({
   initialPost,
   categories,
   tags,
+  siteName = handle,
+  primaryHost = `${handle}.situsku.click`,
+  siteVisibility = "public",
+  seoAutopilotEnabled = true,
+  publishedPeers = [],
 }: PostEditorClientProps) {
   const [postId, setPostId] = useState<number | null>(initialPost.id);
   const [version, setVersion] = useState(initialPost.version);
@@ -89,6 +108,8 @@ export function PostEditorClient({
   const [categoryIds, setCategoryIds] = useState<readonly number[]>(initialPost.categoryIds);
   const [tagIds, setTagIds] = useState<readonly number[]>(initialPost.tagIds);
   const [enableToc, setEnableToc] = useState(initialPost.enableToc);
+  const [seo, setSeo] = useState<SeoEditorOverrideInput>(initialPost.seo ?? {});
+  const [seoDirty, setSeoDirty] = useState(false);
 
   const [isDirty, setIsDirty] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -104,6 +125,7 @@ export function PostEditorClient({
   const [mediaPickerMode, setMediaPickerMode] = useState<
     | null
     | { readonly kind: "featured" }
+    | { readonly kind: "seo_og" }
     | {
         readonly kind: "inline";
         readonly onPick: (media: MediaLibraryItemDto) => void;
@@ -146,6 +168,11 @@ export function PostEditorClient({
     markDirty();
   }
 
+  const postChecklistSignals = useMemo(
+    () => extractChecklistSignalsFromRichTextDoc(body, primaryHost),
+    [body, primaryHost],
+  );
+
   function validateLocally(): boolean {
     const errs: Record<string, string> = {};
     if (!title.trim()) {
@@ -156,6 +183,14 @@ export function PostEditorClient({
     }
     if (slugChangedWhilePublished && !confirmSlugChange) {
       errs.slug = "Centang konfirmasi perubahan slug artikel yang sudah terbit.";
+    }
+    if (seoAutopilotEnabled && seo.titleOverride?.trim()) {
+      const check = validateSearchAppearanceTemplateString(seo.titleOverride.trim());
+      if (!check.ok) errs["seo.titleOverride"] = check.issue.message;
+    }
+    if (seoAutopilotEnabled && seo.descriptionOverride?.trim()) {
+      const check = validateSearchAppearanceTemplateString(seo.descriptionOverride.trim());
+      if (!check.ok) errs["seo.descriptionOverride"] = check.issue.message;
     }
     setFieldErrors(errs);
     return Object.keys(errs).length === 0;
@@ -212,7 +247,20 @@ export function PostEditorClient({
         );
       }
 
-      setVersion(saved.version);
+      let nextVersion = saved.version;
+      if (seoAutopilotEnabled && seoDirty && saved.id !== null) {
+        const seoRes = await cmsFetchJson<{ readonly seo: { readonly version: number } }>(
+          `/api/tenants/${encodeURIComponent(handle)}/seo/resources/post/${saved.id}`,
+          {
+            method: "PATCH",
+            body: JSON.stringify({ seo, version: nextVersion }),
+          },
+        );
+        nextVersion = seoRes.seo.version;
+        setSeoDirty(false);
+      }
+
+      setVersion(nextVersion);
       setStatus(saved.status);
       setSlug(saved.slug);
       setHasUnpublishedChanges(saved.hasUnpublishedChanges);
@@ -224,9 +272,9 @@ export function PostEditorClient({
       setBanner({
         tone: "success",
         title: "Draf artikel tersimpan",
-        message: `Artikel tersimpan pada versi v${saved.version}.`,
+        message: `Artikel tersimpan pada versi v${nextVersion}.`,
       });
-      return { ...saved, excerpt: saved.excerpt ?? "" };
+      return { ...saved, version: nextVersion, excerpt: saved.excerpt ?? "" };
     } catch (err) {
       if (err instanceof CmsApiError) {
         if (err.isStaleVersion) {
@@ -757,15 +805,58 @@ export function PostEditorClient({
         </div>
       </div>
 
+      <SeoOverrideDrawer
+        seoAutopilotEnabled={seoAutopilotEnabled}
+        resourceKind="post"
+        siteName={siteName}
+        primaryHost={primaryHost}
+        tenantHandle={handle}
+        tenantStatus={permissions.tenantStatus}
+        siteVisibility={siteVisibility}
+        pathname={`/blog/${slug || "artikel-baru"}`}
+        resourceTitle={title}
+        slug={slug}
+        resourceExcerpt={excerpt || postChecklistSignals.firstParagraphText || null}
+        resourceFeaturedMediaId={featuredMediaId}
+        publicationState={status}
+        firstParagraphText={postChecklistSignals.firstParagraphText}
+        headings={postChecklistSignals.headings}
+        plainTextBody={postChecklistSignals.plainTextBody}
+        internalLinkCount={postChecklistSignals.internalLinkCount}
+        images={postChecklistSignals.images}
+        publishedPeers={publishedPeers}
+        slugChangedWhilePublished={slugChangedWhilePublished}
+        oldPublishedSlug={originalPublishedSlug || null}
+        value={seo}
+        onChange={(nextSeo) => {
+          setSeo(nextSeo);
+          setSeoDirty(true);
+          markDirty();
+        }}
+        onPickOgMedia={() => setMediaPickerMode({ kind: "seo_og" })}
+        readOnly={readOnly}
+        fieldErrors={fieldErrors}
+      />
+
       <MediaPickerSheet
         open={mediaPickerMode !== null}
         onOpenChange={(o) => !o && setMediaPickerMode(null)}
         handle={handle}
-        selectedMediaId={mediaPickerMode?.kind === "featured" ? featuredMediaId : null}
+        selectedMediaId={
+          mediaPickerMode?.kind === "featured"
+            ? featuredMediaId
+            : mediaPickerMode?.kind === "seo_og"
+              ? (seo.ogImageMediaId ?? null)
+              : null
+        }
         canUpload={permissions.canUploadMedia}
         onSelect={(item) => {
           if (mediaPickerMode?.kind === "featured") {
             setFeaturedMediaId(item.id);
+            markDirty();
+          } else if (mediaPickerMode?.kind === "seo_og") {
+            setSeo((prev) => ({ ...prev, ogImageMediaId: item.id }));
+            setSeoDirty(true);
             markDirty();
           } else if (mediaPickerMode?.kind === "inline") {
             mediaPickerMode.onPick(item);

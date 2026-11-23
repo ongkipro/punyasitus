@@ -1,6 +1,11 @@
 ---
 import { isBuiltinPluginId } from "@punyasitus/core/plugins/index";
 import { getActiveTenantPluginEntitlement } from "@punyasitus/db/plugins/index";
+import {
+  getTenantSeoEditorSettings,
+  SEO_AI_AUTOPILOT_PLUGIN_ID,
+} from "@punyasitus/db/seo/index";
+import { SeoAutopilotSettingsClient } from "@/components/admin/seo";
 import { getRegisteredPlugin } from "@/core/plugin-registry";
 import { listTenantPluginsForAdmin, resolveActivePluginForTenant } from "@/core/plugin-runtime";
 import DashboardLayout from "@/layouts/DashboardLayout.astro";
@@ -18,68 +23,78 @@ if (!rawPluginId || isBuiltinPluginId(rawPluginId)) {
   return neutralPluginNotFoundResponse();
 }
 
-const registered = getRegisteredPlugin(rawPluginId);
-if (!registered) {
+// First-party `public_free` SEO & AI Autopilot plugin workspace (TASK-052, DEC-039, DESIGN §8)
+const isSeoAutopilotRoute = rawPluginId === SEO_AI_AUTOPILOT_PLUGIN_ID;
+const seoSettings = isSeoAutopilotRoute
+  ? await getTenantSeoEditorSettings(ctx.platformDb, ctx.tenantDb, ctx.tenantId)
+  : null;
+
+const registered = isSeoAutopilotRoute ? null : getRegisteredPlugin(rawPluginId);
+if (!isSeoAutopilotRoute && !registered) {
   return neutralPluginNotFoundResponse();
 }
 
-// Verify PLATFORM_DB entitlement BEFORE any plugin-scoped TenantStore queries
-const entitlement = await getActiveTenantPluginEntitlement(
-  ctx.platformDb,
-  ctx.tenantId,
-  registered.manifest.id,
-);
-if (!entitlement) {
-  if (registered.manifest.visibility === "private_client") {
+let item: Awaited<ReturnType<typeof listTenantPluginsForAdmin>>[number] | undefined;
+let adminState: Record<string, unknown> | null = null;
+
+if (!isSeoAutopilotRoute && registered) {
+  // Verify PLATFORM_DB entitlement BEFORE any plugin-scoped TenantStore queries
+  const entitlement = await getActiveTenantPluginEntitlement(
+    ctx.platformDb,
+    ctx.tenantId,
+    registered.manifest.id,
+  );
+  if (!entitlement) {
+    if (registered.manifest.visibility === "private_client") {
+      return neutralPluginNotFoundResponse();
+    }
+    return new Response("Situs belum memiliki lisensi aktif untuk plugin ini.", {
+      status: 403,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    });
+  }
+
+  const runtimeDeps = {
+    platformDb: ctx.platformDb,
+    tenantStore: ctx.tenantStore,
+    resolveTenantDb: () => ctx.tenantDb,
+  };
+  const tenantSnapshot = {
+    id: ctx.tenantId,
+    handle: ctx.handle,
+    name: ctx.workspaceName,
+    status: ctx.permissions.tenantStatus,
+  };
+
+  const allItems = await listTenantPluginsForAdmin(runtimeDeps, tenantSnapshot);
+  item = allItems.find((entry) => entry.id === registered.manifest.id);
+  if (!item || !item.installed) {
     return neutralPluginNotFoundResponse();
   }
-  return new Response("Situs belum memiliki lisensi aktif untuk plugin ini.", {
-    status: 403,
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "private, no-store",
-      "X-Robots-Tag": "noindex, nofollow",
-    },
-  });
-}
 
-const runtimeDeps = {
-  platformDb: ctx.platformDb,
-  tenantStore: ctx.tenantStore,
-  resolveTenantDb: () => ctx.tenantDb,
-};
-const tenantSnapshot = {
-  id: ctx.tenantId,
-  handle: ctx.handle,
-  name: ctx.workspaceName,
-  status: ctx.permissions.tenantStatus,
-};
-
-const allItems = await listTenantPluginsForAdmin(runtimeDeps, tenantSnapshot);
-const item = allItems.find((entry) => entry.id === registered.manifest.id);
-if (!item || !item.installed) {
-  return neutralPluginNotFoundResponse();
-}
-
-let adminState: Record<string, unknown> | null = null;
-const activeResolution = await resolveActivePluginForTenant(
-  runtimeDeps,
-  tenantSnapshot,
-  registered.manifest.id,
-);
-if (activeResolution.active && registered.adminSlots?.loadState) {
-  adminState = await registered.adminSlots.loadState({
-    tenant: tenantSnapshot,
-    actorUserId: ctx.userId,
-    actorRole: ctx.permissions.role,
-    config: activeResolution.installed.config,
-    db: activeResolution.scopedDb,
-  });
+  const activeResolution = await resolveActivePluginForTenant(
+    runtimeDeps,
+    tenantSnapshot,
+    registered.manifest.id,
+  );
+  if (activeResolution.active && registered.adminSlots?.loadState) {
+    adminState = await registered.adminSlots.loadState({
+      tenant: tenantSnapshot,
+      actorUserId: ctx.userId,
+      actorRole: ctx.permissions.role,
+      config: activeResolution.installed.config,
+      db: activeResolution.scopedDb,
+    });
+  }
 }
 ---
 
 <DashboardLayout
-  title={`${item.name} — Plugin — ${ctx.workspaceName}`}
+  title={`${isSeoAutopilotRoute ? "SEO & AI Autopilot" : (item?.name ?? "Plugin")} — Plugin — ${ctx.workspaceName}`}
   surface="dashboard"
   workspaceName={ctx.workspaceName}
   workspaceSubtitle={ctx.workspaceSubtitle}
@@ -93,28 +108,63 @@ if (activeResolution.active && registered.adminSlots?.loadState) {
   userDisplayName={ctx.userDisplayName}
   userRoleLabel={ctx.permissions.roleLabel}
 >
-  <PluginDetailClient
-    client:load
-    basePath={ctx.basePath}
-    apiUrl={`/api/tenants/${encodeURIComponent(ctx.handle)}/plugins/${encodeURIComponent(item.id)}`}
-    plugin={{
-      id: item.id,
-      name: item.name,
-      description: item.description,
-      version: item.version,
-      visibility: item.visibility,
-      tablePrefix: item.tablePrefix,
-      permissions: item.permissions,
-      enabled: item.enabled,
-      schemaVersion: item.schemaVersion,
-      config: item.config,
-    }}
-    configFields={registered.adminSlots?.configFields ?? []}
-    adminState={adminState}
-    permissions={{
-      roleLabel: ctx.permissions.roleLabel,
-      isLocked: ctx.permissions.isLocked,
-      canManagePlugins: ctx.permissions.canManagePlugins,
-    }}
-  />
+  {isSeoAutopilotRoute && seoSettings ? (
+    <SeoAutopilotSettingsClient
+      client:load
+      basePath={ctx.basePath}
+      apiBaseUrl={`/api/tenants/${encodeURIComponent(ctx.handle)}/seo`}
+      initialSettings={{
+        tenantId: seoSettings.tenantId,
+        handle: seoSettings.handle,
+        siteName: seoSettings.siteName,
+        tagline: seoSettings.tagline,
+        primaryHost: seoSettings.primaryHost,
+        primaryOrigin: seoSettings.primaryOrigin,
+        tenantStatus: seoSettings.tenantStatus,
+        siteVisibility: seoSettings.siteVisibility,
+        aiTrainingPolicy: seoSettings.aiTrainingPolicy,
+        seoAutopilotEnabled: seoSettings.seoAutopilotEnabled,
+        draft: {
+          searchAppearance: seoSettings.draft.searchAppearance,
+          verificationTokens: seoSettings.draft.verificationTokens,
+        },
+        hasUnpublishedChanges: seoSettings.hasUnpublishedChanges,
+        version: seoSettings.version,
+        publishedAt: seoSettings.publishedAt,
+        verificationStatuses: seoSettings.verificationStatuses,
+        sitemapUrl: seoSettings.sitemapUrl,
+        directoryListingCopyText: seoSettings.directoryListingCopyText,
+      }}
+      permissions={{
+        roleLabel: ctx.permissions.roleLabel,
+        isLocked: ctx.permissions.isLocked,
+        canManageSettings: ctx.permissions.canManagePlugins,
+      }}
+    />
+  ) : item && registered ? (
+    <PluginDetailClient
+      client:load
+      basePath={ctx.basePath}
+      apiUrl={`/api/tenants/${encodeURIComponent(ctx.handle)}/plugins/${encodeURIComponent(item.id)}`}
+      plugin={{
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        version: item.version,
+        visibility: item.visibility,
+        tablePrefix: item.tablePrefix,
+        permissions: item.permissions,
+        enabled: item.enabled,
+        schemaVersion: item.schemaVersion,
+        config: item.config,
+      }}
+      configFields={registered.adminSlots?.configFields ?? []}
+      adminState={adminState}
+      permissions={{
+        roleLabel: ctx.permissions.roleLabel,
+        isLocked: ctx.permissions.isLocked,
+        canManagePlugins: ctx.permissions.canManagePlugins,
+      }}
+    />
+  ) : null}
 </DashboardLayout>

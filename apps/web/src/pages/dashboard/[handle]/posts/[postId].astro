@@ -1,5 +1,6 @@
 ---
 import { getPostById, listBlogTaxonomies } from "@punyasitus/db/posts/index";
+import { isSeoAutopilotEnabledForTenant } from "@punyasitus/db/seo/index";
 import {
   neutralAdminNotFoundResponse,
   resolveCmsAdminServerContext,
@@ -18,10 +19,11 @@ if (!/^[1-9]\d{0,9}$/.test(rawId)) {
 }
 
 const { ctx } = resolved;
-const [post, catsRes, tagsRes] = await Promise.all([
+const [post, catsRes, tagsRes, seoAutopilotEnabled] = await Promise.all([
   getPostById(ctx.tenantDb, Number(rawId), { includeTrashed: true }),
   listBlogTaxonomies(ctx.tenantDb, { kind: "post_category", limit: 100 }),
   listBlogTaxonomies(ctx.tenantDb, { kind: "post_tag", limit: 100 }),
+  isSeoAutopilotEnabledForTenant(ctx.tenantDb),
 ]);
 
 if (!post) {
@@ -49,6 +51,9 @@ if (!post) {
     handle={ctx.handle}
     basePath={ctx.basePath}
     permissions={ctx.permissions}
+    siteName={ctx.workspaceName}
+    primaryHost={ctx.workspaceSubtitle}
+    seoAutopilotEnabled={seoAutopilotEnabled}
     initialPost={{
       id: post.id,
       title: post.title,
@@ -61,6 +66,7 @@ if (!post) {
       categoryIds: post.categoryIds,
       tagIds: post.tagIds,
       enableToc: post.enableToc,
+      seo: post.seo ?? null,
       hasUnpublishedChanges: post.hasUnpublishedChanges,
       version: post.version,
     }}

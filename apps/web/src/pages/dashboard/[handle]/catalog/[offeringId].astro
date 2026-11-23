@@ -1,6 +1,8 @@
 ---
 import { htmlToRestrictedRichTextDoc } from "@punyasitus/core/content/index";
+import type { SeoEditorOverrideInput } from "@punyasitus/core/seo/editor";
 import { getCatalogOfferingById } from "@punyasitus/db/catalog/index";
+import { isSeoAutopilotEnabledForTenant } from "@punyasitus/db/seo/index";
 import {
   neutralAdminNotFoundResponse,
   resolveCmsAdminServerContext,
@@ -19,7 +21,10 @@ if (!/^[1-9]\d{0,9}$/.test(rawId)) {
 }
 
 const { ctx } = resolved;
-const offering = await getCatalogOfferingById(ctx.tenantDb, Number(rawId));
+const [offering, seoAutopilotEnabled] = await Promise.all([
+  getCatalogOfferingById(ctx.tenantDb, Number(rawId)),
+  isSeoAutopilotEnabledForTenant(ctx.tenantDb),
+]);
 if (!offering) {
   return neutralAdminNotFoundResponse();
 }
@@ -52,6 +57,9 @@ const descriptionDoc =
     handle={ctx.handle}
     basePath={ctx.basePath}
     permissions={ctx.permissions}
+    siteName={ctx.workspaceName}
+    primaryHost={ctx.workspaceSubtitle}
+    seoAutopilotEnabled={seoAutopilotEnabled}
     initialOffering={{
       id: offering.id,
       offeringType: offering.offeringType,
@@ -75,6 +83,7 @@ const descriptionDoc =
       whatsappTemplate: offering.whatsappTemplate ?? "",
       unitStatus: offering.unitStatus,
       attributes: (offering.attributes as Record<string, unknown>) ?? {},
+      seo: (offering.seo as SeoEditorOverrideInput | null) ?? null,
       status: offering.status,
       version: offering.version,
     }}
