@@ -211,6 +211,8 @@ function optionsNow(nowMs?: number): number {
 export type TenantApiOperationCategory =
   | "billing"
   | "leads_export"
+  | "site_export"
+  | "site_deletion"
   | "service_status"
   | "domain_connect"
   | "cms_read"
@@ -243,6 +245,20 @@ export function classifyTenantApiOperation(
   ) {
     return {
       category: "leads_export",
+      action: "lead:export_csv",
+    };
+  }
+
+  if (normalized === "/exports" || normalized.startsWith("/exports/")) {
+    return {
+      category: "site_export",
+      action: "lead:export_csv",
+    };
+  }
+
+  if (normalized === "/deletion" || normalized.startsWith("/deletion/")) {
+    return {
+      category: "site_deletion",
       action: "lead:export_csv",
     };
   }
@@ -348,6 +364,24 @@ export function evaluateTenantApiEntitlement(input: {
       category,
       effectiveStatus,
     };
+  }
+
+  // Strictly owner-only check for full-website export & self-service deletion (REQ-107).
+  // Fails closed (403 FORBIDDEN) whenever `role` is missing or not `"owner"`.
+  if (category === "site_export" || category === "site_deletion") {
+    if (input.role !== "owner") {
+      return {
+        allowed: false,
+        status: 403,
+        code: "FORBIDDEN",
+        message:
+          category === "site_export"
+            ? "Hanya pemilik situs (Owner) yang dapat mengekspor arsip situs penuh."
+            : "Hanya pemilik situs (Owner) yang dapat mengelola penghapusan situs.",
+        category,
+        effectiveStatus,
+      };
+    }
   }
 
   // Additional payer-only check for billing & leads export when role is supplied
