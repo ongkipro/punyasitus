@@ -7,20 +7,21 @@ Review-Risk: R3
 Independent-Review: PASS
 Primary-Worker: agy-supervisor
 Independent-Reviewer: pi-claude-sonnet-5-5
-Independent-Review-Head: 2f5ea26b562eb164d12a4a5153eb1195ff04e26a
+Independent-Review-Head: 4fae98239896035a2c022d2ed46bb12ed455a349
 
 ## Now
 
-**38 M1 tasks completed, independently reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, and pushed to `origin/main` (`2f5ea26`):**
+**52 / 110 roadmap tasks (47.3% total; 52 / 85 = 61.2% of M1) completed, independently reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, and pushed to `origin/main` (`4fae982`):**
 - **Wave 0 (1/1 — 100%):** `TASK-023`
 - **Wave 1 (5/5 — 100%):** `TASK-001`, `TASK-010`, `TASK-011`, `TASK-024`, `TASK-032`
 - **Wave 2 (12/12 — 100%):** `TASK-002`, `TASK-025`, `TASK-028`, `TASK-029`, `TASK-030`, `TASK-031`, `TASK-037`, `TASK-045`, `TASK-049`, `TASK-067`, `TASK-077`, `TASK-090`
 - **Wave 3 (16/16 — 100%):** `TASK-004`, `TASK-005`, `TASK-006`, `TASK-007`, `TASK-008`, `TASK-009`, `TASK-012`, `TASK-013`, `TASK-014`, `TASK-015`, `TASK-016`, `TASK-017`, `TASK-027`, `TASK-050`, `TASK-051`, `TASK-089`
-- **Wave 4 (4/11 landed):** `TASK-055` (AutoLaris obligations), `TASK-048` (Console operators/audit/health/settings), `TASK-026` (Operator provisioning/invitations/service state), `TASK-059` (Timed entitlement gate, lockout, 503 maintenance, `/pay/renew`).
+- **Wave 4 (11/11 — 100%):** `TASK-055`, `TASK-048`, `TASK-026`, `TASK-059`, `TASK-056`, `TASK-003`, `TASK-058`, `TASK-057`, `TASK-095`, `TASK-081`, `TASK-082`
+- **Wave 5 (7/39 landed):** `TASK-018` (Custom theme registry), `TASK-021` (Native lead capture & inbox), `TASK-034` (Theme customizer), `TASK-036` (Public routes & content journeys), `TASK-033` (CMS admin screens & media), `TASK-022` (Consent-aware analytics dispatcher), `TASK-087` (Marketing surface, 6 demo sites & funnel analytics).
 
 ## Next
 
-Complete remaining Wave 4 tasks (`TASK-003`, `TASK-056`, `TASK-058` in flight, then `TASK-057`, `TASK-081`, `TASK-082`, `TASK-095`) while fanning out unblocked Wave 5 Batch A tasks (`TASK-018`, `TASK-021`, `TASK-036`, `TASK-033`, `TASK-034`, etc.) in isolated worktrees toward `TASK-063` (M1 Gate).
+Land 4 already-approved Wave 5 tasks (`TASK-108`, `TASK-042`, `TASK-039`, `TASK-106`) plus `TASK-041` (in R3 review), complete active Wave 5 worktrees (`TASK-040`, `TASK-097`, `TASK-104`, `TASK-060`), and fan out remaining Wave 5 tasks toward `TASK-063` (Wave 6 M1 Gate), Wave 7 (M2), and Wave 8 (Security Assurance & Production Release Gate).
 
 ## Blockers
 
