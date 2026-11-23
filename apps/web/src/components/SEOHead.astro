@@ -1,26 +1,35 @@
 ---
 import {
   generateOpenGraphMetadata,
-  renderSeoHeadHtml,
   type GenerateOpenGraphInput,
   type SocialMetadataDto,
 } from "@punyasitus/core/og-generator";
+import type { VerificationTokensConfig } from "@punyasitus/core/seo/editor";
+import {
+  renderAutopilotSeoHead,
+  resolveSeoAutopilotActiveFromLocals,
+} from "../../../../packages/plugins/seo-ai-autopilot/index.ts";
 
 /**
- * Reusable `<SEOHead.astro>` component (REQ-023, REQ-026, PLAN §15, TASK-016).
+ * Reusable `<SEOHead.astro>` component (REQ-023, REQ-026, REQ-102, DEC-039, PLAN §15, TASK-016/102).
  *
  * Drops cleanly into `apps/web/src/themes/default/Layout.astro`'s `<slot name="head" />`
- * or any Astro `<head>` shell. Strictly public-surface only with zero admin styles or UI runtime deps.
+ * and all 6 platform themes + custom themes (`compro`, `sales`, `travel`, `catalog`, `resto`,
+ * `dealer`, `sample-agency`). Strictly public-surface only with zero admin styles or UI runtime deps.
  *
  * Security & SEO Invariants:
  * - Never trusts raw request `Host` header; consumes verified `SocialMetadataDto` produced
  *   by `generateOpenGraphMetadata` (which enforces TASK-051 `resolvePublishedSeoDecision`).
- * - Renders through `renderSeoHeadHtml`, applying TASK-051's `escapeHtmlText`,
- *   `escapeHtmlAttribute` (neutralizing `&`, `<`, `>`, `"`, `'`), and `safeJsonLdStringify`
- *   so hostile strings (`" onclick=`, `</title><script>`, `</script>`) never appear unescaped.
- * - Draft, preview, trial, private, error, suspended, and unknown_host routes ALWAYS emit
- *   `<meta name="robots" content="noindex, nofollow" />`.
- * - Drafts, previews, private, and error routes NEVER emit `<link rel="canonical">` or `og:url`.
+ * - Plugin state resolution order:
+ *   1. Explicit boolean `seoAutopilotActive` prop (when passed).
+ *   2. Live tenant `Astro.locals` (`seoAutopilotEnabled` or `tenantDb` query via
+ *      `checkSeoAutopilotActiveInTenantDb`), failing **closed** to `false` on DB error or
+ *      missing `tenantDb` on a live tenant request.
+ *   3. Standalone default `true` ONLY when no live tenant context exists on `Astro.locals`
+ *      (preserving backward compatibility for isolated unit/static renders).
+ * - When inactive (`false`): emits ONLY minimal `<title>` (unless `omitTitle`) + mandatory
+ *   `trial`/`suspended`/`noindex`/`error` robots safety meta (ZERO JSON-LD `@graph`,
+ *   ZERO autopilot OG/Twitter expansion, ZERO webmaster tags, ZERO RSS link).
  */
 
 export interface Props {
@@ -34,6 +43,18 @@ export interface Props {
   readonly omitTitle?: boolean;
   /** Suppress `<meta name="description">` if the parent layout already renders it (default: `false`). */
   readonly omitDescription?: boolean;
+  /**
+   * Optional explicit override for `seo-ai-autopilot` active state.
+   * When omitted on live tenant requests, automatically resolved from `Astro.locals.tenantDb`
+   * (failing closed to `false` on DB error), so all 7 theme layouts honor disable cleanly.
+   */
+  readonly seoAutopilotActive?: boolean;
+  /** Optional published webmaster verification tokens (emitted ONLY when active on 200 public routes). */
+  readonly publishedVerificationTokens?: VerificationTokensConfig | null;
+  /** Emit RSS 2.0 discovery `<link rel="alternate">` when `true` and plugin is active. */
+  readonly blogEnabled?: boolean;
+  /** Optional site name for RSS discovery label. */
+  readonly siteName?: string;
 }
 
 const {
@@ -42,7 +63,16 @@ const {
   jsonLd,
   omitTitle = false,
   omitDescription = false,
+  seoAutopilotActive,
+  publishedVerificationTokens = null,
+  blogEnabled = false,
+  siteName,
 } = Astro.props;
+
+const pluginState = await resolveSeoAutopilotActiveFromLocals({
+  explicitActive: seoAutopilotActive,
+  locals: Astro.locals,
+});
 
 // Fail closed when neither `metadata` nor `input` is supplied: private noindex, no canonical.
 const resolved: SocialMetadataDto =
@@ -56,14 +86,19 @@ const resolved: SocialMetadataDto =
           pathname: "/",
           tenant: null,
         },
-        siteName: "PunyaSitus",
+        siteName: siteName || "PunyaSitus",
       }));
 
-const headHtml = renderSeoHeadHtml(resolved, {
+const rendered = renderAutopilotSeoHead({
+  metadata: resolved,
+  seoAutopilotActive: pluginState.active,
   jsonLd,
-  includeTitle: !omitTitle,
-  includeDescription: !omitDescription,
+  omitTitle,
+  omitDescription,
+  publishedVerificationTokens,
+  blogEnabled,
+  siteName,
 });
 ---
 
-<Fragment set:html={headHtml} />
+<Fragment set:html={rendered.html} />

@@ -4,6 +4,10 @@ import {
   type PluginDefinition,
   type PluginHookEvent,
 } from "@punyasitus/core/plugins/index";
+import {
+  SEO_AI_AUTOPILOT_PLUGIN,
+  SEO_AI_AUTOPILOT_PLUGIN_ID,
+} from "../../../../packages/plugins/seo-ai-autopilot/index.ts";
 
 /**
  * Explicit First-Party Modular Plugin Registry (REQ-097, ADR-0010, PLAN §19.7).
@@ -114,9 +118,21 @@ export function createPluginRegistry(
 /**
  * Official statically registered first-party plugins compiled into this Worker bundle.
  * Future tasks (TASK-099 `bio-links`/`wa-cs-rotator`, TASK-100 `wp-importer`,
- * TASK-101 `lead-notifier`, TASK-102 `seo-ai-autopilot`) register here without touching Frozen Core.
+ * TASK-101 `lead-notifier`) register here without touching Frozen Core.
  */
-export const REGISTERED_FIRST_PARTY_PLUGINS: readonly PluginDefinition[] = [] as const;
+export const REGISTERED_FIRST_PARTY_PLUGINS: readonly PluginDefinition[] = [
+  SEO_AI_AUTOPILOT_PLUGIN,
+] as const;
+
+/**
+ * Official free plugins active by default on every newly provisioned website (`DEC-042`, `REQ-102`).
+ */
+export const DEFAULT_ACTIVE_ON_PROVISION_PLUGIN_IDS = [SEO_AI_AUTOPILOT_PLUGIN_ID] as const;
+
+export function isDefaultActiveOnProvisionPlugin(pluginId: string): boolean {
+  const normalized = pluginId.trim().toLowerCase();
+  return (DEFAULT_ACTIVE_ON_PROVISION_PLUGIN_IDS as readonly string[]).includes(normalized);
+}
 
 export const DEFAULT_PLUGIN_REGISTRY: PluginRegistry = createPluginRegistry(
   REGISTERED_FIRST_PARTY_PLUGINS,
