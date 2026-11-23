@@ -29,6 +29,14 @@ export const GRACE_WINDOW_MS = 72 * 60 * 60 * 1000; // H+1..H+3
 export const LOCKED_WINDOW_MS = 168 * 60 * 60 * 1000; // H+4..H+7
 export const PAID_DELETION_WINDOW_MS = 45 * 24 * 60 * 60 * 1000; // H+45
 export const TRIAL_DELETION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // +30d after trial end
+export const UNPAID_NO_TRIAL_DELETION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // +30d after provisioning for no-trial unpaid
+export const HOLD_RELEASE_MIN_REMAINING_MS = 14 * 24 * 60 * 60 * 1000; // >=14d remaining when operator hold is lifted
+export const HANDLE_QUARANTINE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30d post-purge handle reservation (DEC-022)
+export const DELETION_WARNING_OFFSETS_MS = {
+  minus7d: 7 * DAY_MS,
+  minus3d: 3 * DAY_MS,
+  minus1d: 1 * DAY_MS,
+} as const;
 export const DEFAULT_OBLIGATION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 export const REMINDER_H_MINUS_3_MS = 3 * DAY_MS; // 72h before period end

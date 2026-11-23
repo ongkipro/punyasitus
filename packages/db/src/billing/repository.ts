@@ -60,6 +60,7 @@ export interface TenantBillingContextRow {
   readonly trialEndsAtMs: number | null;
   readonly paidThroughMs: number | null;
   readonly deletionDueAtMs: number | null;
+  readonly offboardingStartedAtMs: number | null;
 }
 
 export interface StoredPaymentInstructionPayload {
@@ -403,7 +404,7 @@ export async function loadTenantBillingContext(
 ): Promise<TenantBillingContextRow | null> {
   const row = await db
     .prepare(
-      `SELECT id, handle, name, status, agency_id, operator_hold, trial_ends_at, paid_through, deletion_due_at
+      `SELECT id, handle, name, status, agency_id, operator_hold, trial_ends_at, paid_through, deletion_due_at, offboarding_started_at
        FROM tenants
        WHERE id = ?
        LIMIT 1`,
@@ -419,6 +420,7 @@ export async function loadTenantBillingContext(
       readonly trial_ends_at: number | null;
       readonly paid_through: number | null;
       readonly deletion_due_at: number | null;
+      readonly offboarding_started_at: number | null;
     }>();
 
   if (!row) return null;
@@ -432,6 +434,7 @@ export async function loadTenantBillingContext(
     trialEndsAtMs: row.trial_ends_at,
     paidThroughMs: row.paid_through,
     deletionDueAtMs: row.deletion_due_at,
+    offboardingStartedAtMs: row.offboarding_started_at,
   };
 }
 
@@ -943,6 +946,21 @@ export async function beginDurablePaymentAttempt(
     throw new BillingValidationError("TENANT_NOT_FOUND", "Tenant tidak ditemukan.");
   }
 
+  // Hard offboarding serialization guard (DEC-022, REQ-069):
+  // Once offboarding has claimed the entitlement lock (`offboarding_started_at IS NOT NULL`)
+  // or completed (`purged`), NO new payment attempts may be created.
+  if (
+    tenantCtx.status === "purged" ||
+    tenantCtx.offboardingStartedAtMs !== null ||
+    input.effectiveTenantStatus === "purged"
+  ) {
+    throw new BillingConflictError(
+      "CONFLICT",
+      "TENANT_OFFBOARDING_IN_PROGRESS",
+      "Situs sedang atau telah melalui proses penghapusan; percobaan pembayaran baru tidak diizinkan.",
+    );
+  }
+
   const baseAmountIdr = assertExactIdrInteger(
     input.plan === "yearly" ? pricing.yearlyPriceIdr : pricing.monthlyPriceIdr,
     "baseAmountIdr",
@@ -1012,7 +1030,7 @@ export async function beginDurablePaymentAttempt(
     const dueAtMs = input.nowMs + DEFAULT_OBLIGATION_TTL_MS;
 
     try {
-      await db
+      const insertOblRes = await db
         .prepare(
           `INSERT INTO billing_obligations (
              id,
@@ -1035,7 +1053,14 @@ export async function beginDurablePaymentAttempt(
              version,
              created_at,
              updated_at
-           ) VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?)`,
+           )
+           SELECT ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 1, ?, ?
+           WHERE EXISTS (
+             SELECT 1 FROM tenants
+             WHERE id = ?
+               AND status != 'purged'
+               AND offboarding_started_at IS NULL
+           )`,
         )
         .bind(
           newObligationId,
@@ -1055,8 +1080,17 @@ export async function beginDurablePaymentAttempt(
           dueAtMs,
           input.nowMs,
           input.nowMs,
+          input.tenantId,
         )
         .run();
+
+      if ((insertOblRes.meta?.changes ?? 0) === 0) {
+        throw new BillingConflictError(
+          "CONFLICT",
+          "TENANT_OFFBOARDING_IN_PROGRESS",
+          "Situs sedang atau telah melalui proses penghapusan; tagihan baru tidak diizinkan.",
+        );
+      }
 
       const inserted = await getTenantObligationById(db, input.tenantId, newObligationId);
       if (!inserted) {
@@ -1064,6 +1098,7 @@ export async function beginDurablePaymentAttempt(
       }
       obligation = inserted.obligation;
     } catch (err) {
+      if (err instanceof BillingConflictError) throw err;
       if (!isUniqueConstraintError(err)) throw err;
       // Another concurrent request created the open obligation first — re-read cleanly.
       const racedKey = await findAttemptByIdempotencyKey(db, input.tenantId, input.idempotencyKey);
@@ -1098,7 +1133,7 @@ export async function beginDurablePaymentAttempt(
   const provisionalTotalIdr = obligation.netAmountIdr + estimatedFeeIdr;
 
   try {
-    await db
+    const insertAttemptRes = await db
       .prepare(
         `INSERT INTO payment_attempts (
            id,
@@ -1127,7 +1162,14 @@ export async function beginDurablePaymentAttempt(
            version,
            created_at,
            updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'initiated', 'creating', ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, 1, ?, ?)`,
+         )
+         SELECT ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'initiated', 'creating', ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, 1, ?, ?
+         WHERE EXISTS (
+           SELECT 1 FROM tenants
+           WHERE id = ?
+             AND status != 'purged'
+             AND offboarding_started_at IS NULL
+         )`,
       )
       .bind(
         attemptId,
@@ -1148,9 +1190,19 @@ export async function beginDurablePaymentAttempt(
         input.nowMs,
         input.nowMs,
         input.nowMs,
+        input.tenantId,
       )
       .run();
+
+    if ((insertAttemptRes.meta?.changes ?? 0) === 0) {
+      throw new BillingConflictError(
+        "CONFLICT",
+        "TENANT_OFFBOARDING_IN_PROGRESS",
+        "Situs sedang atau telah melalui proses penghapusan; percobaan pembayaran baru tidak diizinkan.",
+      );
+    }
   } catch (err) {
+    if (err instanceof BillingConflictError) throw err;
     if (!isUniqueConstraintError(err)) throw err;
 
     // Concurrent race caught atomically by SQLite unique partial indexes!

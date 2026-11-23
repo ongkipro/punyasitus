@@ -807,6 +807,7 @@ export async function settleVerifiedPaymentAttempt(
                SELECT 1 FROM tenants
                WHERE id = ? AND version = ?
                  AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')
+                 AND offboarding_started_at IS NULL
              )`,
           )
           .bind(

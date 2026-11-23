@@ -1,6 +1,9 @@
 import {
   PAID_DELETION_WINDOW_MS,
   TRIAL_DELETION_WINDOW_MS,
+  UNPAID_NO_TRIAL_DELETION_WINDOW_MS,
+  computeAuthoritativeDeletionDueAt,
+  computeHoldResumeDeletionDueAt,
   computeSettlementEntitlementTransition,
   evaluateEntitlementState,
   generateBillingUlid,
@@ -114,6 +117,8 @@ export interface TenantLifecycleRow {
   readonly paid_through: number | null;
   readonly deletion_due_at: number | null;
   readonly retention_paused_at: number | null;
+  readonly offboarding_started_at: number | null;
+  readonly created_at: number;
   readonly cache_version: number;
   readonly version: number;
 }
@@ -126,7 +131,8 @@ async function loadTenantRowForLifecycle(
     .prepare(
       `SELECT id, organization_id, agency_id, handle, name, status,
               operator_hold, operator_hold_reason, trial_ends_at, paid_through,
-              deletion_due_at, retention_paused_at, cache_version, version
+              deletion_due_at, retention_paused_at, offboarding_started_at,
+              created_at, cache_version, version
        FROM tenants
        WHERE id = ?
        LIMIT 1`,
@@ -142,9 +148,12 @@ function evaluateRow(row: TenantLifecycleRow, nowMs: number): EntitlementEvaluat
     operatorHoldReason: row.operator_hold_reason,
     trialEndsAtMs: typeof row.trial_ends_at === "number" ? row.trial_ends_at : null,
     paidThroughMs: typeof row.paid_through === "number" ? row.paid_through : null,
+    createdAtMs: typeof row.created_at === "number" ? row.created_at : null,
     deletionDueAtMs: typeof row.deletion_due_at === "number" ? row.deletion_due_at : null,
     retentionPausedAtMs:
       typeof row.retention_paused_at === "number" ? row.retention_paused_at : null,
+    offboardingStartedAtMs:
+      typeof row.offboarding_started_at === "number" ? row.offboarding_started_at : null,
     agencyId: row.agency_id,
     nowMs,
   });
@@ -209,7 +218,9 @@ export async function syncTenantStoredLifecycleState(
       ? row.paid_through + PAID_DELETION_WINDOW_MS
       : row.trial_ends_at !== null
         ? row.trial_ends_at + TRIAL_DELETION_WINDOW_MS
-        : null);
+        : typeof row.created_at === "number"
+          ? row.created_at + UNPAID_NO_TRIAL_DELETION_WINDOW_MS
+          : null);
 
   const updateRes = await db
     .prepare(
@@ -222,7 +233,8 @@ export async function syncTenantStoredLifecycleState(
        WHERE id = ?
          AND version = ?
          AND status = ?
-         AND operator_hold = ?`,
+         AND operator_hold = ?
+         AND offboarding_started_at IS NULL`,
     )
     .bind(
       evaluation.effectiveStatus,
@@ -365,9 +377,10 @@ export async function applyVerifiedEntitlementGrant(
       };
     }
 
-    // Hard guard: NEVER resurrect or alter terminal/non-commercial states (`provisioning`, `purging`, `purged`, `recovery`).
+    // Hard guard: NEVER resurrect or alter terminal/non-commercial states (`provisioning`, `purging`, `purged`, `recovery`)
+    // or any tenant whose offboarding lock (`offboarding_started_at`) has been claimed.
     // Record an audited deferred-review entry instead so late money is tracked without reviving the tenant.
-    if (NON_COMMERCIAL_TERMINAL_STATES.has(row.status)) {
+    if (NON_COMMERCIAL_TERMINAL_STATES.has(row.status) || row.offboarding_started_at !== null) {
       const { statement: deferredAuditStmt, entry: deferredAuditEntry } = buildPlatformAuditStatement(db, {
         actorUserId: input.grantedBy,
         actorRole: input.auditActorRole ?? "system",
@@ -473,6 +486,7 @@ export async function applyVerifiedEntitlementGrant(
                WHERE id = ?
                  AND version = ?
                  AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')
+                 AND offboarding_started_at IS NULL
              )`,
           )
           .bind(
@@ -503,6 +517,7 @@ export async function applyVerifiedEntitlementGrant(
                WHERE id = ?
                  AND version = ?
                  AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')
+                 AND offboarding_started_at IS NULL
              )`,
           )
           .bind(
@@ -530,6 +545,7 @@ export async function applyVerifiedEntitlementGrant(
          WHERE id = ?
            AND version = ?
            AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')
+           AND offboarding_started_at IS NULL
            AND EXISTS (
              SELECT 1 FROM entitlement_grants WHERE id = ? AND settlement_id = ?
            )`,
@@ -596,16 +612,20 @@ export interface SetOperatorManualHoldResult {
   readonly tenantId: string;
   readonly operatorHold: boolean;
   readonly effectiveStatus: TenantStatus;
+  readonly deletionDueAtMs: number | null;
+  readonly retentionPausedAtMs: number | null;
 }
 
 /**
  * Sets or lifts an explicit manual operator hold on a commercial-lifecycle tenant using atomic CAS + audit.
- * - Rejects `provisioning`, `purging`, `purged`, and `recovery` with `InvalidLifecycleStateError` (409)
- *   for BOTH hold and release so terminal/recovery states can never be overwritten or resurrected.
- * - Applying a hold forces `operator_hold = 1`, `status = 'suspended'`, pauses retention deletion clock,
+ * - Rejects `provisioning`, `purging`, `purged`, `recovery`, and any claimed offboarding tenant
+ *   (`offboarding_started_at IS NOT NULL`) with `InvalidLifecycleStateError` (409).
+ * - Applying a hold forces `operator_hold = 1`, `status = 'suspended'`, captures `deletion_due_at`
+ *   if not yet materialized, pauses the retention deletion clock (`retention_paused_at`),
  *   and survives any subsequent payment settlement.
  * - Lifting a hold recalculates the tenant's true commercial status from `paid_through`/`trial_ends_at`
- *   at `nowMs` strictly for commercial states (`trial`, `active`, `grace`, `locked`, `suspended`).
+ *   at `nowMs` AND resumes `deletion_due_at` shifted by the paused duration with **at least 14 days
+ *   remaining** (`PLAN §17.3`, `REQ-069`).
  */
 export async function setOperatorManualHold(
   db: D1Database,
@@ -629,13 +649,27 @@ export async function setOperatorManualHold(
       throw new Error(`TENANT_NOT_FOUND: tenant "${input.tenantId}" does not exist`);
     }
 
-    if (NON_COMMERCIAL_TERMINAL_STATES.has(row.status)) {
-      throw new InvalidLifecycleStateError(row.id, row.status);
+    if (NON_COMMERCIAL_TERMINAL_STATES.has(row.status) || row.offboarding_started_at !== null) {
+      throw new InvalidLifecycleStateError(
+        row.id,
+        row.offboarding_started_at !== null && row.status !== "purged" ? "purging" : row.status,
+      );
     }
 
     let nextStatus: TenantStatus;
+    let nextDeletionDueAtMs: number | null;
+    let nextRetentionPausedAtMs: number | null;
+
     if (input.hold) {
       nextStatus = "suspended";
+      const clock = computeAuthoritativeDeletionDueAt({
+        paidThroughMs: row.paid_through,
+        trialEndsAtMs: row.trial_ends_at,
+        createdAtMs: row.created_at,
+        explicitDeletionDueAtMs: row.deletion_due_at,
+      });
+      nextDeletionDueAtMs = clock.deletionDueAtMs;
+      nextRetentionPausedAtMs = row.retention_paused_at ?? nowMs;
     } else {
       // Re-evaluate true commercial status once operator hold is removed (commercial rows only)
       const commercialEval = evaluateEntitlementState({
@@ -643,9 +677,19 @@ export async function setOperatorManualHold(
         operatorHold: false,
         trialEndsAtMs: row.trial_ends_at,
         paidThroughMs: row.paid_through,
+        createdAtMs: row.created_at,
         nowMs,
       });
       nextStatus = commercialEval.effectiveStatus;
+      nextDeletionDueAtMs = computeHoldResumeDeletionDueAt({
+        paidThroughMs: row.paid_through,
+        trialEndsAtMs: row.trial_ends_at,
+        createdAtMs: row.created_at,
+        explicitDeletionDueAtMs: row.deletion_due_at,
+        retentionPausedAtMs: row.retention_paused_at,
+        nowMs,
+      });
+      nextRetentionPausedAtMs = null;
     }
 
     const { statement: auditStmt } = buildPlatformAuditStatement(db, {
@@ -661,9 +705,11 @@ export async function setOperatorManualHold(
         previousStatus: row.status,
         nextStatus,
         operatorHold: input.hold,
+        deletionDueAtMs: nextDeletionDueAtMs,
+        retentionPausedAtMs: nextRetentionPausedAtMs,
       },
       createdAtMs: nowMs,
-    });
+    }, { onlyIfPreviousChanged: true });
 
     const [updateRes] = await db.batch([
       db
@@ -672,20 +718,22 @@ export async function setOperatorManualHold(
            SET operator_hold = ?,
                operator_hold_reason = ?,
                status = ?,
-               retention_paused_at = CASE WHEN ? = 1 THEN COALESCE(retention_paused_at, ?) ELSE NULL END,
+               deletion_due_at = ?,
+               retention_paused_at = ?,
                cache_version = cache_version + 1,
                version = version + 1,
                updated_at = ?
            WHERE id = ?
              AND version = ?
-             AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')`,
+             AND status NOT IN ('provisioning', 'purging', 'purged', 'recovery')
+             AND offboarding_started_at IS NULL`,
         )
         .bind(
           input.hold ? 1 : 0,
           cleanReason,
           nextStatus,
-          input.hold ? 1 : 0,
-          nowMs,
+          nextDeletionDueAtMs,
+          nextRetentionPausedAtMs,
           nowMs,
           row.id,
           row.version,
@@ -700,6 +748,8 @@ export async function setOperatorManualHold(
         tenantId: row.id,
         operatorHold: input.hold,
         effectiveStatus: nextStatus,
+        deletionDueAtMs: nextDeletionDueAtMs,
+        retentionPausedAtMs: nextRetentionPausedAtMs,
       };
     }
   }
@@ -1053,7 +1103,8 @@ export async function listTenantsForLifecycleSweep(
     .prepare(
       `SELECT t.id, t.organization_id, t.agency_id, t.handle, t.name, t.status,
               t.operator_hold, t.operator_hold_reason, t.trial_ends_at, t.paid_through,
-              t.deletion_due_at, t.retention_paused_at, t.cache_version, t.version,
+              t.deletion_due_at, t.retention_paused_at, t.offboarding_started_at,
+              t.created_at, t.cache_version, t.version,
               CASE WHEN t.agency_id IS NOT NULL THEN a.owner_user_id ELSE om.user_id END AS payer_user_id,
               CASE WHEN t.agency_id IS NOT NULL THEN au.email ELSE ou.email END AS payer_email,
               CASE WHEN t.agency_id IS NOT NULL THEN a.name ELSE ou.name END AS payer_name,

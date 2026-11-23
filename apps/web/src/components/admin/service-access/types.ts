@@ -16,6 +16,7 @@ export interface ServiceAccessContext {
   readonly graceEndsAtLabel?: string | null;
   readonly lockedEndsAtLabel?: string | null;
   readonly deletionDueAtLabel?: string | null;
+  readonly retentionPaused?: boolean;
   readonly billingHref?: string;
   readonly leadsExportHref?: string;
   readonly signOutHref?: string;

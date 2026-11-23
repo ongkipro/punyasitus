@@ -29,6 +29,7 @@ export function ServiceAccessBanner({ access }: ServiceAccessBannerProps) {
     trialEndsAtLabel,
     graceEndsAtLabel,
     lockedEndsAtLabel,
+    deletionDueAtLabel,
     billingHref = "#langganan",
     leadsExportHref = "#ekspor-prospek",
     signOutHref = "/auth/login?signOut=1",
@@ -159,6 +160,14 @@ export function ServiceAccessBanner({ access }: ServiceAccessBannerProps) {
         </strong>
         . Anda tetap dapat membaca konten, mengekspor prospek CSV, melakukan
         pembayaran perpanjangan, atau keluar dari akun.
+        {deletionDueAtLabel ? (
+          <span
+            data-testid="locked-deletion-due-date"
+            className="mt-1 block text-xs font-medium tabular-nums"
+          >
+            Jadwal penghapusan data permanen (H+45 jika belum dibayar): {deletionDueAtLabel}
+          </span>
+        ) : null}
       </AlertDescription>
       <AlertAction>
         {isPayer ? (
@@ -175,8 +184,9 @@ export function ServiceAccessBanner({ access }: ServiceAccessBannerProps) {
               <Button
                 size="sm"
                 variant="outline"
+                data-testid="locked-leads-export-btn"
                 className="min-h-11 md:min-h-8"
-                render={<a href={leadsExportHref} />}
+                render={<a href={leadsExportHref} download />}
               >
                 <DownloadIcon className="size-3.5" aria-hidden="true" />
                 <span>Ekspor Prospek (CSV)</span>

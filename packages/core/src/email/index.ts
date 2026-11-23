@@ -2,6 +2,8 @@ export {
   ALLOWED_EMAIL_SENDER,
   BillingReceiptTemplateDataSchema,
   DEFAULT_EMAIL_SENDER_NAME,
+  DeletionWarningStageSchema,
+  DeletionWarningTemplateDataSchema,
   DomainNoticeStatusSchema,
   DomainNoticeTemplateDataSchema,
   EMAIL_TEMPLATE_NAMES,

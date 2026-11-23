@@ -72,7 +72,7 @@ async function listSweepableTenantIdsPage(
   const res = await platformDb
     .prepare(
       `SELECT id FROM tenants
-       WHERE status NOT IN ('provisioning', 'purged')
+       WHERE status NOT IN ('provisioning', 'purging', 'purged')
          AND schema_version >= 1
          AND id > ?
        ORDER BY id ASC

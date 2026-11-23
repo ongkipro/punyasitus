@@ -4,6 +4,7 @@ import {
   LOCKED_WINDOW_MS,
   PAID_DELETION_WINDOW_MS,
   TRIAL_DELETION_WINDOW_MS,
+  UNPAID_NO_TRIAL_DELETION_WINDOW_MS,
 } from "./constants.ts";
 
 /**
@@ -149,9 +150,14 @@ export function computeLifecycleDeadlines(input: {
   readonly paidThroughMs: number | null;
   readonly trialEndsAtMs: number | null;
   readonly deletionDueAtMs: number | null;
+  readonly createdAtMs?: number | null;
 }): LifecycleDeadlines {
   const paidThroughMs = input.paidThroughMs !== null ? Math.trunc(input.paidThroughMs) : null;
   const trialEndsAtMs = input.trialEndsAtMs !== null ? Math.trunc(input.trialEndsAtMs) : null;
+  const createdAtMs =
+    typeof input.createdAtMs === "number" && Number.isFinite(input.createdAtMs)
+      ? Math.trunc(input.createdAtMs)
+      : null;
 
   const graceEndsAtMs = paidThroughMs !== null ? paidThroughMs + GRACE_WINDOW_MS : null;
   const lockedEndsAtMs = paidThroughMs !== null ? paidThroughMs + LOCKED_WINDOW_MS : null;
@@ -162,6 +168,8 @@ export function computeLifecycleDeadlines(input: {
       derivedDeletionMs = paidThroughMs + PAID_DELETION_WINDOW_MS;
     } else if (trialEndsAtMs !== null) {
       derivedDeletionMs = trialEndsAtMs + TRIAL_DELETION_WINDOW_MS;
+    } else if (createdAtMs !== null) {
+      derivedDeletionMs = createdAtMs + UNPAID_NO_TRIAL_DELETION_WINDOW_MS;
     }
   }
 

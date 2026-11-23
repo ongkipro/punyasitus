@@ -10,6 +10,7 @@ import {
   REMINDER_H_MINUS_3_MS,
   TRIAL_DELETION_WINDOW_MS,
   TRIAL_STORAGE_QUOTA_BYTES,
+  UNPAID_NO_TRIAL_DELETION_WINDOW_MS,
 } from "./constants.ts";
 import {
   computeLifecycleDeadlines,
@@ -50,8 +51,10 @@ export interface EntitlementEvaluationInput {
   readonly operatorHoldReason?: string | null;
   readonly trialEndsAtMs: number | null;
   readonly paidThroughMs: number | null;
+  readonly createdAtMs?: number | null;
   readonly deletionDueAtMs?: number | null;
   readonly retentionPausedAtMs?: number | null;
+  readonly offboardingStartedAtMs?: number | null;
   readonly agencyId?: string | null;
   readonly nowMs: number;
 }
@@ -98,6 +101,8 @@ export interface EntitlementEvaluationResult {
   readonly evaluatedAtMs: number;
   readonly operatorHold: boolean;
   readonly operatorHoldReason: string | null;
+  readonly retentionPausedAtMs: number | null;
+  readonly retentionPaused: boolean;
   readonly suspensionReason: SuspensionReason | null;
   readonly agencyManaged: boolean;
   readonly publicAccess: EntitlementPublicAccess;
@@ -155,7 +160,11 @@ export function evaluateEntitlementState(
       : null;
   const trialEndsAtMs = normalizeOptionalMs(input.trialEndsAtMs);
   const paidThroughMs = normalizeOptionalMs(input.paidThroughMs);
+  const createdAtMs = normalizeOptionalMs(input.createdAtMs);
   const explicitDeletionDueAtMs = normalizeOptionalMs(input.deletionDueAtMs);
+  const retentionPausedAtMs = normalizeOptionalMs(input.retentionPausedAtMs);
+  const retentionPaused = operatorHold || retentionPausedAtMs !== null;
+  const offboardingStartedAtMs = normalizeOptionalMs(input.offboardingStartedAtMs);
   const agencyManaged = Boolean(input.agencyId && input.agencyId.trim().length > 0);
 
   let effectiveStatus: TenantStatus;
@@ -167,6 +176,8 @@ export function evaluateEntitlementState(
     storedStatus === "purged"
   ) {
     effectiveStatus = storedStatus;
+  } else if (offboardingStartedAtMs !== null) {
+    effectiveStatus = "purging";
   } else if (operatorHold) {
     effectiveStatus = "suspended";
     suspensionReason = "operator_hold";
@@ -211,11 +222,14 @@ export function evaluateEntitlementState(
       ? paidThroughMs + PAID_DELETION_WINDOW_MS
       : trialEndsAtMs !== null
         ? trialEndsAtMs + TRIAL_DELETION_WINDOW_MS
-        : null);
+        : createdAtMs !== null
+          ? createdAtMs + UNPAID_NO_TRIAL_DELETION_WINDOW_MS
+          : null);
 
   const isoDeadlines = computeLifecycleDeadlines({
     paidThroughMs,
     trialEndsAtMs,
+    createdAtMs,
     deletionDueAtMs: derivedDeletionDueAtMs,
   });
 
@@ -234,7 +248,7 @@ export function evaluateEntitlementState(
   } else if (effectiveStatus === "locked" && lockedEndsAtMs !== null) {
     daysRemaining = ceilDaysRemaining(lockedEndsAtMs, nowMs);
     nextTransitionAtMs = lockedEndsAtMs;
-  } else if (effectiveStatus === "suspended" && !operatorHold && derivedDeletionDueAtMs !== null) {
+  } else if (effectiveStatus === "suspended" && !retentionPaused && derivedDeletionDueAtMs !== null) {
     daysRemaining = ceilDaysRemaining(derivedDeletionDueAtMs, nowMs);
     nextTransitionAtMs = derivedDeletionDueAtMs;
   }
@@ -370,6 +384,8 @@ export function evaluateEntitlementState(
     evaluatedAtMs: nowMs,
     operatorHold,
     operatorHoldReason,
+    retentionPausedAtMs,
+    retentionPaused,
     suspensionReason,
     agencyManaged,
     publicAccess,
