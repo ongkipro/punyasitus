@@ -1,11 +1,20 @@
 ---
 import { env } from "cloudflare:workers";
+import type {
+  TravelPackageAttributes,
+  TrustedTravelGateState,
+} from "@punyasitus/core/catalog/travel";
+import { createTenantDb, openTenantStoreStub } from "@punyasitus/db/connections";
 import { enrichPublicOfferingDetailResult } from "../../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
   resolveOfferingDetailRoute,
 } from "../../core/public-routes.ts";
+import {
+  loadFrozenPublishedTravelBySlug,
+  resolveServerTrustedTravelGateState,
+} from "../dashboard/[handle]/catalog/travel/_api-handler.ts";
 import OfferingDetailView from "../layanan/_OfferingDetailView.astro";
 import PublicNotFoundView from "../layanan/_PublicNotFoundView.astro";
 
@@ -30,6 +39,31 @@ const enriched =
   result.kind === "offering_detail"
     ? await enrichPublicOfferingDetailResult(result, deps)
     : null;
+
+let publishedTravelPackage: TravelPackageAttributes | null = null;
+let trustedTravelGateState: TrustedTravelGateState = {
+  operatorVerified: false,
+  umrahCounselApproved: false,
+};
+
+if (result.kind === "offering_detail") {
+  const runtimeEnv = env as typeof env & { readonly UMRAH_COUNSEL_APPROVED?: string };
+  const tenantDb =
+    deps.tenantDb ??
+    (deps.tenantStore
+      ? createTenantDb(openTenantStoreStub(deps.tenantStore, result.tenant.id))
+      : null);
+  const [loadedTravel, gateState] = await Promise.all([
+    tenantDb ? loadFrozenPublishedTravelBySlug(tenantDb, result.offering.slug) : Promise.resolve(null),
+    resolveServerTrustedTravelGateState({
+      tenantId: result.tenant.id,
+      platformDb: env.PLATFORM_DB,
+      runtimeEnv,
+    }),
+  ]);
+  publishedTravelPackage = loadedTravel;
+  trustedTravelGateState = gateState;
+}
 ---
 
 {result.kind === "not_found" ? (
@@ -40,5 +74,7 @@ const enriched =
     headProps={enriched?.head ?? null}
     categoryLinks={enriched?.categoryLinks ?? []}
     sanitizedDescriptionHtml={enriched?.sanitizedDescriptionHtml ?? null}
+    travelPackage={publishedTravelPackage}
+    trustedTravelGateState={trustedTravelGateState}
   />
 )}

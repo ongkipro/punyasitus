@@ -15,6 +15,7 @@ import type {
   TourAttributes,
   VehicleAttributes,
 } from "./catalog/index.ts";
+import type { TravelPackageAttributes } from "./catalog/travel.ts";
 import type {
   BusinessProfileSnapshot,
   OfferingSnapshot,
@@ -318,12 +319,38 @@ export interface SchemaArticleInput {
   readonly inLanguage?: string | null;
 }
 
+export type SchemaTourItineraryItemInput =
+  | {
+      readonly day: number;
+      readonly title: string;
+      readonly description?: string | null;
+    }
+  | {
+      readonly dayNumber: number;
+      readonly title: string;
+      readonly summary?: string | null;
+      readonly city?: string | null;
+      readonly meals?: string | null;
+    };
+
+export type SchemaTourDepartureItemInput = {
+  readonly departureDate: string;
+  readonly returnDate?: string | null;
+  readonly departureCity?: string | null;
+  readonly label?: string | null;
+  readonly status?: "open" | "limited" | "full" | "closed";
+  readonly note?: string | null;
+};
+
 export type SchemaOfferingAttributesInput = Partial<
   ServiceAttributes &
     ProductAttributes &
-    TourAttributes &
+    Omit<TourAttributes, "itinerary" | "departures"> &
+    Omit<TravelPackageAttributes, "itinerary" | "departures"> &
     VehicleAttributes & {
       readonly vehicleYear?: number;
+      readonly itinerary?: readonly SchemaTourItineraryItemInput[];
+      readonly departures?: readonly SchemaTourDepartureItemInput[];
     }
 >;
 
@@ -1933,20 +1960,46 @@ function buildOfferingNode(params: {
       let itinerary: Record<string, unknown> | null = null;
       if (Array.isArray(attrs.itinerary) && attrs.itinerary.length > 0) {
         const items = attrs.itinerary
+          .slice(0, 30)
           .map((dayItem) => {
+            const rawPosition =
+              "dayNumber" in dayItem && typeof dayItem.dayNumber === "number"
+                ? dayItem.dayNumber
+                : "day" in dayItem && typeof dayItem.day === "number"
+                  ? dayItem.day
+                  : null;
+            if (
+              rawPosition === null ||
+              !Number.isSafeInteger(rawPosition) ||
+              rawPosition < 1 ||
+              rawPosition > 30
+            ) {
+              return null;
+            }
+            if (typeof dayItem.title !== "string" || hasAsciiControlChars(dayItem.title)) {
+              return null;
+            }
             const dayTitle = sanitizeSeoText(dayItem.title, { maxLength: 160 });
             if (!dayTitle) return null;
-            const dayDesc = dayItem.description
-              ? sanitizeSeoText(dayItem.description, { maxLength: 500 })
-              : "";
+            const rawSummary =
+              "summary" in dayItem && typeof dayItem.summary === "string"
+                ? dayItem.summary
+                : "description" in dayItem && typeof dayItem.description === "string"
+                  ? dayItem.description
+                  : "";
+            const dayDesc =
+              rawSummary && !hasAsciiControlChars(rawSummary)
+                ? sanitizeSeoText(rawSummary, { maxLength: 500 })
+                : "";
             return {
-              "@type": "ListItem",
-              position: dayItem.day,
+              "@type": "ListItem" as const,
+              position: rawPosition,
               name: dayTitle,
               ...(dayDesc ? { description: dayDesc } : {}),
             };
           })
-          .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+          .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
+          .sort((a, b) => a.position - b.position);
         if (items.length > 0) {
           itinerary = {
             "@type": "ItemList",
@@ -1961,6 +2014,8 @@ function buildOfferingNode(params: {
         };
       }
 
+      // REQ-022 / REQ-028 / REQ-054: TouristTrip reflects ONLY visible published facts;
+      // NEVER emit invented Offer, price, availability, aggregateRating, or review.
       return {
         "@type": "TouristTrip",
         "@id": `${params.canonicalUrl}${SCHEMA_ENTITY_FRAGMENTS.touristTrip}`,

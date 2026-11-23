@@ -1,0 +1,124 @@
+---
+import { env } from "cloudflare:workers";
+import { listCatalogOfferings } from "@punyasitus/db/catalog/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import {
+  TravelCatalogManagerClient,
+  type TravelCatalogPackageDto,
+} from "./_TravelCatalogManagerClient";
+import {
+  evaluateTravelSsrGate,
+  serviceUnavailableTravelSsrResponse,
+  TRAVEL_SSR_SECURITY_HEADERS,
+} from "./_ssr-gate";
+import {
+  loadLosslessDraftTravelMap,
+  resolveServerTrustedTravelGateState,
+} from "./_api-handler";
+
+// Verify operator_hold fail-closed from PLATFORM_DB before any TenantStore read
+let operatorHold = false;
+const preAuthMember = Astro.locals.authorizedTenantMember;
+if (preAuthMember) {
+  if (!env.PLATFORM_DB) {
+    return serviceUnavailableTravelSsrResponse();
+  }
+  try {
+    const holdRow = await env.PLATFORM_DB.prepare(
+      "SELECT operator_hold FROM tenants WHERE id = ? LIMIT 1",
+    )
+      .bind(preAuthMember.tenantId)
+      .first<{ readonly operator_hold: number | null }>();
+    operatorHold = Number(holdRow?.operator_hold ?? 0) === 1;
+  } catch {
+    return serviceUnavailableTravelSsrResponse();
+  }
+}
+
+const gate = evaluateTravelSsrGate({
+  rawHandle: Astro.params.handle,
+  surface: Astro.locals.surface,
+  isLocalLoopback: Astro.locals.isLocalLoopback,
+  isLocalEnv: env.APP_ENV === "local",
+  authUser: Astro.locals.authUser,
+  authorized: preAuthMember,
+  operatorHold,
+});
+
+if (!gate.ok) {
+  return gate.response;
+}
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+Astro.response.headers.set("Cache-Control", TRAVEL_SSR_SECURITY_HEADERS["Cache-Control"]);
+Astro.response.headers.set("X-Robots-Tag", TRAVEL_SSR_SECURITY_HEADERS["X-Robots-Tag"]);
+
+const { ctx } = resolved;
+const runtimeEnv = env as typeof env & { readonly UMRAH_COUNSEL_APPROVED?: string };
+const [result, trustedGateState] = await Promise.all([
+  listCatalogOfferings(ctx.tenantDb, {
+    offeringType: "tour",
+    limit: 50,
+  }),
+  resolveServerTrustedTravelGateState({
+    tenantId: ctx.tenantId,
+    platformDb: env.PLATFORM_DB,
+    runtimeEnv,
+  }),
+]);
+
+const losslessTravelMap = await loadLosslessDraftTravelMap(
+  ctx.tenantDb,
+  result.items.map((item) => item.id),
+);
+
+const initialPackages: TravelCatalogPackageDto[] = result.items.map((item) => ({
+  id: item.id,
+  slug: item.slug,
+  publicPath: item.publicPath,
+  title: item.title,
+  summary: item.summary ?? "",
+  priceMode: item.priceMode,
+  price: item.price,
+  priceMax: item.priceMax,
+  status: item.status,
+  version: item.version,
+  attributes:
+    (losslessTravelMap.get(item.id) as Record<string, unknown> | undefined) ??
+    (item.attributes as Record<string, unknown>) ??
+    {},
+}));
+---
+
+<DashboardLayout
+  title={`Pengelola Paket Tur & Umrah — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="offering"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <TravelCatalogManagerClient
+    client:load
+    tenantId={ctx.tenantId}
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    canWriteTravel={gate.canWriteTravel}
+    canPublishTravel={gate.canPublishTravel}
+    trustedGateState={trustedGateState}
+    initialPackages={initialPackages}
+  />
+</DashboardLayout>

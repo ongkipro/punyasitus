@@ -1,6 +1,10 @@
 ---
 import "../../themes/default/sections/sections.css";
 import "./_public-pages.css";
+import type {
+  TravelPackageAttributes,
+  TrustedTravelGateState,
+} from "@punyasitus/core/catalog/travel";
 import PublicSeoHead from "../../components/seo/PublicSeoHead.astro";
 import type {
   PublicSeoHeadProps,
@@ -13,6 +17,7 @@ import {
 import { formatIdrPlain } from "../../core/section-registry.ts";
 import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.astro";
 import Layout from "../../themes/default/Layout.astro";
+import SectionTravelItinerary from "../../themes/default/sections/SectionTravelItinerary.astro";
 import PublicBreadcrumbs from "./_PublicBreadcrumbs.astro";
 
 export interface Props {
@@ -20,9 +25,18 @@ export interface Props {
   readonly headProps?: PublicSeoHeadProps | null;
   readonly categoryLinks?: readonly PublishedTaxonomyChipLink[];
   readonly sanitizedDescriptionHtml?: string | null;
+  readonly travelPackage?: TravelPackageAttributes | null;
+  readonly trustedTravelGateState?: TrustedTravelGateState;
 }
 
-const { result, headProps = null, categoryLinks = [], sanitizedDescriptionHtml = null } = Astro.props;
+const {
+  result,
+  headProps = null,
+  categoryLinks = [],
+  sanitizedDescriptionHtml = null,
+  travelPackage = null,
+  trustedTravelGateState,
+} = Astro.props;
 const { descriptor, offering, relatedOfferings } = result;
 const effectiveDescriptionHtml = sanitizedDescriptionHtml ?? offering.descriptionHtml;
 const linkedCategoryNames = new Set(categoryLinks.map((c) => c.name));
@@ -39,13 +53,6 @@ const stockStatusLabels: Readonly<Record<string, string>> = {
   preorder: "Pre-order",
   limited: "Stok terbatas",
   out_of_stock: "Stok habis",
-};
-
-const tourDepartureStatusLabels: Readonly<Record<string, string>> = {
-  open: "Dibuka",
-  limited: "Terbatas",
-  full: "Penuh",
-  closed: "Ditutup",
 };
 
 const vehicleConditionLabels: Readonly<Record<string, string>> = {
@@ -125,23 +132,8 @@ if (offering.productAttributes) {
   }
 }
 
-if (offering.tourAttributes) {
-  const a = offering.tourAttributes;
-  if (a.destination) specRows.push({ label: "Destinasi", value: a.destination });
-  if (a.durationDays !== undefined) {
-    const dur =
-      a.durationNights !== undefined
-        ? `${a.durationDays} Hari ${a.durationNights} Malam`
-        : `${a.durationDays} Hari`;
-    specRows.push({ label: "Durasi perjalanan", value: dur });
-  }
-  if (a.departureCity) specRows.push({ label: "Kota keberangkatan", value: a.departureCity });
-  if (a.airline) specRows.push({ label: "Maskapai / Transportasi", value: a.airline });
-  if (a.hotel) specRows.push({ label: "Akomodasi / Hotel", value: a.hotel });
-  if (a.minPax) specRows.push({ label: "Minimal peserta", value: `${a.minPax} orang` });
-  const ppiu = a.ppiuNumber ?? a.umrahLicense;
-  if (ppiu) specRows.push({ label: "Izin resmi PPIU / PIHK", value: ppiu });
-}
+// Tour facts, hotels, inclusions/exclusions, itinerary accordions, and date-only departures
+// are rendered by `SectionTravelItinerary` below (`REQ-028`, `TASK-020`).
 
 if (offering.vehicleAttributes) {
   const a = offering.vehicleAttributes;
@@ -350,106 +342,28 @@ const creditTenors = offering.vehicleCreditRows[0]?.installments.map((i) => i.te
           </section>
         )}
 
-        {/* Tour: Inclusions / Exclusions, Day-by-Day Itinerary & Date-Only Departures */}
-        {offering.tourAttributes &&
-          ((offering.tourAttributes.inclusions?.length ?? 0) > 0 ||
-            (offering.tourAttributes.exclusions?.length ?? 0) > 0) && (
-            <section class="ps-detail-block" aria-labelledby="inc-exc-heading">
-              <h2 id="inc-exc-heading">Fasilitas Termasuk &amp; Tidak Termasuk</h2>
-              <div class="ps-check-columns">
-                {offering.tourAttributes.inclusions && offering.tourAttributes.inclusions.length > 0 && (
-                  <div class="ps-card">
-                    <h3 class="ps-card-title">Termasuk dalam Paket</h3>
-                    <ul class="ps-check-list">
-                      {offering.tourAttributes.inclusions.map((inc) => (
-                        <li>{inc}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {offering.tourAttributes.exclusions && offering.tourAttributes.exclusions.length > 0 && (
-                  <div class="ps-card">
-                    <h3 class="ps-card-title">Tidak Termasuk</h3>
-                    <ul class="ps-check-list">
-                      {offering.tourAttributes.exclusions.map((exc) => (
-                        <li>{exc}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
-
-        {offering.tourAttributes?.itinerary && offering.tourAttributes.itinerary.length > 0 && (
-          <section class="ps-detail-block" aria-labelledby="itinerary-heading">
-            <h2 id="itinerary-heading">Rencana Perjalanan Harian</h2>
-            <div class="ps-faq-list">
-              {offering.tourAttributes.itinerary.map((day, idx) => (
-                <details class="ps-faq-item" open={idx === 0}>
-                  <summary class="ps-faq-summary">
-                    <span>
-                      Hari {day.day}: {day.title}
-                    </span>
-                    <svg
-                      class="ps-faq-icon"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="2"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      aria-hidden="true"
-                    >
-                      <polyline points="6 9 12 15 18 9" />
-                    </svg>
-                  </summary>
-                  {day.description && (
-                    <div class="ps-faq-answer">
-                      <p>{day.description}</p>
-                    </div>
-                  )}
-                </details>
-              ))}
-            </div>
-          </section>
+        {/* Tour: Accessible Travel & Umrah Itinerary, Trust Lines, Date-Only Departures & WA Inquiry (TASK-020) */}
+        {offering.offeringType === "tour" && (travelPackage || offering.tourAttributes) && (
+          <SectionTravelItinerary
+            id="tour-itinerary"
+            travel={travelPackage ?? offering.tourAttributes!}
+            trustedGateState={trustedTravelGateState}
+            heading="Rincian Paket & Jadwal Perjalanan"
+            whatsappHref={offering.cta.isWhatsApp ? offering.cta.href : null}
+            whatsappLabel={offering.cta.isWhatsApp ? offering.cta.label : undefined}
+            inquiryHref={
+              offering.cta.isWhatsApp
+                ? offering.fallbackContactHref
+                : offering.cta.href || offering.fallbackContactHref
+            }
+            inquiryLabel={
+              offering.cta.isWhatsApp
+                ? "Kontak Langsung"
+                : offering.cta.label || "Kontak Langsung"
+            }
+            embedded={true}
+          />
         )}
-
-        {offering.tourAttributes &&
-          ((offering.tourAttributes.departures?.length ?? 0) > 0 ||
-            (offering.tourAttributes.departureDates?.length ?? 0) > 0) && (
-            <section class="ps-detail-block" aria-labelledby="departures-heading">
-              <h2 id="departures-heading">Jadwal Keberangkatan</h2>
-              <div class="ps-table-wrap">
-                <table class="ps-data-table">
-                  <thead>
-                    <tr>
-                      <th scope="col">Tanggal Berangkat</th>
-                      <th scope="col">Status</th>
-                      <th scope="col">Keterangan</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {offering.tourAttributes.departures && offering.tourAttributes.departures.length > 0
-                      ? offering.tourAttributes.departures.map((dep) => (
-                          <tr>
-                            <td>{formatDateOnlyIndonesian(dep.departureDate)}</td>
-                            <td>{tourDepartureStatusLabels[dep.status] ?? dep.status}</td>
-                            <td>{dep.note ?? "—"}</td>
-                          </tr>
-                        ))
-                      : offering.tourAttributes.departureDates?.map((iso) => (
-                          <tr>
-                            <td>{formatDateOnlyIndonesian(iso)}</td>
-                            <td>Terjadwal</td>
-                            <td>Hubungi kami untuk konfirmasi ketersediaan</td>
-                          </tr>
-                        ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
 
         {/* Vehicle: Static Server-Rendered Credit Estimate Table (Zero JS, Available + Fixed Only) */}
         {offering.vehicleCreditRows.length > 0 && creditTenors.length > 0 && (
