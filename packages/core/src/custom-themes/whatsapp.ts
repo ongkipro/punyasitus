@@ -5,6 +5,7 @@ import {
 import {
   CUSTOM_THEME_QUOTE_ONLY_PRICE_LABEL,
   CUSTOM_THEME_UNDECIDED_PACKAGE_LABEL,
+  type ServiceKind,
 } from "./constants.ts";
 
 /**
@@ -39,6 +40,7 @@ export interface BuildCustomThemeWhatsAppInput {
   readonly tenantHandle: string;
   readonly requestCode?: string | null;
   readonly packageName?: string | null;
+  readonly serviceKind?: ServiceKind;
 }
 
 export interface CustomThemeWhatsAppLink {
@@ -78,10 +80,14 @@ export function buildCustomThemeWhatsAppUrl(
   const pkg = sanitizeInlineValue(input.packageName ?? "") || CUSTOM_THEME_UNDECIDED_PACKAGE_LABEL;
   const reqCode = input.requestCode ? sanitizeInlineValue(input.requestCode) : "";
 
-  const lines: string[] = [
-    "Halo tim PunyaSitus, saya ingin berkonsultasi mengenai jasa Desain Tema Kustom.",
-    `Situs: ${handle}`,
-  ];
+  const introLine =
+    input.serviceKind === "setup"
+      ? "Halo tim PunyaSitus, saya ingin berkonsultasi mengenai Layanan Terima Beres (Setup Website)."
+      : input.serviceKind === "custom_plugin"
+        ? "Halo tim PunyaSitus, saya ingin berkonsultasi mengenai jasa Plugin Kustom."
+        : "Halo tim PunyaSitus, saya ingin berkonsultasi mengenai jasa Desain Tema Kustom.";
+
+  const lines: string[] = [introLine, `Situs: ${handle}`];
   if (reqCode) {
     lines.push(`Kode Permintaan: ${reqCode}`);
   }
@@ -90,6 +96,12 @@ export function buildCustomThemeWhatsAppUrl(
   const message = lines.join("\n");
   const url = `${WA_ME_ORIGIN}/${phone}?text=${encodeURIComponent(message)}`;
   return { url, phone, message };
+}
+
+export function buildSetupServiceWhatsAppUrl(
+  input: Omit<BuildCustomThemeWhatsAppInput, "serviceKind">,
+): CustomThemeWhatsAppLink | null {
+  return buildCustomThemeWhatsAppUrl({ ...input, serviceKind: "setup" });
 }
 
 /**

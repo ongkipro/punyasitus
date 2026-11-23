@@ -11,6 +11,7 @@ import {
 import { validateTransitionCustomThemeRequestInput } from "@punyasitus/core/custom-themes/index";
 import {
   getConsoleCustomThemeRequestById,
+  getTenantSeatUsageForServiceRequest,
   listTenantActiveCustomThemeGrants,
   transitionConsoleCustomThemeRequest,
 } from "@punyasitus/db/custom-themes/index";
@@ -39,6 +40,8 @@ const TRANSITION_REQUEST_ALLOWED_KEYS = new Set([
   "reason",
   "operatorNotes",
   "deliveredThemeId",
+  "staffUserEmail",
+  "staffUserId",
 ]);
 
 export async function handleConsoleCustomThemeRequestDetail(
@@ -79,10 +82,16 @@ export async function handleConsoleCustomThemeRequestDetail(
           authz.ctx.requestId,
         );
       }
-      const grants = await listTenantActiveCustomThemeGrants(authz.ctx.platformDb, item.tenantId);
+      const [grants, seats] = await Promise.all([
+        listTenantActiveCustomThemeGrants(authz.ctx.platformDb, item.tenantId),
+        getTenantSeatUsageForServiceRequest(authz.ctx.platformDb, {
+          tenantId: item.tenantId,
+          nowMs: authz.ctx.nowMs,
+        }),
+      ]);
       return consoleJsonResponse(200, {
         success: true,
-        request: formatConsoleRequestDto(item, grants),
+        request: formatConsoleRequestDto(item, grants, seats),
         requestId: authz.ctx.requestId,
       });
     } catch (err) {
@@ -116,8 +125,21 @@ export async function handleConsoleCustomThemeRequestDetail(
     if (!parsed.ok) return parsed.response;
 
     try {
-      const validated = validateTransitionCustomThemeRequestInput(parsed.body);
-      if (validated.status === "delivered") {
+      const existing = await getConsoleCustomThemeRequestById(authz.ctx.platformDb, cleanId);
+      if (!existing) {
+        return consoleErrorResponse(
+          404,
+          "NOT_FOUND",
+          "Permintaan layanan tidak ditemukan.",
+          authz.ctx.requestId,
+        );
+      }
+
+      const validated = validateTransitionCustomThemeRequestInput(parsed.body, {
+        serviceKind: existing.serviceKind,
+      });
+
+      if (existing.serviceKind === "custom_theme" && validated.status === "delivered") {
         const targetId = validated.deliveredThemeId?.trim().toLowerCase() ?? "";
         const registered = targetId ? getRegisteredTheme(targetId) : null;
         if (!registered || !registered.isCustom) {
@@ -130,6 +152,7 @@ export async function handleConsoleCustomThemeRequestDetail(
           );
         }
       }
+
       const result = await transitionConsoleCustomThemeRequest(authz.ctx.platformDb, {
         requestId: cleanId,
         input: validated,
@@ -138,14 +161,20 @@ export async function handleConsoleCustomThemeRequestDetail(
         httpRequestId: authz.ctx.requestId,
         nowMs: authz.ctx.nowMs,
       });
-      const grants = await listTenantActiveCustomThemeGrants(
-        authz.ctx.platformDb,
-        result.request.tenantId,
-      );
+      const [grants, seats] = await Promise.all([
+        listTenantActiveCustomThemeGrants(authz.ctx.platformDb, result.request.tenantId),
+        getTenantSeatUsageForServiceRequest(authz.ctx.platformDb, {
+          tenantId: result.request.tenantId,
+          nowMs: authz.ctx.nowMs,
+        }),
+      ]);
 
       return consoleJsonResponse(200, {
         success: true,
-        request: formatConsoleRequestDto(result.request, grants),
+        request: formatConsoleRequestDto(result.request, grants, seats),
+        ...(result.staffMembershipRemoved !== undefined
+          ? { staffMembershipRemoved: result.staffMembershipRemoved }
+          : {}),
         auditId: result.audit.id,
         requestId: authz.ctx.requestId,
       });

@@ -7,15 +7,19 @@ import {
   CUSTOM_THEME_ALLOWED_TRANSITIONS,
   CUSTOM_THEME_STATUS_LABELS_ID,
   CustomThemeValidationError,
+  SERVICE_KIND_LABELS_ID,
+  STAFF_ACCESS_STATE_LABELS_ID,
   type CustomThemePackageRecord,
   type CustomThemeRequestRecord,
   type CustomThemeRequestStatus,
   type ServiceKind,
+  type StaffAccessState,
 } from "@punyasitus/core/custom-themes/index";
 import type { CloudflareSendEmailBinding } from "@punyasitus/core/email/index";
 import {
   CustomThemeRepositoryError,
   type TenantCustomThemeGrantSummary,
+  type TenantServiceSeatUsage,
 } from "@punyasitus/db/custom-themes/index";
 
 /**
@@ -49,10 +53,33 @@ export interface ConsoleCustomThemeGrantDto {
   readonly grantedAt: string;
 }
 
+export interface ConsoleStaffAccessDto {
+  readonly state: StaffAccessState;
+  readonly stateLabel: string;
+  readonly staffUserId: string | null;
+  readonly staffEmail: string | null;
+  readonly staffName: string | null;
+  readonly staffMemberId: string | null;
+  readonly approvedByUserId: string | null;
+  readonly approvedAt: string | null;
+  readonly joinedAt: string | null;
+  readonly revokedAt: string | null;
+  readonly waitReason: string | null;
+}
+
+export interface ConsoleTenantSeatsDto {
+  readonly activeMembersCount: number;
+  readonly pendingInvitationsCount: number;
+  readonly seatsUsed: number;
+  readonly seatsLimit: number;
+  readonly seatsRemaining: number;
+}
+
 export interface ConsoleCustomThemeRequestDto {
   readonly id: string;
   readonly requestCode: string;
   readonly serviceKind: ServiceKind;
+  readonly serviceKindLabel: string;
   readonly tenantId: string;
   readonly tenantHandle: string;
   readonly packageId: string | null;
@@ -71,6 +98,8 @@ export interface ConsoleCustomThemeRequestDto {
   readonly statusReason: string | null;
   readonly operatorNotes: string | null;
   readonly tenantCustomThemeGrants: readonly ConsoleCustomThemeGrantDto[];
+  readonly staffAccess: ConsoleStaffAccessDto;
+  readonly tenantSeats: ConsoleTenantSeatsDto | null;
   readonly version: number;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -100,11 +129,13 @@ export function formatConsolePackageDto(
 export function formatConsoleRequestDto(
   req: CustomThemeRequestRecord,
   grants: readonly TenantCustomThemeGrantSummary[] = [],
+  seats: TenantServiceSeatUsage | null = null,
 ): ConsoleCustomThemeRequestDto {
   return {
     id: req.id,
     requestCode: req.requestCode,
     serviceKind: req.serviceKind,
+    serviceKindLabel: SERVICE_KIND_LABELS_ID[req.serviceKind],
     tenantId: req.tenantId,
     tenantHandle: req.tenantHandle,
     packageId: req.packageId,
@@ -129,6 +160,28 @@ export function formatConsoleRequestDto(
       name: g.name,
       grantedAt: g.grantedAtIso,
     })),
+    staffAccess: {
+      state: req.staffAccessState,
+      stateLabel: STAFF_ACCESS_STATE_LABELS_ID[req.staffAccessState],
+      staffUserId: req.staffUserId,
+      staffEmail: req.staffEmail,
+      staffName: req.staffName,
+      staffMemberId: req.staffMemberId,
+      approvedByUserId: req.staffApprovedByUserId,
+      approvedAt: req.staffApprovedAtIso,
+      joinedAt: req.staffJoinedAtIso,
+      revokedAt: req.staffRevokedAtIso,
+      waitReason: req.staffWaitReason,
+    },
+    tenantSeats: seats
+      ? {
+          activeMembersCount: seats.activeMembersCount,
+          pendingInvitationsCount: seats.pendingInvitationsCount,
+          seatsUsed: seats.seatsUsed,
+          seatsLimit: seats.seatsLimit,
+          seatsRemaining: seats.seatsRemaining,
+        }
+      : null,
     version: req.version,
     createdAt: req.createdAtIso,
     updatedAt: req.updatedAtIso,

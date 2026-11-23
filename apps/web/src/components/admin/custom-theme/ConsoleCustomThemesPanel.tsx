@@ -2,7 +2,9 @@ import * as React from "react";
 import {
   CUSTOM_THEME_REQUEST_STATUSES,
   CUSTOM_THEME_STATUS_LABELS_ID,
+  SERVICE_KIND_LABELS_ID,
   type CustomThemeRequestStatus,
+  type ServiceKind,
 } from "@punyasitus/core/custom-themes/index";
 import {
   AlertCircleIcon,
@@ -110,6 +112,7 @@ export function ConsoleCustomThemesPanel({
   } | null>(null);
 
   // Create package form state
+  const [createServiceKind, setCreateServiceKind] = React.useState<ServiceKind>("custom_theme");
   const [createSlug, setCreateSlug] = React.useState<string>("");
   const [createName, setCreateName] = React.useState<string>("");
   const [createDescription, setCreateDescription] = React.useState<string>("");
@@ -120,6 +123,7 @@ export function ConsoleCustomThemesPanel({
   const [createActive, setCreateActive] = React.useState<boolean>(true);
   const [createReason, setCreateReason] = React.useState<string>("");
   const [isCreatingPkg, setIsCreatingPkg] = React.useState<boolean>(false);
+  const [packageKindFilter, setPackageKindFilter] = React.useState<string>("all");
 
   // Edit package inline state
   const [editingPkg, setEditingPkg] = React.useState<ConsoleCustomThemePackageDto | null>(null);
@@ -133,6 +137,7 @@ export function ConsoleCustomThemesPanel({
   const [isSavingPkg, setIsSavingPkg] = React.useState<boolean>(false);
 
   // Request filter & transition state
+  const [requestKindFilter, setRequestKindFilter] = React.useState<string>("all");
   const [statusFilter, setStatusFilter] = React.useState<string>("all");
   const [tenantSearch, setTenantSearch] = React.useState<string>("");
   const [activeTransitionReqId, setActiveTransitionReqId] = React.useState<string | null>(null);
@@ -140,6 +145,7 @@ export function ConsoleCustomThemesPanel({
   const [transitionReason, setTransitionReason] = React.useState<string>("");
   const [operatorNotes, setOperatorNotes] = React.useState<string>("");
   const [deliveredThemeId, setDeliveredThemeId] = React.useState<string>("");
+  const [staffUserEmail, setStaffUserEmail] = React.useState<string>("");
   const [isTransitioning, setIsTransitioning] = React.useState<boolean>(false);
 
   const refreshAll = async () => {
@@ -181,7 +187,7 @@ export function ConsoleCustomThemesPanel({
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          serviceKind: "custom_theme",
+          serviceKind: createServiceKind,
           slug: createSlug.trim().toLowerCase(),
           name: createName.trim(),
           description: createDescription.trim(),
@@ -366,6 +372,7 @@ export function ConsoleCustomThemesPanel({
     setTransitionReason("");
     setOperatorNotes(req.operatorNotes ?? "");
     setDeliveredThemeId(req.tenantCustomThemeGrants[0]?.themeId ?? "");
+    setStaffUserEmail(req.staffAccess.staffEmail ?? "");
     setNotice(null);
   };
 
@@ -377,6 +384,7 @@ export function ConsoleCustomThemesPanel({
     setNotice(null);
     setIsTransitioning(true);
     try {
+      const isSetup = req.serviceKind === "setup";
       const res = await fetch(
         `/api/console/custom-themes/requests/${encodeURIComponent(req.id)}`,
         {
@@ -388,8 +396,11 @@ export function ConsoleCustomThemesPanel({
             status: nextStatus,
             reason: transitionReason.trim(),
             operatorNotes: operatorNotes.trim() || null,
-            ...(nextStatus === "delivered"
+            ...(!isSetup && nextStatus === "delivered"
               ? { deliveredThemeId: deliveredThemeId.trim() || null }
+              : {}),
+            ...(isSetup && nextStatus === "in_progress" && staffUserEmail.trim()
+              ? { staffUserEmail: staffUserEmail.trim().toLowerCase() }
               : {}),
           }),
         },
@@ -397,6 +408,7 @@ export function ConsoleCustomThemesPanel({
       const payload = (await res.json().catch(() => null)) as {
         success?: boolean;
         request?: ConsoleCustomThemeRequestDto;
+        staffMembershipRemoved?: boolean;
         auditId?: string;
         error?: { message?: string };
       } | null;
@@ -416,16 +428,24 @@ export function ConsoleCustomThemesPanel({
       setNotice({
         variant: "success",
         title: `Permintaan ${updated.requestCode} -> ${updated.statusLabel}`,
-        message: `Perubahan tersimpan secara atomik (audit ${payload.auditId ?? "-"}).`,
+        message: payload.staffMembershipRemoved
+          ? `Perubahan tersimpan secara atomik & akses sementara Tim Setup telah dicabut (audit ${payload.auditId ?? "-"}).`
+          : `Perubahan tersimpan secara atomik (audit ${payload.auditId ?? "-"}).`,
       });
     } finally {
       setIsTransitioning(false);
     }
   };
 
+  const filteredPackages = React.useMemo(() => {
+    if (packageKindFilter === "all") return packages;
+    return packages.filter((pkg) => pkg.serviceKind === packageKindFilter);
+  }, [packages, packageKindFilter]);
+
   const filteredRequests = React.useMemo(() => {
     const q = tenantSearch.trim().toLowerCase();
     return requests.filter((req) => {
+      if (requestKindFilter !== "all" && req.serviceKind !== requestKindFilter) return false;
       if (statusFilter !== "all" && req.status !== statusFilter) return false;
       if (!q) return true;
       return (
@@ -435,7 +455,7 @@ export function ConsoleCustomThemesPanel({
         req.tenantId.toLowerCase().includes(q)
       );
     });
-  }, [requests, statusFilter, tenantSearch]);
+  }, [requests, requestKindFilter, statusFilter, tenantSearch]);
 
   return (
     <div className="space-y-5" data-testid="console-custom-themes-panel">
@@ -536,6 +556,25 @@ export function ConsoleCustomThemesPanel({
                 className="space-y-3"
                 data-testid="console-create-package-form"
               >
+                <div className="space-y-1">
+                  <label
+                    htmlFor="pkg-service-kind"
+                    className="block text-xs font-medium text-foreground"
+                  >
+                    Jenis Layanan *
+                  </label>
+                  <select
+                    id="pkg-service-kind"
+                    value={createServiceKind}
+                    onChange={(e) => setCreateServiceKind(e.target.value as ServiceKind)}
+                    className="flex min-h-11 w-full rounded-md border border-input bg-card px-3 py-2 text-base text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:text-sm"
+                    data-testid="select-pkg-service-kind"
+                  >
+                    <option value="custom_theme">Tema Kustom (custom_theme)</option>
+                    <option value="setup">Layanan Terima Beres (setup)</option>
+                  </select>
+                </div>
+
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div className="space-y-1">
                     <label htmlFor="pkg-slug" className="block text-xs font-medium text-foreground">
@@ -695,6 +734,22 @@ export function ConsoleCustomThemesPanel({
 
           {/* Existing Packages List */}
           <div className="min-w-0 space-y-4 lg:col-span-7" data-testid="console-packages-list">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label htmlFor="console-pkg-kind-filter" className="text-xs font-medium text-muted-foreground">
+                Filter jenis layanan paket:
+              </label>
+              <select
+                id="console-pkg-kind-filter"
+                value={packageKindFilter}
+                onChange={(e) => setPackageKindFilter(e.target.value)}
+                className="min-h-11 rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground sm:min-h-9"
+                data-testid="select-console-pkg-kind-filter"
+              >
+                <option value="all">Semua Layanan ({packages.length})</option>
+                <option value="custom_theme">Tema Kustom</option>
+                <option value="setup">Layanan Terima Beres</option>
+              </select>
+            </div>
             {editingPkg && (
               <Card className="border-primary" data-testid="console-edit-package-card">
                 <CardHeader>
@@ -852,19 +907,23 @@ export function ConsoleCustomThemesPanel({
               </Card>
             )}
 
-            {packages.length === 0 ? (
+            {filteredPackages.length === 0 ? (
               <Card>
                 <CardContent className="py-8 text-center text-sm text-muted-foreground">
-                  Belum ada paket tema kustom terdaftar. Tambahkan paket melalui formulir di
-                  samping; jika kosong, halaman tenant otomatis menampilkan mode konsultasi saja.
+                  Belum ada paket layanan terdaftar untuk filter ini. Tambahkan paket melalui
+                  formulir di samping; jika kosong, halaman tenant otomatis menampilkan mode
+                  konsultasi saja.
                 </CardContent>
               </Card>
             ) : (
-              packages.map((pkg, index) => (
+              filteredPackages.map((pkg, index) => (
                 <Card key={pkg.id} data-testid={`console-package-row-${pkg.slug}`}>
                   <CardHeader className="gap-1.5 pb-2">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={pkg.serviceKind === "setup" ? "info" : "outline"}>
+                          {SERVICE_KIND_LABELS_ID[pkg.serviceKind]}
+                        </Badge>
                         <Badge variant="outline" className="tabular-nums">
                           Urutan #{pkg.sortOrder}
                         </Badge>
@@ -972,6 +1031,21 @@ export function ConsoleCustomThemesPanel({
         <div className="space-y-4" data-testid="console-requests-section">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-wrap items-center gap-2">
+              <label htmlFor="console-req-kind-filter" className="sr-only">
+                Filter jenis layanan permintaan
+              </label>
+              <select
+                id="console-req-kind-filter"
+                value={requestKindFilter}
+                onChange={(e) => setRequestKindFilter(e.target.value)}
+                className="min-h-11 rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground sm:min-h-9"
+                data-testid="select-console-req-kind-filter"
+              >
+                <option value="all">Semua Layanan</option>
+                <option value="custom_theme">Tema Kustom</option>
+                <option value="setup">Layanan Terima Beres</option>
+              </select>
+
               <label htmlFor="console-status-filter" className="sr-only">
                 Filter status permintaan
               </label>
@@ -1018,12 +1092,20 @@ export function ConsoleCustomThemesPanel({
             <div className="space-y-4">
               {filteredRequests.map((req) => {
                 const isEditingThis = activeTransitionReqId === req.id;
+                const isSetupReq = req.serviceKind === "setup";
                 const canTransition = req.allowedNextStatuses.length > 0;
+                const statusOptions: readonly CustomThemeRequestStatus[] =
+                  isSetupReq &&
+                  req.status === "in_progress" &&
+                  req.staffAccess.state !== "active"
+                    ? ["in_progress", ...req.allowedNextStatuses]
+                    : req.allowedNextStatuses;
                 return (
                   <Card
                     key={req.id}
                     data-testid={`console-request-card-${req.requestCode}`}
                     data-status={req.status}
+                    data-service-kind={req.serviceKind}
                   >
                     <CardHeader className="gap-1.5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1031,6 +1113,9 @@ export function ConsoleCustomThemesPanel({
                           <span className="font-mono text-sm font-semibold text-foreground">
                             {req.requestCode}
                           </span>
+                          <Badge variant={isSetupReq ? "info" : "outline"}>
+                            {req.serviceKindLabel}
+                          </Badge>
                           <Badge variant={statusBadgeVariant(req.status)}>{req.statusLabel}</Badge>
                           <Badge variant="outline" className="font-mono text-xs">
                             {req.tenantHandle}
@@ -1089,21 +1174,48 @@ export function ConsoleCustomThemesPanel({
                         </div>
                       )}
 
-                      <div className="flex flex-wrap items-center gap-2 text-xs">
-                        <span className="text-muted-foreground">Izin tema kustom aktif tenant:</span>
-                        {req.tenantCustomThemeGrants.length === 0 ? (
-                          <Badge variant="outline">Belum ada izin tema kustom</Badge>
-                        ) : (
-                          req.tenantCustomThemeGrants.map((g) => (
-                            <Badge key={g.grantId} variant="success">
-                              <ShieldCheckIcon className="size-3" aria-hidden="true" />
-                              <span>
-                                {g.name} ({g.themeId})
-                              </span>
-                            </Badge>
-                          ))
-                        )}
-                      </div>
+                      {isSetupReq ? (
+                        <div className="space-y-1.5 rounded-md border border-border bg-muted/30 p-2.5 text-xs">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-muted-foreground">Status Akses Tim Setup:</span>
+                            <Badge variant="outline">{req.staffAccess.stateLabel}</Badge>
+                            {req.tenantSeats && (
+                              <Badge
+                                variant={req.tenantSeats.seatsRemaining === 0 ? "warning" : "outline"}
+                                className="tabular-nums"
+                              >
+                                Kursi tenant: {req.tenantSeats.seatsUsed}/{req.tenantSeats.seatsLimit}
+                              </Badge>
+                            )}
+                          </div>
+                          {req.staffAccess.staffEmail && (
+                            <p className="text-foreground">
+                              Staf ditugaskan:{" "}
+                              <strong>{req.staffAccess.staffName ?? "Tim Setup"}</strong> (
+                              {req.staffAccess.staffEmail})
+                            </p>
+                          )}
+                          {req.staffAccess.waitReason && (
+                            <p className="text-warning">{req.staffAccess.waitReason}</p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap items-center gap-2 text-xs">
+                          <span className="text-muted-foreground">Izin tema kustom aktif tenant:</span>
+                          {req.tenantCustomThemeGrants.length === 0 ? (
+                            <Badge variant="outline">Belum ada izin tema kustom</Badge>
+                          ) : (
+                            req.tenantCustomThemeGrants.map((g) => (
+                              <Badge key={g.grantId} variant="success">
+                                <ShieldCheckIcon className="size-3" aria-hidden="true" />
+                                <span>
+                                  {g.name} ({g.themeId})
+                                </span>
+                              </Badge>
+                            ))
+                          )}
+                        </div>
+                      )}
 
                       {req.deliveredThemeId && (
                         <p className="text-xs font-medium text-primary">
@@ -1142,7 +1254,7 @@ export function ConsoleCustomThemesPanel({
                                   className="flex min-h-11 w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground"
                                   data-testid={`select-next-status-${req.requestCode}`}
                                 >
-                                  {req.allowedNextStatuses.map((st) => (
+                                  {statusOptions.map((st) => (
                                     <option key={st} value={st}>
                                       {CUSTOM_THEME_STATUS_LABELS_ID[st]} ({st})
                                     </option>
@@ -1150,7 +1262,7 @@ export function ConsoleCustomThemesPanel({
                                 </select>
                               </div>
 
-                              {nextStatus === "delivered" && (
+                              {!isSetupReq && nextStatus === "delivered" && (
                                 <div className="space-y-1">
                                   <label
                                     htmlFor={`delivered-theme-${req.id}`}
@@ -1185,7 +1297,39 @@ export function ConsoleCustomThemesPanel({
                                   )}
                                 </div>
                               )}
+
+                              {isSetupReq && nextStatus === "in_progress" && (
+                                  <div className="space-y-1">
+                                    <label
+                                      htmlFor={`staff-email-${req.id}`}
+                                      className="block text-xs font-medium text-foreground"
+                                    >
+                                      Email Akun Tim Setup (Menunggu Persetujuan Pemilik)
+                                    </label>
+                                    <Input
+                                      id={`staff-email-${req.id}`}
+                                      type="email"
+                                      value={staffUserEmail}
+                                      onChange={(e) => setStaffUserEmail(e.target.value)}
+                                      placeholder="staff-setup@punyasitus.com"
+                                      className="min-h-11 text-base sm:text-sm"
+                                      data-testid={`input-staff-email-${req.requestCode}`}
+                                    />
+                                  </div>
+                                )}
                             </div>
+
+                            {isSetupReq &&
+                              (nextStatus === "delivered" ||
+                                nextStatus === "declined" ||
+                                nextStatus === "cancelled") && (
+                                <p className="text-xs text-muted-foreground">
+                                  Status akhir <strong>{CUSTOM_THEME_STATUS_LABELS_ID[nextStatus]}</strong>{" "}
+                                  pada Layanan Terima Beres tidak memerlukan izin tema kustom dan
+                                  akan mencabut keanggotaan sementara Tim Setup secara otomatis &amp;
+                                  idempoten.
+                                </p>
+                              )}
 
                             <div className="space-y-1">
                               <label

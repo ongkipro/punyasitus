@@ -1001,6 +1001,7 @@ export async function updateTenantMemberRole(
        SET role = ?
        WHERE id = ?
          AND organization_id = ?
+         AND role != 'setup_staff'
          AND (
            role != 'owner'
            OR (SELECT COUNT(*) FROM members WHERE organization_id = ? AND role = 'owner') > 1
@@ -1052,6 +1053,13 @@ export async function updateTenantMemberRole(
         409,
         "LAST_OWNER_PROTECTED",
         "Pemilik terakhir situs tidak dapat diturunkan perannya. Lakukan alih kepemilikan terlebih dahulu.",
+      );
+    }
+    if (existing.role === "setup_staff") {
+      throw new InvitationError(
+        403,
+        "FORBIDDEN",
+        "Peran anggota sementara Tim Setup tidak dapat diubah. Cabut akses melalui Layanan Terima Beres atau hapus anggota ini.",
       );
     }
     throw new InvitationError(404, "NOT_FOUND", "Anggota tidak dapat diperbarui.");
@@ -1119,9 +1127,37 @@ export async function removeTenantMember(
     { onlyIfPreviousChanged: true },
   );
 
+  const batchStmts: D1PreparedStatement[] = [deleteStmt, auditStmt];
+  if (existingBefore.role === "setup_staff") {
+    const hasRequestsTable = await platformDb
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'custom_theme_requests' LIMIT 1",
+      )
+      .first<{ readonly name: string }>();
+    if (hasRequestsTable) {
+      batchStmts.push(
+        platformDb
+          .prepare(
+            `UPDATE custom_theme_requests
+             SET staff_access_state = 'revoked',
+                 staff_revoked_at = ?,
+                 staff_wait_reason = NULL,
+                 version = version + 1,
+                 updated_at = ?
+             WHERE tenant_id = ?
+               AND staff_member_id = ?
+               AND service_kind = 'setup'
+               AND staff_access_state = 'active'
+               AND NOT EXISTS (SELECT 1 FROM members WHERE id = ?)`,
+          )
+          .bind(nowMs, nowMs, input.tenantId, targetMemberId, targetMemberId),
+      );
+    }
+  }
+
   let results: D1Result[];
   try {
-    results = await platformDb.batch([deleteStmt, auditStmt]);
+    results = await platformDb.batch(batchStmts);
   } catch (err) {
     throw new InvitationError(
       500,
@@ -1478,4 +1514,131 @@ export async function assertTenantOwnerBillingAccess(
     handle: member.handle,
     role: member.role,
   };
+}
+
+/**
+ * Lightweight live seat usage summary against the canonical 5-member seat cap
+ * (`active members + active unexpired pending invitations <= MAX_TENANT_MEMBERS`).
+ * Used by Terima Beres setup service (REQ-070, TASK-069) so staff delivery
+ * strictly shares and respects the TASK-026 seat cap without bypassing it.
+ */
+export interface TenantSeatSummary {
+  readonly tenantId: string;
+  readonly organizationId: string;
+  readonly activeMembersCount: number;
+  readonly pendingInvitationsCount: number;
+  readonly seatsUsed: number;
+  readonly seatsLimit: number;
+  readonly seatsRemaining: number;
+}
+
+export async function getTenantSeatSummary(
+  platformDb: D1Database,
+  params: {
+    readonly tenantId: string;
+    readonly nowMs?: number;
+  },
+): Promise<TenantSeatSummary | null> {
+  const nowMs = Math.trunc(params.nowMs ?? Date.now());
+  const tenantRow = await platformDb
+    .prepare("SELECT id, organization_id FROM tenants WHERE id = ? LIMIT 1")
+    .bind(params.tenantId.trim())
+    .first<{ readonly id: string; readonly organization_id: string }>();
+  if (!tenantRow) return null;
+
+  const counts = await platformDb
+    .prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM members WHERE organization_id = ?) AS active_members,
+         (SELECT COUNT(*) FROM invitations WHERE organization_id = ? AND status = 'pending' AND expires_at > ?) AS pending_invites`,
+    )
+    .bind(tenantRow.organization_id, tenantRow.organization_id, nowMs)
+    .first<{ readonly active_members: number; readonly pending_invites: number }>();
+
+  const activeMembersCount = Number(counts?.active_members ?? 0);
+  const pendingInvitationsCount = Number(counts?.pending_invites ?? 0);
+  const seatsUsed = activeMembersCount + pendingInvitationsCount;
+  return {
+    tenantId: tenantRow.id,
+    organizationId: tenantRow.organization_id,
+    activeMembersCount,
+    pendingInvitationsCount,
+    seatsUsed,
+    seatsLimit: MAX_TENANT_MEMBERS,
+    seatsRemaining: Math.max(0, MAX_TENANT_MEMBERS - seatsUsed),
+  };
+}
+
+/**
+ * Builds the atomic SQL statement to insert an owner-approved Terima Beres
+ * `setup_staff` member (mapped to canonical `editor` RBAC role) strictly guarded
+ * by the canonical 5-seat cap (`members + active unexpired pending invitations < 5`).
+ */
+export function buildSetupStaffJoinStatement(
+  platformDb: D1Database,
+  params: {
+    readonly memberId: string;
+    readonly organizationId: string;
+    readonly staffUserId: string;
+    readonly nowMs: number;
+    readonly extraWhereSql?: string;
+    readonly extraBinds?: readonly unknown[];
+  },
+): D1PreparedStatement {
+  const nowMs = Math.trunc(params.nowMs);
+  const extraCondition = params.extraWhereSql ? ` AND (${params.extraWhereSql})` : "";
+  return platformDb
+    .prepare(
+      `INSERT INTO members (id, organization_id, user_id, role, created_at)
+       SELECT ?, ?, ?, 'setup_staff', ?
+       WHERE NOT EXISTS (
+         SELECT 1 FROM members WHERE organization_id = ? AND user_id = ?
+       )
+       AND (
+         (SELECT COUNT(*) FROM members WHERE organization_id = ?)
+         + (SELECT COUNT(*) FROM invitations WHERE organization_id = ? AND status = 'pending' AND expires_at > ?)
+       ) < ?${extraCondition}`,
+    )
+    .bind(
+      params.memberId,
+      params.organizationId,
+      params.staffUserId,
+      nowMs,
+      params.organizationId,
+      params.staffUserId,
+      params.organizationId,
+      params.organizationId,
+      nowMs,
+      MAX_TENANT_MEMBERS,
+      ...(params.extraBinds ?? []),
+    );
+}
+
+/**
+ * Builds an idempotent SQL statement removing ONLY the exact `setup_staff` member row
+ * (`id = staffMemberId`) created for a setup request. Never removes by `user_id` and
+ * never removes `owner`, `admin`, `editor`, or `agency_staff`.
+ */
+export function buildSetupStaffRemovalStatement(
+  platformDb: D1Database,
+  params: {
+    readonly organizationId: string;
+    readonly staffMemberId: string;
+    readonly extraWhereSql?: string;
+    readonly extraBinds?: readonly unknown[];
+  },
+): D1PreparedStatement {
+  const extraCondition = params.extraWhereSql ? ` AND (${params.extraWhereSql})` : "";
+  return platformDb
+    .prepare(
+      `DELETE FROM members
+       WHERE organization_id = ?
+         AND id = ?
+         AND role = 'setup_staff'${extraCondition}`,
+    )
+    .bind(
+      params.organizationId,
+      params.staffMemberId,
+      ...(params.extraBinds ?? []),
+    );
 }
