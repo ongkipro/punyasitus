@@ -1,6 +1,7 @@
 export {
   ALLOWED_EMAIL_SENDER,
   BillingReceiptTemplateDataSchema,
+  CustomThemeRequestOperatorNoticeTemplateDataSchema,
   DEFAULT_EMAIL_SENDER_NAME,
   DomainNoticeStatusSchema,
   DomainNoticeTemplateDataSchema,

@@ -12,6 +12,7 @@ export const EMAIL_TEMPLATE_NAMES = [
   "suppression-owner-notice",
   "renewal-reminder",
   "lifecycle-notice",
+  "custom-theme-request-operator-notice",
 ] as const;
 
 export type EmailTemplateName = (typeof EMAIL_TEMPLATE_NAMES)[number];
@@ -251,6 +252,16 @@ export const LifecycleNoticeTemplateDataSchema = z.strictObject({
   operatorHold: z.boolean().optional(),
 });
 
+export const CustomThemeRequestOperatorNoticeTemplateDataSchema = z.strictObject({
+  recipientName: z.string().trim().max(120).optional(),
+  requestCode: z.string().trim().min(1).max(64),
+  tenantHandle: z.string().trim().min(1).max(64),
+  brandName: z.string().trim().min(1).max(100),
+  packageName: z.string().trim().min(1).max(120),
+  contactPreference: z.enum(["whatsapp", "email", "both"]),
+  consoleUrl: z.string().trim().min(1).max(2048),
+});
+
 export interface EmailTemplateDataMap {
   readonly "verify-email": z.input<typeof VerifyEmailTemplateDataSchema>;
   readonly "reset-password": z.input<typeof ResetPasswordTemplateDataSchema>;
@@ -260,6 +271,9 @@ export interface EmailTemplateDataMap {
   readonly "suppression-owner-notice": z.input<typeof SuppressionOwnerNoticeTemplateDataSchema>;
   readonly "renewal-reminder": z.input<typeof RenewalReminderTemplateDataSchema>;
   readonly "lifecycle-notice": z.input<typeof LifecycleNoticeTemplateDataSchema>;
+  readonly "custom-theme-request-operator-notice": z.input<
+    typeof CustomThemeRequestOperatorNoticeTemplateDataSchema
+  >;
 }
 
 export interface RenderedEmailTemplate {
@@ -705,6 +719,66 @@ export function renderEmailTemplate<T extends EmailTemplateName>(
         html: wrapIndonesianHtmlEmail({
           title: subject,
           preheader: summaryText.slice(0, 140),
+          bodyHtml,
+        }),
+        text,
+      };
+    }
+
+    case "custom-theme-request-operator-notice": {
+      const data = CustomThemeRequestOperatorNoticeTemplateDataSchema.parse(rawData);
+      const greet = greeting(data.recipientName);
+      const requestCode = sanitizePlainText(data.requestCode);
+      const tenantHandle = sanitizePlainText(data.tenantHandle);
+      const brandName = sanitizePlainText(data.brandName);
+      const packageName = sanitizePlainText(data.packageName);
+      const safeConsoleUrl = sanitizeActionUrl(data.consoleUrl);
+
+      const prefLabel =
+        data.contactPreference === "whatsapp"
+          ? "WhatsApp"
+          : data.contactPreference === "email"
+            ? "Email"
+            : "WhatsApp & Email";
+
+      const subject = sanitizeHeaderValue(
+        `Permintaan tema kustom baru ${requestCode} (${tenantHandle}) — PunyaSitus`,
+      );
+      const preheader = `Permintaan tema kustom baru dari ${brandName} (${tenantHandle}) untuk paket ${packageName}.`;
+
+      const bodyHtml = [
+        `<p style="margin:0 0 12px;">${greet.html}</p>`,
+        `<p style="margin:0 0 16px;">Terdapat permintaan <strong>Desain Tema Kustom</strong> baru yang perlu ditinjau di Console Operasional Platform.</p>`,
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="6" style="margin:0 0 16px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;">',
+        `<tr><td style="color:#64748b;width:40%;">Kode Permintaan</td><td style="font-weight:600;">${escapeHtml(requestCode)}</td></tr>`,
+        `<tr><td style="color:#64748b;">Handle Situs</td><td>${escapeHtml(tenantHandle)}</td></tr>`,
+        `<tr><td style="color:#64748b;">Nama Brand</td><td>${escapeHtml(brandName)}</td></tr>`,
+        `<tr><td style="color:#64748b;">Paket Dipilih</td><td>${escapeHtml(packageName)}</td></tr>`,
+        `<tr><td style="color:#64748b;">Preferensi Kontak</td><td>${escapeHtml(prefLabel)}</td></tr>`,
+        "</table>",
+        renderPrimaryButtonHtml("Tinjau di Console Operasional", safeConsoleUrl),
+        `<p style="margin:0 0 12px;font-size:13px;color:#475569;word-break:break-all;">Tautan console: ${escapeHtml(safeConsoleUrl)}</p>`,
+      ].join("");
+
+      const text = [
+        greet.text,
+        "",
+        "Terdapat permintaan Desain Tema Kustom baru untuk ditinjau di Console Operasional Platform.",
+        `Kode Permintaan: ${requestCode}`,
+        `Handle Situs: ${tenantHandle}`,
+        `Nama Brand: ${brandName}`,
+        `Paket Dipilih: ${packageName}`,
+        `Preferensi Kontak: ${prefLabel}`,
+        "",
+        `Tinjau di Console Operasional: ${safeConsoleUrl}`,
+      ].join("\n");
+
+      return {
+        template,
+        subject,
+        html: wrapIndonesianHtmlEmail({
+          title: subject,
+          preheader,
           bodyHtml,
         }),
         text,

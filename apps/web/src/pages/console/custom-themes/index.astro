@@ -1,0 +1,166 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  authorizeConsoleRequest,
+  DEFAULT_SECOND_FACTOR_WINDOW_MS,
+} from "@punyasitus/auth/platform/index";
+import {
+  listConsoleCustomThemeRequests,
+  listCustomThemePackages,
+  listTenantActiveCustomThemeGrants,
+  type TenantCustomThemeGrantSummary,
+} from "@punyasitus/db/custom-themes/index";
+import { ConsoleCustomThemesPanel } from "@/components/admin/custom-theme";
+import ConsoleLayout from "@/layouts/ConsoleLayout.astro";
+import {
+  formatConsolePackageDto,
+  formatConsoleRequestDto,
+  resolveConsoleCustomThemesRuntimeEnv,
+} from "../../api/console/custom-themes/_shared";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const consoleEnv = resolveConsoleCustomThemesRuntimeEnv(
+  env as unknown as Record<string, unknown>,
+);
+
+const authz = await authorizeConsoleRequest(
+  Astro.request,
+  consoleEnv,
+  { action: "console.custom_themes.view", requireStepUp: false },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  // CRITICAL R3 INVARIANT: Non-console hosts MUST return a bare neutral 404 (zero Console disclosure!)
+  if (authz.response.status === 404) {
+    return new Response("Not Found", {
+      status: 404,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    });
+  }
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>Akses Console Operasional Dibatasi</title></head><body><main><h1>Akses Console Operasional Dibatasi</h1><p>Halaman layanan tema kustom hanya tersedia bagi operator platform aktif dengan 2FA terverifikasi di host console.</p></main></body></html>`,
+    {
+      status: authz.response.status,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    },
+  );
+}
+
+const { actor, platformDb, nowMs, host } = authz.ctx;
+const [rawPackages, rawRequests] = await Promise.all([
+  listCustomThemePackages(platformDb, { serviceKind: "custom_theme", limit: 100 }),
+  listConsoleCustomThemeRequests(platformDb, { serviceKind: "custom_theme", limit: 100 }),
+]);
+
+const distinctTenantIds = Array.from(new Set(rawRequests.map((r) => r.tenantId)));
+const grantEntries = await Promise.all(
+  distinctTenantIds.map(async (tid) => {
+    const grants = await listTenantActiveCustomThemeGrants(platformDb, tid);
+    return [tid, grants] as const;
+  }),
+);
+const grantsByTenant = new Map<string, readonly TenantCustomThemeGrantSummary[]>(grantEntries);
+
+const initialPackages = rawPackages.map(formatConsolePackageDto);
+const initialRequests = rawRequests.map((req) =>
+  formatConsoleRequestDto(req, grantsByTenant.get(req.tenantId) ?? []),
+);
+
+const stepUpFresh =
+  actor.twoFactorVerifiedAtMs !== null &&
+  nowMs - actor.twoFactorVerifiedAtMs <= DEFAULT_SECOND_FACTOR_WINDOW_MS;
+
+const navLinks = [
+  { href: "/console", label: "Ringkasan", current: false },
+  { href: "/console/custom-themes", label: "Tema Kustom", current: true },
+  { href: "/console/billing", label: "Tagihan", current: false },
+  { href: "/console/coupons", label: "Kupon Promo", current: false },
+  { href: "/console/operators", label: "Operator", current: false },
+  { href: "/console/audit", label: "Audit Log", current: false },
+  { href: "/console/health", label: "Kesehatan", current: false },
+  { href: "/console/settings", label: "Pengaturan", current: false },
+];
+---
+
+<ConsoleLayout
+  title="Layanan & Permintaan Tema Kustom"
+  workspaceSubtitle={host.host}
+  activeNavId="settings"
+  basePath="/console"
+  userDisplayName={actor.grant.name ?? actor.grant.email ?? "Operator Platform"}
+  userRoleLabel={actor.grant.role === "platform_support" ? "Dukungan Platform" : "Superadmin Platform"}
+>
+  <div class="space-y-5" data-testid="console-custom-themes-page">
+    <section
+      data-testid="console-context-banner"
+      aria-label="Konteks akses platform"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning-border bg-warning-soft px-4 py-3 text-xs text-warning md:text-sm"
+    >
+      <p class="font-medium">
+        Console Operasional Platform — Akses istimewa — bukan penyamaran akun tenant
+      </p>
+      <span class="rounded border border-warning-border bg-card px-2 py-0.5 text-xs font-medium text-foreground">
+        {stepUpFresh ? "2FA Step-Up Aktif (<10m)" : "2FA Perlu Verifikasi Ulang"}
+      </span>
+    </section>
+
+    <nav
+      aria-label="Navigasi modul console"
+      data-testid="console-section-nav"
+      class="flex flex-wrap items-center gap-2 border-b border-border pb-3"
+    >
+      {
+        navLinks.map((link) => (
+          <a
+            href={link.href}
+            aria-current={link.current ? "page" : undefined}
+            class:list={[
+              "inline-flex min-h-11 items-center rounded-md border px-3.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9",
+              link.current
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card text-foreground hover:bg-muted",
+            ]}
+          >
+            {link.label}
+          </a>
+        ))
+      }
+    </nav>
+
+    <header class="space-y-1">
+      <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+        Layanan &amp; Permintaan Tema Kustom
+      </h1>
+      <p class="text-sm text-muted-foreground">
+        Kelola paket jasa tema kustom dan proses antrean permintaan tenant. Menandai permintaan
+        sebagai <strong>Diserahkan (delivered)</strong> wajib menautkan izin tema kustom aktif milik
+        tenant dan setiap mutasi dicatat atomik ke log audit platform.
+      </p>
+    </header>
+
+    <ConsoleCustomThemesPanel
+      client:load
+      initialPackages={initialPackages}
+      initialRequests={initialRequests}
+      stepUpFresh={stepUpFresh}
+    />
+  </div>
+</ConsoleLayout>
