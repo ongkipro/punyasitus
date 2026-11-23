@@ -39,6 +39,7 @@ import {
   issueAndDeliverSettlementReceipt,
   type ReceiptDeliveryQueueBinding,
 } from "./receipt-delivery.ts";
+import { recordAffiliateCommissionForSettledPayment } from "./affiliate-commission.ts";
 
 /**
  * Scheduled AutoLaris Advice Reconciliation & Exactly-Once Entitlement Grant Worker
@@ -105,6 +106,14 @@ export interface ReconcilePaymentAttemptOutcome {
   readonly grantId: string | null;
   readonly receiptId?: string | null;
   readonly receiptNumber?: string | null;
+  readonly commissionEntryId?: string | null;
+  readonly commissionStatus?:
+    | "created"
+    | "duplicate"
+    | "ineligible"
+    | "skipped_pre_0032"
+    | "enqueued_retry"
+    | null;
   readonly operatorHoldPreserved: boolean;
   readonly deferredTerminalState: boolean;
   readonly auditId: string | null;
@@ -364,6 +373,21 @@ export async function reconcilePaymentAttemptViaAdvice(
         })
       : { receiptId: null, receiptNumber: null };
 
+    const recoveredCommission = existing?.settlement_id
+      ? await recordAffiliateCommissionForSettledPayment({
+          db: options.db,
+          tenantId: attempt.tenantId,
+          settlementId: existing.settlement_id,
+          paymentAttemptId: attempt.attemptId,
+          obligationId: attempt.obligationId,
+          receiptId: recoveredReceipt.receiptId,
+          requestId: options.requestId ?? null,
+          nowMs,
+          jobsQueue: options.jobsQueue ?? null,
+          logger: options.logger,
+        })
+      : null;
+
     return {
       attemptId: attempt.attemptId,
       obligationId: attempt.obligationId,
@@ -381,6 +405,12 @@ export async function reconcilePaymentAttemptViaAdvice(
         ? {
             receiptId: recoveredReceipt.receiptId,
             receiptNumber: recoveredReceipt.receiptNumber,
+          }
+        : {}),
+      ...(recoveredCommission?.commissionEntryId
+        ? {
+            commissionEntryId: recoveredCommission.commissionEntryId,
+            commissionStatus: recoveredCommission.status,
           }
         : {}),
       operatorHoldPreserved: attempt.operatorHold,
@@ -754,6 +784,20 @@ export async function reconcilePaymentAttemptViaAdvice(
       nowMs,
     });
 
+    const commission = await recordAffiliateCommissionForSettledPayment({
+      db: options.db,
+      tenantId: attempt.tenantId,
+      settlementId: settled.settlementId,
+      paymentAttemptId: attempt.attemptId,
+      obligationId: attempt.obligationId,
+      receiptId: issued.receiptId,
+      confirmedAtMs: decision.settledAtMs,
+      requestId: options.requestId ?? null,
+      nowMs,
+      jobsQueue: options.jobsQueue ?? null,
+      logger: options.logger,
+    });
+
     return {
       attemptId: attempt.attemptId,
       obligationId: attempt.obligationId,
@@ -769,6 +813,12 @@ export async function reconcilePaymentAttemptViaAdvice(
       grantId: settled.grantId,
       ...(issued.receiptId
         ? { receiptId: issued.receiptId, receiptNumber: issued.receiptNumber }
+        : {}),
+      ...(commission.commissionEntryId
+        ? {
+            commissionEntryId: commission.commissionEntryId,
+            commissionStatus: commission.status,
+          }
         : {}),
       operatorHoldPreserved: settled.operatorHoldPreserved,
       deferredTerminalState: false,
@@ -787,6 +837,20 @@ export async function reconcilePaymentAttemptViaAdvice(
       nowMs,
     });
 
+    const recoveredCommission = await recordAffiliateCommissionForSettledPayment({
+      db: options.db,
+      tenantId: attempt.tenantId,
+      settlementId: settled.settlementId,
+      paymentAttemptId: attempt.attemptId,
+      obligationId: attempt.obligationId,
+      receiptId: recovered.receiptId,
+      confirmedAtMs: decision.settledAtMs,
+      requestId: options.requestId ?? null,
+      nowMs,
+      jobsQueue: options.jobsQueue ?? null,
+      logger: options.logger,
+    });
+
     return {
       attemptId: attempt.attemptId,
       obligationId: attempt.obligationId,
@@ -802,6 +866,12 @@ export async function reconcilePaymentAttemptViaAdvice(
       grantId: settled.grantId,
       ...(recovered.receiptId
         ? { receiptId: recovered.receiptId, receiptNumber: recovered.receiptNumber }
+        : {}),
+      ...(recoveredCommission.commissionEntryId
+        ? {
+            commissionEntryId: recoveredCommission.commissionEntryId,
+            commissionStatus: recoveredCommission.status,
+          }
         : {}),
       operatorHoldPreserved: attempt.operatorHold,
       deferredTerminalState: false,
