@@ -1,0 +1,107 @@
+---
+import { sanitizeRichTextHtml } from "@punyasitus/core/content/index";
+import type { ClosedSectionType, RichTextSectionConfig } from "@punyasitus/core/theme/index";
+
+export interface Props {
+  readonly id: string;
+  readonly sectionType?: ClosedSectionType;
+  readonly config: RichTextSectionConfig;
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  sectionType = "rich_text",
+  config,
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+} = Astro.props;
+
+// Defensively re-sanitize rich-text HTML through TASK-006 state-machine sanitizer
+const safeHtml = sanitizeRichTextHtml(config.bodyHtml);
+const headingId = `section-${id}-heading`;
+const hasMedia = Boolean(config.media);
+---
+
+<section
+  id={id}
+  class:list={["ps-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type={sectionType}
+  data-testid={`section-${id}`}
+  aria-labelledby={config.heading ? headingId : undefined}
+>
+  <div class="ps-container">
+    <div class:list={["ps-richtext-layout", hasMedia && "ps-richtext-layout--with-media"]}>
+      <div>
+        {(config.eyebrow || config.heading || config.subheading) && (
+          <header class="ps-section-header">
+            {config.eyebrow && <p class="ps-eyebrow">{config.eyebrow}</p>}
+            {config.heading &&
+              (isFirstSection ? (
+                <h1 id={headingId} class="ps-section-title">
+                  {config.heading}
+                </h1>
+              ) : (
+                <h2 id={headingId} class="ps-section-title">
+                  {config.heading}
+                </h2>
+              ))}
+            {config.subheading && <p class="ps-section-subtitle">{config.subheading}</p>}
+          </header>
+        )}
+
+        {safeHtml && <div class="ps-prose" data-testid={`section-${id}-prose`} set:html={safeHtml} />}
+
+        {config.milestones.length > 0 && (
+          <div class="ps-milestones" aria-label="Pencapaian utama">
+            {config.milestones.map((m) => (
+              <div class="ps-milestone">
+                <p class="ps-milestone-value">{m.value}</p>
+                <p class="ps-milestone-label">{m.label}</p>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {config.cta && (
+          <div class="ps-actions" style="margin-top: 1.5rem;">
+            <a
+              href={isPreview ? undefined : config.cta.href}
+              class:list={[
+                "ps-btn",
+                config.cta.variant === "whatsapp"
+                  ? "ps-btn--whatsapp"
+                  : config.cta.variant === "secondary"
+                    ? "ps-btn--secondary"
+                    : "ps-btn--primary",
+                isPreview && "ps-btn--inert",
+              ]}
+              aria-disabled={isPreview ? "true" : undefined}
+              target={!isPreview && config.cta.openInNewTab ? "_blank" : undefined}
+              rel={!isPreview && config.cta.openInNewTab ? "noopener noreferrer" : undefined}
+            >
+              {config.cta.label}
+            </a>
+          </div>
+        )}
+      </div>
+
+      {config.media && (
+        <figure class="ps-hero-media">
+          <img
+            src={config.media.src}
+            alt={config.media.alt}
+            width={config.media.width}
+            height={config.media.height}
+            loading="lazy"
+            decoding="async"
+          />
+        </figure>
+      )}
+    </div>
+  </div>
+</section>

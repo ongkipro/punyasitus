@@ -1,0 +1,235 @@
+---
+import "./sections.css";
+import type {
+  BlogLatestSectionConfig,
+  ContactLocationSectionConfig,
+  CtaBannerSectionConfig,
+  FaqSectionConfig,
+  FeaturesSectionConfig,
+  GallerySectionConfig,
+  HeroSectionConfig,
+  HeroVariant,
+  OfferingsGridSectionConfig,
+  RichTextSectionConfig,
+  TestimonialsSectionConfig,
+} from "@punyasitus/core/theme/index";
+import {
+  safeAssemblePageSections,
+  type PageAssemblyMode,
+  type SectionOfferingItem,
+} from "../../../core/section-registry.ts";
+import SectionBlogLatest from "./SectionBlogLatest.astro";
+import SectionContactLocation from "./SectionContactLocation.astro";
+import SectionCtaBanner from "./SectionCtaBanner.astro";
+import SectionFaq from "./SectionFaq.astro";
+import SectionFeatures from "./SectionFeatures.astro";
+import SectionGallery from "./SectionGallery.astro";
+import SectionHero from "./SectionHero.astro";
+import SectionOfferingsGrid from "./SectionOfferingsGrid.astro";
+import SectionRichText from "./SectionRichText.astro";
+import SectionTestimonials from "./SectionTestimonials.astro";
+
+/**
+ * Dynamic Page Section Assembler (`apps/web/src/themes/default/sections/SectionRenderer.astro`).
+ *
+ * Maps validated page sections through the closed unified registry in exact order,
+ * skipping disabled sections, applying Permenkes health-category guardrails,
+ * supporting both `/` and `/{pageSlug}` across all 6 platform themes, and failing
+ * safely on invalid section entries without crashing SSR.
+ */
+
+export interface Props {
+  readonly sections: unknown;
+  readonly themeId: string;
+  readonly routePath?: string;
+  readonly pageSlug?: string | null;
+  readonly isHomepage?: boolean;
+  readonly mode?: PageAssemblyMode;
+  readonly businessCategory?: string | null;
+  readonly heroVariant?: HeroVariant;
+  readonly primaryOrigin?: string;
+  readonly fallbackOfferings?: readonly SectionOfferingItem[];
+  readonly fallbackPosts?: BlogLatestSectionConfig["posts"];
+  readonly fallbackBusiness?: {
+    readonly address?: string | null;
+    readonly weekdayHours?: string | null;
+    readonly holidayHours?: string | null;
+    readonly phone?: string | null;
+    readonly whatsappE164?: string | null;
+    readonly email?: string | null;
+    readonly mapsUrl?: string | null;
+  };
+}
+
+const {
+  sections,
+  themeId,
+  routePath,
+  pageSlug = null,
+  isHomepage,
+  mode = "published",
+  businessCategory = null,
+  heroVariant,
+  primaryOrigin = "https://situsku.click",
+  fallbackOfferings = [],
+  fallbackPosts = [],
+  fallbackBusiness,
+} = Astro.props;
+
+const result = safeAssemblePageSections({
+  sections,
+  themeId,
+  routePath,
+  pageSlug,
+  isHomepage,
+  mode,
+  businessCategory,
+});
+
+const assembled = result.ok ? result.assembled : null;
+const assemblyErrorCode = result.ok ? null : result.error.code;
+const resolvedHeroVariant: HeroVariant =
+  heroVariant ?? assembled?.themeProfile.heroVariant ?? "split";
+---
+
+{assembled ? (
+  <div
+    class="ps-page-sections"
+    data-testid="page-sections-root"
+    data-route-kind={assembled.routeKind}
+    data-route-path={assembled.routePath}
+    data-theme-id={assembled.themeId}
+    data-assembly-mode={assembled.mode}
+    data-rendered-count={String(assembled.renderableSections.length)}
+    data-permenkes-warnings={String(assembled.warnings.length)}
+  >
+    {assembled.renderableSections.map((item) => {
+      const { section, componentKey, surfaceTone, isFirstSection } = item;
+      switch (componentKey) {
+        case "SectionHero":
+          return (
+            <SectionHero
+              id={section.id}
+              config={section.config as HeroSectionConfig}
+              heroVariant={resolvedHeroVariant}
+              isPreview={assembled.isPreview}
+              isFirstSection={isFirstSection}
+            />
+          );
+        case "SectionFeatures":
+          return (
+            <SectionFeatures
+              id={section.id}
+              sectionType={section.type}
+              config={section.config as FeaturesSectionConfig}
+              surfaceTone={surfaceTone}
+              isPreview={assembled.isPreview}
+              isFirstSection={isFirstSection}
+            />
+          );
+        case "SectionOfferingsGrid":
+          return (
+            <SectionOfferingsGrid
+              id={section.id}
+              sectionType={section.type}
+              config={section.config as OfferingsGridSectionConfig}
+              fallbackOfferings={fallbackOfferings}
+              fallbackWhatsappPhone={fallbackBusiness?.whatsappE164 ?? null}
+              primaryOrigin={primaryOrigin}
+              surfaceTone={surfaceTone}
+              isPreview={assembled.isPreview}
+              isFirstSection={isFirstSection}
+            />
+          );
+        case "SectionRichText":
+          return (
+            <SectionRichText
+              id={section.id}
+              sectionType={section.type}
+              config={section.config as RichTextSectionConfig}
+              surfaceTone={surfaceTone}
+              isPreview={assembled.isPreview}
+              isFirstSection={isFirstSection}
+            />
+          );
+        case "SectionGallery":
+          return (
+            <SectionGallery
+              id={section.id}
+              config={section.config as GallerySectionConfig}
+              surfaceTone={surfaceTone}
+              isPreview={assembled.isPreview}
+              isFirstSection={isFirstSection}
+            />
+          );
+        case "SectionTestimonials":
+          return (
+            <SectionTestimonials
+              id={section.id}
+              config={section.config as TestimonialsSectionConfig}
+              isHealthCategory={assembled.isHealthCategory}
+              surfaceTone={surfaceTone}
+              isFirstSection={isFirstSection}
+            />
+          );
+        case "SectionFaq":
+          return (
+            <SectionFaq
+              id={section.id}
+              config={section.config as FaqSectionConfig}
+              surfaceTone={surfaceTone}
+              isFirstSection={isFirstSection}
+            />
+          );
+        case "SectionBlogLatest":
+          return (
+            <SectionBlogLatest
+              id={section.id}
+              sectionType={section.type}
+              config={section.config as BlogLatestSectionConfig}
+              fallbackPosts={fallbackPosts}
+              surfaceTone={surfaceTone}
+              isPreview={assembled.isPreview}
+              isFirstSection={isFirstSection}
+            />
+          );
+        case "SectionCtaBanner":
+          return (
+            <SectionCtaBanner
+              id={section.id}
+              sectionType={section.type}
+              config={section.config as CtaBannerSectionConfig}
+              surfaceTone={surfaceTone}
+              isPreview={assembled.isPreview}
+              isFirstSection={isFirstSection}
+            />
+          );
+        case "SectionContactLocation":
+          return (
+            <SectionContactLocation
+              id={section.id}
+              sectionType={section.type}
+              config={section.config as ContactLocationSectionConfig}
+              fallbackBusiness={fallbackBusiness}
+              surfaceTone={surfaceTone}
+              isPreview={assembled.isPreview}
+              isFirstSection={isFirstSection}
+            />
+          );
+      }
+    })}
+  </div>
+) : (
+  <section
+    class="ps-section"
+    role="status"
+    data-testid="section-renderer-error"
+    data-error-code={assemblyErrorCode ?? "INVALID_SECTION_CONFIG"}
+  >
+    <div class="ps-container">
+      <p class="ps-empty-state">
+        Konfigurasi susunan halaman tidak dapat ditampilkan saat ini.
+      </p>
+    </div>
+  </section>
+)}

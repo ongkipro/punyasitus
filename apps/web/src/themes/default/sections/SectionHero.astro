@@ -1,0 +1,108 @@
+---
+import type { HeroSectionConfig, HeroVariant } from "@punyasitus/core/theme/index";
+
+export interface Props {
+  readonly id: string;
+  readonly config: HeroSectionConfig;
+  readonly heroVariant?: HeroVariant;
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  config,
+  heroVariant = "split",
+  isPreview = false,
+  isFirstSection = true,
+} = Astro.props;
+
+const resolvedVariant: HeroVariant = config.variantOverride ?? heroVariant;
+const hasMedia = Boolean(config.media);
+const headingId = `section-${id}-heading`;
+
+function ctaClass(variant: "primary" | "secondary" | "whatsapp"): string {
+  if (variant === "whatsapp") return "ps-btn ps-btn--whatsapp";
+  if (variant === "secondary") return "ps-btn ps-btn--secondary";
+  return "ps-btn ps-btn--primary";
+}
+---
+
+<section
+  id={id}
+  class="ps-section ps-hero"
+  data-section-id={id}
+  data-section-type="hero"
+  data-hero-variant={resolvedVariant}
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <div class:list={["ps-hero-grid", hasMedia && "ps-hero-grid--with-media"]}>
+      <div class="ps-hero-content">
+        {config.eyebrow && <p class="ps-eyebrow">{config.eyebrow}</p>}
+        {isFirstSection ? (
+          <h1 id={headingId} class="ps-hero-heading">
+            {config.heading}
+          </h1>
+        ) : (
+          <h2 id={headingId} class="ps-hero-heading">
+            {config.heading}
+          </h2>
+        )}
+        {config.subheading && <p class="ps-hero-subheading">{config.subheading}</p>}
+
+        {(config.primaryCta || config.secondaryCta) && (
+          <div class="ps-actions">
+            {config.primaryCta && (
+              <a
+                href={isPreview ? undefined : config.primaryCta.href}
+                class:list={[ctaClass(config.primaryCta.variant), isPreview && "ps-btn--inert"]}
+                aria-disabled={isPreview ? "true" : undefined}
+                target={!isPreview && config.primaryCta.openInNewTab ? "_blank" : undefined}
+                rel={!isPreview && config.primaryCta.openInNewTab ? "noopener noreferrer" : undefined}
+                data-testid={`section-${id}-primary-cta`}
+              >
+                {config.primaryCta.label}
+              </a>
+            )}
+            {config.secondaryCta && (
+              <a
+                href={isPreview ? undefined : config.secondaryCta.href}
+                class:list={[ctaClass(config.secondaryCta.variant), isPreview && "ps-btn--inert"]}
+                aria-disabled={isPreview ? "true" : undefined}
+                target={!isPreview && config.secondaryCta.openInNewTab ? "_blank" : undefined}
+                rel={!isPreview && config.secondaryCta.openInNewTab ? "noopener noreferrer" : undefined}
+                data-testid={`section-${id}-secondary-cta`}
+              >
+                {config.secondaryCta.label}
+              </a>
+            )}
+          </div>
+        )}
+
+        {config.highlights.length > 0 && (
+          <ul class="ps-hero-highlights">
+            {config.highlights.map((item) => (
+              <li>{item}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {config.media && (
+        <figure class="ps-hero-media">
+          <img
+            src={config.media.src}
+            alt={config.media.alt}
+            width={config.media.width}
+            height={config.media.height}
+            loading="eager"
+            decoding="sync"
+            fetchpriority="high"
+          />
+        </figure>
+      )}
+    </div>
+  </div>
+</section>

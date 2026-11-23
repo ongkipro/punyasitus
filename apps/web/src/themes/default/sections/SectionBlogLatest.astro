@@ -1,0 +1,112 @@
+---
+import type { BlogLatestSectionConfig, ClosedSectionType } from "@punyasitus/core/theme/index";
+import { formatIndonesianPublishedDate } from "../../../core/section-registry.ts";
+
+export interface Props {
+  readonly id: string;
+  readonly sectionType?: ClosedSectionType;
+  readonly config: BlogLatestSectionConfig;
+  readonly fallbackPosts?: BlogLatestSectionConfig["posts"];
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  sectionType = "blog_latest",
+  config,
+  fallbackPosts = [],
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+const sourcePosts = config.posts.length > 0 ? config.posts : fallbackPosts;
+const visiblePosts = sourcePosts.slice(0, config.limit);
+---
+
+<section
+  id={id}
+  class:list={["ps-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type={sectionType}
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header ps-section-header--row">
+      <div>
+        {config.eyebrow && <p class="ps-eyebrow">{config.eyebrow}</p>}
+        {isFirstSection ? (
+          <h1 id={headingId} class="ps-section-title">
+            {config.heading}
+          </h1>
+        ) : (
+          <h2 id={headingId} class="ps-section-title">
+            {config.heading}
+          </h2>
+        )}
+        {config.subheading && <p class="ps-section-subtitle">{config.subheading}</p>}
+      </div>
+
+      <a
+        href={isPreview ? undefined : config.viewAllHref}
+        class:list={["ps-btn ps-btn--secondary", isPreview && "ps-btn--inert"]}
+        aria-disabled={isPreview ? "true" : undefined}
+      >
+        {config.viewAllLabel}
+      </a>
+    </header>
+
+    {visiblePosts.length > 0 ? (
+      <div class="ps-card-grid ps-card-grid--3">
+        {visiblePosts.map((post) => {
+          const postHref = `/blog/${post.slug}`;
+          const formattedDate = formatIndonesianPublishedDate(post.publishedAt);
+          return (
+            <article class="ps-card ps-post-card" data-post-slug={post.slug}>
+              {post.coverImage && (
+                <div class="ps-offering-media">
+                  <img
+                    src={post.coverImage.src}
+                    alt={post.coverImage.alt || post.title}
+                    width={post.coverImage.width}
+                    height={post.coverImage.height}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </div>
+              )}
+              <div class="ps-post-body">
+                {post.categoryName && (
+                  <div>
+                    <span class="ps-badge">{post.categoryName}</span>
+                  </div>
+                )}
+                <h3 class="ps-card-title">
+                  {isPreview ? (
+                    post.title
+                  ) : (
+                    <a href={postHref} class="ps-offering-title-link">
+                      {post.title}
+                    </a>
+                  )}
+                </h3>
+                {post.excerpt && <p class="ps-card-desc">{post.excerpt}</p>}
+                <div class="ps-post-meta">
+                  {post.authorName && <span>{post.authorName}</span>}
+                  {formattedDate && <time datetime={post.publishedAt ?? undefined}>{formattedDate}</time>}
+                  <span>{post.readingTimeMinutes} menit baca</span>
+                </div>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    ) : (
+      <p class="ps-empty-state">Belum ada artikel yang diterbitkan.</p>
+    )}
+  </div>
+</section>

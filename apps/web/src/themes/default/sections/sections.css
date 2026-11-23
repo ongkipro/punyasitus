@@ -1,0 +1,863 @@
+/*
+ * PunyaSitus Unified Public Section Stylesheet (REQ-019, REQ-040, PLAN §8, DESIGN.md §1 & §7, TASK-013)
+ *
+ * Pure CSS consuming ONLY `--ps-*` theme tokens injected by `Layout.astro`.
+ * Zero React, zero admin imports, zero JavaScript dependency, fluid 320px..2560px,
+ * zero horizontal overflow, >= 44px touch targets, and WCAG AA contrast across all
+ * six platform themes (`compro`, `sales`, `travel`, `catalog`, `resto`, `dealer`).
+ */
+
+.ps-section {
+  padding-block: clamp(2.25rem, 5vw, var(--ps-section-py, 64px));
+  background-color: var(--ps-surface);
+  color: var(--ps-ink);
+  border-bottom: 1px solid var(--ps-border);
+}
+
+.ps-section:last-child {
+  border-bottom: 0;
+}
+
+.ps-section--muted {
+  background-color: var(--ps-surface-muted);
+}
+
+.ps-section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  max-width: 46rem;
+  margin-bottom: clamp(1.5rem, 3vw, 2.25rem);
+}
+
+.ps-section-header--row {
+  max-width: none;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.ps-section-header--center {
+  margin-inline: auto;
+  text-align: center;
+  align-items: center;
+}
+
+.ps-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ps-brand-primary);
+}
+
+.ps-section-title {
+  margin: 0;
+  color: var(--ps-ink);
+  overflow-wrap: anywhere;
+}
+
+.ps-section-subtitle {
+  margin: 0;
+  font-size: clamp(0.975rem, 0.94rem + 0.2vw, 1.0625rem);
+  color: var(--ps-ink-muted);
+  max-width: 60ch;
+}
+
+/* -------------------------------------------------------------------------
+ * Shared Buttons & Badges
+ * ------------------------------------------------------------------------- */
+.ps-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.ps-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0.625rem 1.25rem;
+  border-radius: var(--ps-radius);
+  border: 1px solid transparent;
+  font-family: var(--ps-font-sans);
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.25;
+  text-decoration: none;
+  cursor: pointer;
+  transition: opacity 0.15s ease, background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.ps-btn:hover {
+  text-decoration: none;
+  opacity: 0.92;
+}
+
+.ps-btn--primary {
+  background-color: var(--ps-brand-primary);
+  color: var(--ps-brand-on-primary);
+  border-color: var(--ps-brand-primary);
+}
+
+.ps-btn--secondary {
+  background-color: var(--ps-surface);
+  color: var(--ps-ink);
+  border-color: var(--ps-border);
+}
+
+.ps-btn--secondary:hover {
+  background-color: var(--ps-surface-muted);
+  border-color: var(--ps-brand-primary);
+  color: var(--ps-brand-primary);
+  opacity: 1;
+}
+
+.ps-btn--whatsapp {
+  background-color: var(--ps-wa-bg);
+  color: var(--ps-wa-fg);
+  border-color: var(--ps-wa-bg);
+}
+
+.ps-btn--inert,
+[data-preview="true"] .ps-btn[aria-disabled="true"] {
+  cursor: default;
+  pointer-events: none;
+  opacity: 0.88;
+}
+
+.ps-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--ps-radius-sm);
+  border: 1px solid var(--ps-border);
+  background-color: var(--ps-surface-muted);
+  color: var(--ps-ink);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
+}
+
+.ps-badge--brand {
+  background-color: var(--ps-brand-primary);
+  border-color: var(--ps-brand-primary);
+  color: var(--ps-brand-on-primary);
+}
+
+.ps-badge--secondary {
+  background-color: var(--ps-brand-secondary);
+  border-color: var(--ps-brand-secondary);
+  color: var(--ps-brand-on-secondary);
+}
+
+.ps-badge--sold {
+  background-color: #991b1b;
+  border-color: #991b1b;
+  color: #ffffff;
+}
+
+.ps-badge--booked {
+  background-color: #fef3c7;
+  border-color: #d97706;
+  color: #78350f;
+}
+
+/* -------------------------------------------------------------------------
+ * 1. Hero Section
+ * ------------------------------------------------------------------------- */
+.ps-hero {
+  background-color: var(--ps-surface-muted);
+  padding-block: clamp(2.5rem, 6vw, 4.75rem);
+}
+
+.ps-hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 3rem);
+  align-items: center;
+}
+
+.ps-hero-content {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.ps-hero-heading {
+  margin: 0;
+  max-width: 24ch;
+  overflow-wrap: anywhere;
+}
+
+.ps-hero-subheading {
+  margin: 0;
+  max-width: 58ch;
+  font-size: clamp(1rem, 0.95rem + 0.35vw, 1.125rem);
+  color: var(--ps-ink-muted);
+}
+
+.ps-hero-highlights {
+  list-style: none;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--ps-ink);
+}
+
+.ps-hero-highlights li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.ps-hero-highlights li::before {
+  content: "";
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background-color: var(--ps-brand-primary);
+  flex-shrink: 0;
+}
+
+.ps-hero-media {
+  margin: 0;
+  border-radius: var(--ps-radius-lg);
+  overflow: hidden;
+  border: 1px solid var(--ps-border);
+  background-color: var(--ps-surface);
+  aspect-ratio: 3 / 2;
+}
+
+.ps-hero-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ps-hero[data-hero-variant="centered"] .ps-hero-content {
+  align-items: center;
+  text-align: center;
+  margin-inline: auto;
+  max-width: 48rem;
+}
+
+.ps-hero[data-hero-variant="centered"] .ps-hero-heading,
+.ps-hero[data-hero-variant="centered"] .ps-hero-subheading {
+  margin-inline: auto;
+}
+
+.ps-hero[data-hero-variant="centered"] .ps-hero-highlights,
+.ps-hero[data-hero-variant="centered"] .ps-actions {
+  justify-content: center;
+}
+
+.ps-hero[data-hero-variant="banner"] {
+  border-top: 4px solid var(--ps-brand-primary);
+}
+
+.ps-hero[data-hero-variant="minimal"] {
+  padding-block: clamp(2rem, 4vw, 3.25rem);
+  background-color: var(--ps-surface);
+}
+
+/* -------------------------------------------------------------------------
+ * 2. Features / Highlights / Trust Logos / Team Grid
+ * ------------------------------------------------------------------------- */
+.ps-card-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(1rem, 2vw, 1.5rem);
+}
+
+.ps-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: clamp(1.125rem, 2vw, 1.5rem);
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius);
+  background-color: var(--ps-surface);
+}
+
+.ps-card-title {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--ps-ink);
+  overflow-wrap: anywhere;
+}
+
+.ps-card-desc {
+  margin: 0;
+  font-size: 0.9375rem;
+  color: var(--ps-ink-muted);
+  overflow-wrap: anywhere;
+}
+
+.ps-card-meta {
+  margin: 0;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--ps-brand-primary);
+}
+
+.ps-feature-thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--ps-radius-sm);
+  overflow: hidden;
+  border: 1px solid var(--ps-border);
+  background-color: var(--ps-surface-muted);
+}
+
+.ps-feature-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* -------------------------------------------------------------------------
+ * 3. Offerings Grid (service / product / tour / vehicle)
+ * ------------------------------------------------------------------------- */
+.ps-offering-card {
+  padding: 0;
+  overflow: hidden;
+  gap: 0;
+}
+
+.ps-offering-media {
+  position: relative;
+  aspect-ratio: 3 / 2;
+  background-color: var(--ps-surface-muted);
+  border-bottom: 1px solid var(--ps-border);
+  overflow: hidden;
+}
+
+.ps-offering-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ps-offering-media-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  color: var(--ps-ink-muted);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+.ps-offering-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin-bottom: 0.25rem;
+}
+
+.ps-offering-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 0.625rem;
+  padding: clamp(1rem, 2vw, 1.375rem);
+  min-width: 0;
+}
+
+.ps-offering-title-link {
+  color: var(--ps-ink);
+  text-decoration: none;
+}
+
+.ps-offering-title-link:hover {
+  color: var(--ps-brand-primary);
+  text-decoration: underline;
+}
+
+.ps-offering-price-wrap {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding-top: 0.375rem;
+}
+
+.ps-offering-price {
+  margin: 0;
+  font-size: 1.0625rem;
+  font-weight: 700;
+  color: var(--ps-brand-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ps-offering-original {
+  font-size: 0.875rem;
+  color: var(--ps-ink-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.ps-offering-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0 clamp(1rem, 2vw, 1.375rem) clamp(1rem, 2vw, 1.375rem);
+}
+
+.ps-offering-footer .ps-btn {
+  flex: 1 1 auto;
+}
+
+/* -------------------------------------------------------------------------
+ * 4. Rich Text / About Section
+ * ------------------------------------------------------------------------- */
+.ps-richtext-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: clamp(1.5rem, 4vw, 2.75rem);
+  align-items: start;
+}
+
+.ps-prose {
+  max-width: 68ch;
+  color: var(--ps-ink);
+  overflow-wrap: anywhere;
+}
+
+.ps-prose :where(p, ul, ol, blockquote, table) {
+  margin-top: 0;
+  margin-bottom: 1rem;
+}
+
+.ps-prose :where(h2, h3, h4) {
+  margin-top: 1.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.ps-prose blockquote {
+  margin-inline: 0;
+  padding: 0.75rem 1rem;
+  border-left: 3px solid var(--ps-brand-primary);
+  background-color: var(--ps-surface-muted);
+  color: var(--ps-ink-muted);
+}
+
+.ps-prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+.ps-prose :where(th, td) {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--ps-border);
+  text-align: left;
+}
+
+.ps-milestones {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+}
+
+.ps-milestone {
+  padding: 1rem;
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius);
+  background-color: var(--ps-surface-muted);
+}
+
+.ps-milestone-value {
+  margin: 0 0 0.25rem;
+  font-family: var(--ps-font-heading);
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--ps-brand-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.ps-milestone-label {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--ps-ink-muted);
+}
+
+/* -------------------------------------------------------------------------
+ * 5. Gallery Section (images + TASK-089 YouTube facade-ready cards)
+ * ------------------------------------------------------------------------- */
+.ps-gallery-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+.ps-gallery-item {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius);
+  overflow: hidden;
+  background-color: var(--ps-surface);
+}
+
+.ps-gallery-frame {
+  aspect-ratio: 3 / 2;
+  background-color: var(--ps-surface-muted);
+  overflow: hidden;
+}
+
+.ps-gallery-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ps-gallery-caption {
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+  color: var(--ps-ink-muted);
+}
+
+.ps-gallery-video-facade {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1.25rem;
+  min-height: 12rem;
+  background-color: var(--ps-surface-muted);
+}
+
+/* -------------------------------------------------------------------------
+ * 6. Testimonials Section & Permenkes Compliance Notice
+ * ------------------------------------------------------------------------- */
+.ps-compliance-notice {
+  margin: 0 0 1.25rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid #d97706;
+  border-radius: var(--ps-radius-sm);
+  background-color: #fef3c7;
+  color: #78350f;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.ps-testimonial-card {
+  justify-content: space-between;
+}
+
+.ps-testimonial-quote {
+  margin: 0;
+  font-size: 0.975rem;
+  color: var(--ps-ink);
+  line-height: 1.65;
+}
+
+.ps-testimonial-author {
+  margin: 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--ps-border);
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+.ps-testimonial-name {
+  font-weight: 700;
+  font-size: 0.9375rem;
+  color: var(--ps-ink);
+}
+
+.ps-testimonial-role {
+  font-size: 0.8125rem;
+  color: var(--ps-ink-muted);
+}
+
+/* -------------------------------------------------------------------------
+ * 7. FAQ Section (100% Native No-JS <details>/<summary>)
+ * ------------------------------------------------------------------------- */
+.ps-faq-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 52rem;
+}
+
+.ps-faq-item {
+  border: 1px solid var(--ps-border);
+  border-radius: var(--ps-radius);
+  background-color: var(--ps-surface);
+  overflow: hidden;
+}
+
+.ps-faq-summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  min-height: 48px;
+  padding: 0.875rem 1.125rem;
+  font-weight: 600;
+  font-size: 1rem;
+  color: var(--ps-ink);
+  cursor: pointer;
+  user-select: none;
+}
+
+.ps-faq-summary::-webkit-details-marker {
+  display: none;
+}
+
+.ps-faq-summary::marker {
+  content: "";
+}
+
+.ps-faq-summary:hover {
+  background-color: var(--ps-surface-muted);
+}
+
+.ps-faq-icon {
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  color: var(--ps-brand-primary);
+  transition: transform 0.15s ease;
+}
+
+.ps-faq-item[open] .ps-faq-icon {
+  transform: rotate(180deg);
+}
+
+.ps-faq-answer {
+  padding: 0 1.125rem 1rem;
+  color: var(--ps-ink-muted);
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  border-top: 1px solid var(--ps-border);
+  padding-top: 0.875rem;
+}
+
+.ps-faq-answer p {
+  margin: 0;
+}
+
+/* -------------------------------------------------------------------------
+ * 8. Blog Latest Section
+ * ------------------------------------------------------------------------- */
+.ps-post-card {
+  padding: 0;
+  overflow: hidden;
+  gap: 0;
+}
+
+.ps-post-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  gap: 0.5rem;
+  padding: clamp(1rem, 2vw, 1.375rem);
+}
+
+.ps-post-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.875rem;
+  font-size: 0.8125rem;
+  color: var(--ps-ink-muted);
+  margin-top: auto;
+  padding-top: 0.5rem;
+}
+
+/* -------------------------------------------------------------------------
+ * 9. CTA Banner Section
+ * ------------------------------------------------------------------------- */
+.ps-cta-box {
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  padding: clamp(1.5rem, 4vw, 2.75rem);
+  border-radius: var(--ps-radius-lg);
+  background-color: var(--ps-brand-primary);
+  color: var(--ps-brand-on-primary);
+}
+
+.ps-cta-box .ps-eyebrow,
+.ps-cta-box .ps-section-title,
+.ps-cta-box .ps-section-subtitle,
+.ps-cta-note {
+  color: var(--ps-brand-on-primary);
+}
+
+.ps-cta-box .ps-section-subtitle,
+.ps-cta-note {
+  opacity: 0.92;
+}
+
+.ps-cta-note {
+  margin: 0;
+  font-size: 0.875rem;
+}
+
+.ps-cta-box .ps-btn--primary {
+  background-color: var(--ps-surface);
+  color: var(--ps-brand-primary);
+  border-color: var(--ps-surface);
+}
+
+.ps-cta-box .ps-btn--secondary {
+  background-color: transparent;
+  color: var(--ps-brand-on-primary);
+  border-color: currentColor;
+}
+
+.ps-cta-box .ps-btn--whatsapp {
+  border-color: rgba(255, 255, 255, 0.45);
+}
+
+/* -------------------------------------------------------------------------
+ * 10. Contact & Location / Branches Section
+ * ------------------------------------------------------------------------- */
+.ps-contact-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.25rem;
+}
+
+.ps-contact-dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.875rem;
+}
+
+.ps-contact-dl dt {
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--ps-ink-muted);
+  margin-bottom: 0.25rem;
+}
+
+.ps-contact-dl dd {
+  margin: 0;
+  font-size: 0.975rem;
+  color: var(--ps-ink);
+  overflow-wrap: anywhere;
+}
+
+.ps-empty-state {
+  padding: 1.5rem;
+  border: 1px dashed var(--ps-border);
+  border-radius: var(--ps-radius);
+  background-color: var(--ps-surface-muted);
+  color: var(--ps-ink-muted);
+  font-size: 0.9375rem;
+}
+
+/* -------------------------------------------------------------------------
+ * Theme-Specific Structural Nuances (Lossless Content, Distinct Visual Tone)
+ * ------------------------------------------------------------------------- */
+[data-ps-theme="resto"] .ps-card,
+[data-ps-theme="travel"] .ps-card {
+  border-width: 1px;
+}
+
+[data-ps-theme="dealer"] .ps-card {
+  border-top: 3px solid var(--ps-brand-primary);
+}
+
+[data-ps-theme="dealer"] .ps-offering-price {
+  color: var(--ps-brand-secondary);
+}
+
+[data-ps-theme="resto"] .ps-section-title,
+[data-ps-theme="resto"] .ps-hero-heading {
+  letter-spacing: -0.01em;
+}
+
+[data-ps-theme="catalog"] .ps-offering-body {
+  padding: 1rem;
+}
+
+/* -------------------------------------------------------------------------
+ * Responsive Breakpoints (DESIGN.md §1: 768px, 1024px)
+ * ------------------------------------------------------------------------- */
+@media (min-width: 768px) {
+  .ps-card-grid--2,
+  .ps-card-grid--3,
+  .ps-card-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ps-gallery-grid--2,
+  .ps-gallery-grid--3,
+  .ps-gallery-grid--4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ps-contact-grid--two {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ps-cta-box {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
+}
+
+@media (min-width: 1024px) {
+  .ps-hero[data-hero-variant="split"] .ps-hero-grid--with-media,
+  .ps-hero[data-hero-variant="banner"] .ps-hero-grid--with-media {
+    grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  }
+
+  .ps-richtext-layout--with-media {
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+  }
+
+  .ps-card-grid--3 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ps-card-grid--4 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .ps-gallery-grid--3,
+  .ps-gallery-grid--4 {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ps-btn,
+  .ps-faq-icon {
+    transition: none;
+  }
+}

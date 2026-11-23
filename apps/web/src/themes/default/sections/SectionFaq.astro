@@ -1,0 +1,85 @@
+---
+import type { FaqSectionConfig } from "@punyasitus/core/theme/index";
+
+/**
+ * Native Zero-JS FAQ Accordion (`<details>` / `<summary>`).
+ * 100% keyboard and mouse accessible even when JavaScript is disabled.
+ */
+
+export interface Props {
+  readonly id: string;
+  readonly config: FaqSectionConfig;
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  config,
+  surfaceTone = "surface",
+  isFirstSection = false,
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+---
+
+<section
+  id={id}
+  class:list={["ps-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type="faq"
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header">
+      {config.eyebrow && <p class="ps-eyebrow">{config.eyebrow}</p>}
+      {isFirstSection ? (
+        <h1 id={headingId} class="ps-section-title">
+          {config.heading}
+        </h1>
+      ) : (
+        <h2 id={headingId} class="ps-section-title">
+          {config.heading}
+        </h2>
+      )}
+      {config.subheading && <p class="ps-section-subtitle">{config.subheading}</p>}
+    </header>
+
+    {config.items.length > 0 ? (
+      <div class="ps-faq-list" data-testid={`section-${id}-faq-list`}>
+        {config.items.map((item, idx) => (
+          <details
+            class="ps-faq-item"
+            open={item.defaultOpen ? true : undefined}
+            data-testid={`section-${id}-faq-item-${idx}`}
+          >
+            <summary
+              class="ps-faq-summary"
+              data-testid={`section-${id}-faq-trigger-${idx}`}
+            >
+              <span>{item.question}</span>
+              <svg
+                class="ps-faq-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </summary>
+            <div class="ps-faq-answer" data-testid={`section-${id}-faq-answer-${idx}`}>
+              <p>{item.answer}</p>
+            </div>
+          </details>
+        ))}
+      </div>
+    ) : (
+      <p class="ps-empty-state">Belum ada pertanyaan umum yang tersedia.</p>
+    )}
+  </div>
+</section>

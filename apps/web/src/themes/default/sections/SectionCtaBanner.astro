@@ -1,0 +1,82 @@
+---
+import type { ClosedSectionType, CtaBannerSectionConfig } from "@punyasitus/core/theme/index";
+
+export interface Props {
+  readonly id: string;
+  readonly sectionType?: ClosedSectionType;
+  readonly config: CtaBannerSectionConfig;
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  sectionType = "cta_banner",
+  config,
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+
+function ctaClass(variant: "primary" | "secondary" | "whatsapp"): string {
+  if (variant === "whatsapp") return "ps-btn ps-btn--whatsapp";
+  if (variant === "secondary") return "ps-btn ps-btn--secondary";
+  return "ps-btn ps-btn--primary";
+}
+---
+
+<section
+  id={id}
+  class:list={["ps-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type={sectionType}
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <div class="ps-cta-box">
+      <div style="display: flex; flex-direction: column; gap: 0.5rem; max-width: 42rem;">
+        {config.eyebrow && <p class="ps-eyebrow">{config.eyebrow}</p>}
+        {isFirstSection ? (
+          <h1 id={headingId} class="ps-section-title">
+            {config.heading}
+          </h1>
+        ) : (
+          <h2 id={headingId} class="ps-section-title">
+            {config.heading}
+          </h2>
+        )}
+        {config.subheading && <p class="ps-section-subtitle">{config.subheading}</p>}
+        {config.note && <p class="ps-cta-note">{config.note}</p>}
+      </div>
+
+      <div class="ps-actions">
+        <a
+          href={isPreview ? undefined : config.primaryCta.href}
+          class:list={[ctaClass(config.primaryCta.variant), isPreview && "ps-btn--inert"]}
+          aria-disabled={isPreview ? "true" : undefined}
+          target={!isPreview && config.primaryCta.openInNewTab ? "_blank" : undefined}
+          rel={!isPreview && config.primaryCta.openInNewTab ? "noopener noreferrer" : undefined}
+          data-testid={`section-${id}-primary-cta`}
+        >
+          {config.primaryCta.label}
+        </a>
+
+        {config.secondaryCta && (
+          <a
+            href={isPreview ? undefined : config.secondaryCta.href}
+            class:list={[ctaClass(config.secondaryCta.variant), isPreview && "ps-btn--inert"]}
+            aria-disabled={isPreview ? "true" : undefined}
+            target={!isPreview && config.secondaryCta.openInNewTab ? "_blank" : undefined}
+            rel={!isPreview && config.secondaryCta.openInNewTab ? "noopener noreferrer" : undefined}
+          >
+            {config.secondaryCta.label}
+          </a>
+        )}
+      </div>
+    </div>
+  </div>
+</section>

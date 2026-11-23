@@ -1,0 +1,88 @@
+---
+import type { ClosedSectionType, FeaturesSectionConfig } from "@punyasitus/core/theme/index";
+
+export interface Props {
+  readonly id: string;
+  readonly sectionType?: ClosedSectionType;
+  readonly config: FeaturesSectionConfig;
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id,
+  sectionType = "features",
+  config,
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+const gridClass = `ps-card-grid ps-card-grid--${config.columns}`;
+---
+
+<section
+  id={id}
+  class:list={["ps-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type={sectionType}
+  data-testid={`section-${id}`}
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header">
+      {config.eyebrow && <p class="ps-eyebrow">{config.eyebrow}</p>}
+      {isFirstSection ? (
+        <h1 id={headingId} class="ps-section-title">
+          {config.heading}
+        </h1>
+      ) : (
+        <h2 id={headingId} class="ps-section-title">
+          {config.heading}
+        </h2>
+      )}
+      {config.subheading && <p class="ps-section-subtitle">{config.subheading}</p>}
+    </header>
+
+    {config.items.length > 0 ? (
+      <div class={gridClass}>
+        {config.items.map((item) => (
+          <article class="ps-card">
+            {item.image && (
+              <div class="ps-feature-thumb">
+                <img
+                  src={item.image.src}
+                  alt={item.image.alt}
+                  width={item.image.width}
+                  height={item.image.height}
+                  loading="lazy"
+                  decoding="async"
+                />
+              </div>
+            )}
+            {item.badge && (
+              <div>
+                <span class="ps-badge">{item.badge}</span>
+              </div>
+            )}
+            <h3 class="ps-card-title">
+              {item.href && !isPreview ? (
+                <a href={item.href} class="ps-offering-title-link">
+                  {item.title}
+                </a>
+              ) : (
+                item.title
+              )}
+            </h3>
+            {item.description && <p class="ps-card-desc">{item.description}</p>}
+            {item.meta && <p class="ps-card-meta">{item.meta}</p>}
+          </article>
+        ))}
+      </div>
+    ) : (
+      <p class="ps-empty-state">Belum ada poin keunggulan yang ditampilkan.</p>
+    )}
+  </div>
+</section>
