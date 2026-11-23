@@ -69,11 +69,25 @@ export interface OwnerBillingObligationDto {
   readonly baseAmountIdr: number;
   readonly discountAmountIdr: number;
   readonly netAmountIdr: number;
+  readonly couponCode?: string | null;
   readonly currency: "IDR";
   readonly periodStartAt: string | null;
   readonly periodEndAt: string | null;
   readonly version: number;
   readonly createdAt: string;
+}
+
+export interface AppliedCouponPreviewDto {
+  readonly id?: string;
+  readonly code: string;
+  readonly discountKind: "percent" | "fixed_idr";
+  readonly discountValue: number;
+  readonly plan: BillingPlanInterval;
+  readonly baseAmountIdr: number;
+  readonly discountAmountIdr: number;
+  readonly netBaseAmountIdr: number;
+  readonly affiliateCommissionableBaseIdr: number;
+  readonly estimatedChannelFeeIdr?: number;
 }
 
 export interface OwnerBillingAttemptDto {
@@ -329,6 +343,7 @@ export interface CheckoutBreakdown {
   readonly baseAmountIdr: number;
   readonly discountAmountIdr: number;
   readonly netAmountIdr: number;
+  readonly couponCode: string | null;
   readonly channelFeeIdr: number;
   readonly totalPayableIdr: number;
   readonly yearlySavingsIdr: number;
@@ -342,6 +357,7 @@ export function computeCheckoutBreakdown(input: {
   readonly plan: BillingPlanInterval;
   readonly pricingPlans: readonly OwnerBillingPlanDto[];
   readonly selectedChannel: OwnerBillingChannelDto | null;
+  readonly appliedCoupon?: AppliedCouponPreviewDto | null;
   readonly tenantStatus: TenantStatus;
   readonly paidThroughIso: string | null;
   readonly trialEndsAtIso: string | null;
@@ -355,11 +371,23 @@ export function computeCheckoutBreakdown(input: {
     yearlyPlan?.savingsIdr ?? computeYearlySavingsIdr(monthlyBase, yearlyBase);
 
   const baseAmountIdr = input.plan === "yearly" ? yearlyBase : monthlyBase;
-  const discountAmountIdr = 0;
-  const netAmountIdr = baseAmountIdr - discountAmountIdr;
-  const channelFeeIdr = input.selectedChannel
-    ? Math.max(0, Math.trunc(input.selectedChannel.estimatedFeeIdr))
+  const matchingCoupon =
+    input.appliedCoupon && input.appliedCoupon.plan === input.plan ? input.appliedCoupon : null;
+  const discountAmountIdr = matchingCoupon
+    ? Math.max(0, Math.min(baseAmountIdr, Math.trunc(matchingCoupon.discountAmountIdr)))
     : 0;
+  const netAmountIdr = matchingCoupon
+    ? Math.max(0, Math.trunc(matchingCoupon.netBaseAmountIdr))
+    : baseAmountIdr - discountAmountIdr;
+  const couponCode = matchingCoupon ? matchingCoupon.code : null;
+  const channelFeeIdr =
+    matchingCoupon &&
+    typeof matchingCoupon.estimatedChannelFeeIdr === "number" &&
+    matchingCoupon.estimatedChannelFeeIdr > 0
+      ? Math.trunc(matchingCoupon.estimatedChannelFeeIdr)
+      : input.selectedChannel
+        ? Math.max(0, Math.trunc(input.selectedChannel.estimatedFeeIdr))
+        : 0;
   const totalPayableIdr = netAmountIdr + channelFeeIdr;
 
   const paidThroughMs = input.paidThroughIso ? Date.parse(input.paidThroughIso) : null;
@@ -380,6 +408,7 @@ export function computeCheckoutBreakdown(input: {
     baseAmountIdr,
     discountAmountIdr,
     netAmountIdr,
+    couponCode,
     channelFeeIdr,
     totalPayableIdr,
     yearlySavingsIdr,
@@ -523,12 +552,14 @@ export function buildBillingIdempotencyScopeKey(input: {
   readonly paidThroughIso?: string | null;
   readonly plan: BillingPlanInterval;
   readonly channelCode: string;
+  readonly couponCode?: string | null;
 }): string {
   const oblPart = input.obligationId?.trim()
     ? `obl:${input.obligationId.trim()}`
     : `new:${input.latestObligationId?.trim() || "none"}:${input.paidThroughIso?.trim() || "none"}`;
   const channelPart = input.channelCode.trim().toUpperCase() || "NONE";
-  return `ps_billing_idem_v1:${input.tenantId.trim()}:${oblPart}:${input.plan}:${channelPart}`;
+  const couponPart = input.couponCode?.trim() ? `:cpn:${input.couponCode.trim().toUpperCase()}` : "";
+  return `ps_billing_idem_v1:${input.tenantId.trim()}:${oblPart}:${input.plan}:${channelPart}${couponPart}`;
 }
 
 export function clearAllTenantBillingIdempotencyKeys(

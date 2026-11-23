@@ -22,9 +22,10 @@ import {
 } from "../platform/audit.ts";
 import { applyVerifiedEntitlementGrant } from "./entitlements.ts";
 import { ensureBillingObligationsSchema } from "./migrations.ts";
-import type {
-  BillingObligationApiState,
-  PaymentAttemptLifecycleState,
+import {
+  closeBillingObligationNonPaid,
+  type BillingObligationApiState,
+  type PaymentAttemptLifecycleState,
 } from "./repository.ts";
 
 /**
@@ -111,6 +112,15 @@ function wrapAuditOrThrow(err: unknown): never {
     );
   }
   throw err;
+}
+
+async function hasCouponRedemptionsTableSafe(db: D1Database): Promise<boolean> {
+  const row = await db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'coupon_redemptions' LIMIT 1",
+    )
+    .first<{ readonly name: string }>();
+  return Boolean(row);
 }
 
 function isUniqueConstraintError(err: unknown): boolean {
@@ -735,10 +745,11 @@ export async function settleVerifiedPaymentAttempt(
     };
   }
 
-  // 3. Atomic single-batch settlement + entitlement grant + tenant update + audit via TASK-059's
-  //    `applyVerifiedEntitlementGrant`!
+  // 3. Atomic single-batch settlement + entitlement grant + coupon consume + tenant update + audit
+  //    via TASK-059's `applyVerifiedEntitlementGrant`!
   const settlementId = `stl_${generateBillingUlid(nowMs)}`;
   const grantedBy = input.actorUserId ?? "system:advice_reconciler";
+  const hasCouponTable = await hasCouponRedemptionsTableSafe(db);
 
   let grantResult;
   try {
@@ -865,6 +876,24 @@ export async function settleVerifiedPaymentAttempt(
             settlementId,
             input.obligationId,
           ),
+        // 3d. Transition any reserved promotional coupon redemption to 'consumed' atomically
+        //     inside the same settlement batch (tolerates pre-0010 harnesses cleanly).
+        ...(hasCouponTable
+          ? [
+              db
+                .prepare(
+                  `UPDATE coupon_redemptions
+                   SET status = 'consumed',
+                       updated_at = ?
+                   WHERE obligation_id = ?
+                     AND status = 'reserved'
+                     AND EXISTS (
+                       SELECT 1 FROM settlements WHERE id = ? AND obligation_id = ?
+                     )`,
+                )
+                .bind(nowMs, input.obligationId, settlementId, input.obligationId),
+            ]
+          : []),
       ],
       onDeferredTerminalStateStatements: () => [
         db
@@ -1130,6 +1159,27 @@ export async function markAttemptClosedFromAdvice(
   try {
     const [attemptRes, auditRes] = await db.batch([updateAttemptStmt, auditStmt]);
     const updated = (attemptRes?.meta?.changes ?? 0) === 1;
+    // If the parent obligation has passed its due_at TTL and has no other active attempts,
+    // close the obligation terminally to 'expired' and atomically release any reserved coupon.
+    if (updated) {
+      const oblDue = await db
+        .prepare(
+          `SELECT due_at
+           FROM billing_obligations
+           WHERE id = ? AND tenant_id = ? AND status = 'open' AND review_required = 0
+           LIMIT 1`,
+        )
+        .bind(input.obligationId, input.tenantId)
+        .first<{ readonly due_at: number }>();
+      if (oblDue && oblDue.due_at <= nowMs) {
+        await closeBillingObligationNonPaid(db, {
+          obligationId: input.obligationId,
+          tenantId: input.tenantId,
+          targetStatus: "expired",
+          nowMs,
+        });
+      }
+    }
     return {
       updated,
       auditId: (auditRes?.meta?.changes ?? 0) === 1 ? entry.id : null,

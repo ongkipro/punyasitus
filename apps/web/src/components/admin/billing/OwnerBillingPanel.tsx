@@ -15,6 +15,8 @@ import {
   QrCodeIcon,
   RefreshCwIcon,
   ShieldAlertIcon,
+  TagIcon,
+  XIcon,
 } from "lucide-react";
 import type { BillingPlanInterval } from "@punyasitus/core/billing/index";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -28,6 +30,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import {
   Table,
   TableBody,
@@ -56,6 +59,7 @@ import {
   inspectPaymentReturnQueryParams,
   renderQrisSvgSafely,
   resolveOwnerBillingVisualState,
+  type AppliedCouponPreviewDto,
   type OwnerBillingAttemptDto,
   type OwnerBillingChannelDto,
   type OwnerBillingObligationDto,
@@ -142,6 +146,15 @@ export function OwnerBillingPanel({
   } | null>(null);
   const [hasReturnClaim, setHasReturnClaim] = React.useState<boolean>(initialReturnClaim);
 
+  // Promotional coupon state (REQ-082, TASK-082)
+  const [couponInput, setCouponInput] = React.useState<string>("");
+  const [appliedCoupon, setAppliedCoupon] = React.useState<AppliedCouponPreviewDto | null>(null);
+  const [couponPending, setCouponPending] = React.useState<boolean>(false);
+  const [couponError, setCouponError] = React.useState<{
+    readonly code: string;
+    readonly message: string;
+  } | null>(null);
+
   // Synchronous double-click / double-submit lock (prevents race before React re-render)
   const inFlightRef = React.useRef<boolean>(false);
 
@@ -194,6 +207,7 @@ export function OwnerBillingPanel({
         plan: selectedPlan,
         pricingPlans: overview.pricingPlans,
         selectedChannel,
+        appliedCoupon,
         tenantStatus: overview.tenantStatus,
         paidThroughIso: overview.paidThrough,
         trialEndsAtIso: overview.trialEndsAt,
@@ -203,6 +217,7 @@ export function OwnerBillingPanel({
       selectedPlan,
       overview.pricingPlans,
       selectedChannel,
+      appliedCoupon,
       overview.tenantStatus,
       overview.paidThrough,
       overview.trialEndsAt,
@@ -347,6 +362,118 @@ export function OwnerBillingPanel({
     }
   }
 
+  async function validateAndApplyCoupon(
+    rawCode: string,
+    targetPlan: BillingPlanInterval,
+    channelCode?: string | null,
+  ) {
+    const trimmed = rawCode.trim();
+    if (!trimmed) {
+      setCouponError({
+        code: "INVALID_COUPON_CODE",
+        message: "Masukkan kode kupon promo terlebih dahulu.",
+      });
+      return;
+    }
+
+    setCouponPending(true);
+    setCouponError(null);
+
+    try {
+      const res = await fetch(
+        `/api/tenants/${encodeURIComponent(tenantId)}/billing/coupons/validate`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "same-origin",
+          body: JSON.stringify({
+            plan: targetPlan,
+            couponCode: trimmed,
+            ...(channelCode ? { channelCode } : {}),
+          }),
+        },
+      );
+
+      const data = (await res.json().catch(() => ({}))) as {
+        readonly valid?: boolean;
+        readonly plan?: BillingPlanInterval;
+        readonly coupon?: {
+          readonly id?: string;
+          readonly code: string;
+          readonly discountKind: "percent" | "fixed_idr";
+          readonly discountValue: number;
+        };
+        readonly pricing?: {
+          readonly baseAmountIdr: number;
+          readonly discountAmountIdr: number;
+          readonly netBaseAmountIdr: number;
+          readonly affiliateCommissionableBaseIdr: number;
+          readonly estimatedChannelFeeIdr?: number;
+        };
+        readonly error?: {
+          readonly code?: string;
+          readonly reasonCode?: string;
+          readonly message?: string;
+          readonly fields?: readonly { readonly code?: string; readonly message?: string }[];
+        };
+      };
+
+      if (!res.ok || !data.valid || !data.coupon || !data.pricing) {
+        const reasonCode =
+          data.error?.reasonCode ??
+          data.error?.fields?.[0]?.code ??
+          data.error?.code ??
+          `HTTP_${res.status}`;
+        const message =
+          data.error?.message ?? "Kode kupon tidak valid atau tidak dapat digunakan untuk paket ini.";
+        setAppliedCoupon(null);
+        setCouponError({ code: reasonCode, message });
+        setStatusAnnouncement(`Kupon gagal diterapkan: ${message}`);
+        return;
+      }
+
+      const nextApplied: AppliedCouponPreviewDto = {
+        id: data.coupon.id,
+        code: data.coupon.code,
+        discountKind: data.coupon.discountKind,
+        discountValue: data.coupon.discountValue,
+        plan: targetPlan,
+        baseAmountIdr: data.pricing.baseAmountIdr,
+        discountAmountIdr: data.pricing.discountAmountIdr,
+        netBaseAmountIdr: data.pricing.netBaseAmountIdr,
+        affiliateCommissionableBaseIdr: data.pricing.affiliateCommissionableBaseIdr,
+        estimatedChannelFeeIdr: data.pricing.estimatedChannelFeeIdr,
+      };
+      setAppliedCoupon(nextApplied);
+      setCouponInput(data.coupon.code);
+      setCouponError(null);
+      setStatusAnnouncement(
+        `Kupon ${data.coupon.code} diterapkan. Potongan ${formatIdr(data.pricing.discountAmountIdr)}.`,
+      );
+    } catch {
+      setCouponError({
+        code: "NETWORK_ERROR",
+        message: "Koneksi terputus saat memvalidasi kode kupon. Silakan coba lagi.",
+      });
+    } finally {
+      setCouponPending(false);
+    }
+  }
+
+  function handleRemoveCoupon() {
+    setAppliedCoupon(null);
+    setCouponInput("");
+    setCouponError(null);
+    setStatusAnnouncement("Kupon promo dihapus dari ringkasan tagihan.");
+  }
+
+  function handleSelectPlan(nextPlan: BillingPlanInterval) {
+    setSelectedPlan(nextPlan);
+    if (appliedCoupon && appliedCoupon.plan !== nextPlan) {
+      void validateAndApplyCoupon(appliedCoupon.code, nextPlan, selectedChannel?.code ?? null);
+    }
+  }
+
   async function handleCreatePaymentInstruction(event: React.SyntheticEvent<HTMLFormElement>) {
     event.preventDefault();
     if (inFlightRef.current || submitting || !canCreateNewAttempt || !selectedChannel) {
@@ -357,6 +484,9 @@ export function OwnerBillingPanel({
     setSubmitting(true);
     setActionError(null);
 
+    const activeCouponCode =
+      appliedCoupon && appliedCoupon.plan === selectedPlan ? appliedCoupon.code : null;
+
     const scopeKey = buildBillingIdempotencyScopeKey({
       tenantId,
       obligationId: overview.activeObligation?.obligationId ?? null,
@@ -364,6 +494,7 @@ export function OwnerBillingPanel({
       paidThroughIso: overview.paidThrough,
       plan: selectedPlan,
       channelCode: selectedChannel.code,
+      couponCode: activeCouponCode,
     });
 
     // If previous attempt on this obligation authoritatively closed (expired/failed), rotate key safely
@@ -390,6 +521,7 @@ export function OwnerBillingPanel({
             plan: selectedPlan,
             channelKind: selectedChannel.kind,
             channelCode: selectedChannel.code,
+            ...(activeCouponCode ? { couponCode: activeCouponCode } : {}),
           }),
         },
       );
@@ -1201,7 +1333,7 @@ export function OwnerBillingPanel({
               <CardContent className="grid grid-cols-1 gap-3 pt-4 sm:grid-cols-2">
                 <button
                   type="button"
-                  onClick={() => setSelectedPlan("monthly")}
+                  onClick={() => handleSelectPlan("monthly")}
                   disabled={submitting || Boolean(overview.activeObligation)}
                   aria-pressed={selectedPlan === "monthly"}
                   data-testid="billing-plan-monthly"
@@ -1228,7 +1360,7 @@ export function OwnerBillingPanel({
 
                 <button
                   type="button"
-                  onClick={() => setSelectedPlan("yearly")}
+                  onClick={() => handleSelectPlan("yearly")}
                   disabled={submitting || Boolean(overview.activeObligation)}
                   aria-pressed={selectedPlan === "yearly"}
                   data-testid="billing-plan-yearly"
@@ -1376,6 +1508,86 @@ export function OwnerBillingPanel({
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 pt-4 text-sm">
+                {/* Promotional Coupon Input (single coupon per checkout, REQ-082) */}
+                <div
+                  className="space-y-2 rounded-lg border border-border bg-muted/25 p-3"
+                  data-testid="billing-coupon-section"
+                >
+                  <label
+                    htmlFor="billing-coupon-code-input"
+                    className="flex items-center gap-1.5 text-xs font-semibold text-foreground"
+                  >
+                    <TagIcon className="size-3.5 text-primary" aria-hidden="true" />
+                    <span>Kode Kupon Promo (Opsional — maks. 1 kupon)</span>
+                  </label>
+                  <div className="flex flex-col gap-2 sm:flex-row">
+                    <Input
+                      id="billing-coupon-code-input"
+                      type="text"
+                      placeholder="Contoh: HEMAT20"
+                      value={couponInput}
+                      disabled={submitting || couponPending || Boolean(overview.activeObligation)}
+                      onChange={(e) => {
+                        setCouponInput(e.target.value.toUpperCase());
+                        if (couponError) setCouponError(null);
+                      }}
+                      aria-invalid={couponError ? "true" : undefined}
+                      aria-describedby={couponError ? "billing-coupon-error-msg" : undefined}
+                      className="min-h-11 font-mono uppercase md:min-h-9"
+                      data-testid="billing-coupon-input"
+                    />
+                    {breakdown.couponCode ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={submitting || couponPending}
+                        onClick={handleRemoveCoupon}
+                        className="min-h-11 w-full shrink-0 sm:w-auto md:min-h-9"
+                        data-testid="billing-coupon-remove-btn"
+                      >
+                        <XIcon className="size-4" aria-hidden="true" />
+                        <span>Hapus Kupon</span>
+                      </Button>
+                    ) : (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={submitting || couponPending || Boolean(overview.activeObligation)}
+                        onClick={() =>
+                          validateAndApplyCoupon(
+                            couponInput,
+                            selectedPlan,
+                            selectedChannel?.code ?? null,
+                          )
+                        }
+                        className="min-h-11 w-full shrink-0 sm:w-auto md:min-h-9"
+                        data-testid="billing-coupon-apply-btn"
+                      >
+                        <span>{couponPending ? "Memeriksa..." : "Terapkan Kupon"}</span>
+                      </Button>
+                    )}
+                  </div>
+                  {couponError && (
+                    <p
+                      id="billing-coupon-error-msg"
+                      role="alert"
+                      className="text-xs font-medium text-destructive"
+                      data-testid="billing-coupon-error"
+                    >
+                      {couponError.message} ({couponError.code})
+                    </p>
+                  )}
+                  {breakdown.couponCode && !couponError && (
+                    <p
+                      className="text-xs font-medium text-success"
+                      data-testid="billing-coupon-applied-badge"
+                    >
+                      Kupon <span className="font-mono font-semibold">{breakdown.couponCode}</span>{" "}
+                      aktif — hemat {formatIdr(breakdown.discountAmountIdr)}.
+                    </p>
+                  )}
+                </div>
+
                 <dl className="space-y-2.5">
                   <div className="flex items-start justify-between gap-3">
                     <dt className="text-muted-foreground">Paket</dt>
@@ -1395,18 +1607,42 @@ export function OwnerBillingPanel({
                   <div className="flex items-center justify-between gap-3 border-t border-border pt-2.5">
                     <dt className="text-muted-foreground">Harga Pokok</dt>
                     <dd
-                      className="font-medium text-foreground tabular-nums"
+                      className="shrink-0 whitespace-nowrap font-medium text-foreground tabular-nums"
                       data-testid="billing-summary-base-price"
                     >
                       {formatIdr(breakdown.baseAmountIdr)}
                     </dd>
                   </div>
+                  {breakdown.discountAmountIdr > 0 && breakdown.couponCode && (
+                    <>
+                      <div
+                        className="flex items-center justify-between gap-3"
+                        data-testid="billing-summary-coupon-discount"
+                      >
+                        <dt className="min-w-0 text-muted-foreground">
+                          Diskon Kupon ({breakdown.couponCode})
+                        </dt>
+                        <dd className="shrink-0 whitespace-nowrap font-medium text-success tabular-nums">
+                          -{formatIdr(breakdown.discountAmountIdr)}
+                        </dd>
+                      </div>
+                      <div
+                        className="flex items-center justify-between gap-3"
+                        data-testid="billing-summary-net-base"
+                      >
+                        <dt className="text-muted-foreground">Subtotal Setelah Diskon</dt>
+                        <dd className="shrink-0 whitespace-nowrap font-medium text-foreground tabular-nums">
+                          {formatIdr(breakdown.netAmountIdr)}
+                        </dd>
+                      </div>
+                    </>
+                  )}
                   <div className="flex items-center justify-between gap-3">
-                    <dt className="text-muted-foreground">
+                    <dt className="min-w-0 text-muted-foreground">
                       Biaya Saluran ({selectedChannel?.label ?? "Belum dipilih"})
                     </dt>
                     <dd
-                      className="font-medium text-foreground tabular-nums"
+                      className="shrink-0 whitespace-nowrap font-medium text-foreground tabular-nums"
                       data-testid="billing-summary-channel-fee"
                     >
                       {formatIdr(breakdown.channelFeeIdr)}
@@ -1415,7 +1651,7 @@ export function OwnerBillingPanel({
                   <div className="flex items-center justify-between gap-3 border-t border-border pt-2.5 text-base font-semibold">
                     <dt className="text-foreground">Estimasi Total Bayar</dt>
                     <dd
-                      className="text-primary tabular-nums"
+                      className="shrink-0 whitespace-nowrap text-primary tabular-nums"
                       data-testid="billing-summary-total"
                     >
                       {formatIdr(breakdown.totalPayableIdr)}

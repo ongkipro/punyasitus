@@ -687,7 +687,16 @@ async function findAttemptByIdempotencyKey(
   return row ? mapAttemptRow(row) : null;
 }
 
-async function findOpenSubscriptionObligation(
+async function hasCouponRedemptionsTableSafe(db: D1Database): Promise<boolean> {
+  const row = await db
+    .prepare(
+      "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'coupon_redemptions' LIMIT 1",
+    )
+    .first<{ readonly name: string }>();
+  return Boolean(row);
+}
+
+export async function findOpenSubscriptionObligation(
   db: D1Database,
   tenantId: string,
 ): Promise<BillingObligationRecord | null> {
@@ -702,6 +711,131 @@ async function findOpenSubscriptionObligation(
     .bind(tenantId)
     .first<BillingObligationSqlRow>();
   return row ? mapObligationRow(row) : null;
+}
+
+export function extractLockedCouponCodeFromObligation(
+  obligation: BillingObligationRecord,
+): string | null {
+  const snap = obligation.snapshot as typeof obligation.snapshot & {
+    readonly coupon?: { readonly code?: string } | null;
+  };
+  return typeof snap.coupon?.code === "string" && snap.coupon.code.trim().length > 0
+    ? snap.coupon.code.trim().toUpperCase()
+    : null;
+}
+
+/**
+ * Atomically transitions an `'open'` obligation without unresolved/paid attempts to a terminal
+ * non-paid state (`'expired'` or `'canceled'`) and — when `0010_billing_coupons` is present —
+ * releases its `'reserved'` coupon redemption and decrements `promo_coupons.redeemed_count`
+ * by 1 (guarded by `changes() = 1` so it can NEVER decrement twice!).
+ */
+export async function closeBillingObligationNonPaid(
+  db: D1Database,
+  input: {
+    readonly obligationId: string;
+    readonly tenantId: string;
+    readonly targetStatus: "expired" | "canceled";
+    readonly nowMs: number;
+  },
+): Promise<{ readonly closed: boolean; readonly couponReleased: boolean }> {
+  const nowMs = Math.trunc(input.nowMs);
+  const hasCouponTable = await hasCouponRedemptionsTableSafe(db);
+
+  const closeOblStmt = db
+    .prepare(
+      `UPDATE billing_obligations
+       SET status = ?,
+           version = version + 1,
+           updated_at = ?
+       WHERE id = ?
+         AND tenant_id = ?
+         AND status = 'open'
+         AND review_required = 0
+         AND NOT EXISTS (
+           SELECT 1
+           FROM payment_attempts
+           WHERE obligation_id = ?
+             AND lifecycle_state IN ('creating', 'creation_unknown', 'pending', 'review', 'paid')
+         )`,
+    )
+    .bind(input.targetStatus, nowMs, input.obligationId, input.tenantId, input.obligationId);
+
+  if (!hasCouponTable) {
+    const res = await closeOblStmt.run();
+    return { closed: (res.meta?.changes ?? 0) === 1, couponReleased: false };
+  }
+
+  const releaseRedemptionStmt = db
+    .prepare(
+      `UPDATE coupon_redemptions
+       SET status = 'released',
+           updated_at = ?
+       WHERE obligation_id = ?
+         AND status = 'reserved'
+         AND changes() = 1`,
+    )
+    .bind(nowMs, input.obligationId);
+
+  const decrementCouponStmt = db
+    .prepare(
+      `UPDATE promo_coupons
+       SET redeemed_count = CASE WHEN redeemed_count > 0 THEN redeemed_count - 1 ELSE 0 END,
+           updated_at = ?
+       WHERE id = (
+         SELECT coupon_id FROM coupon_redemptions WHERE obligation_id = ? LIMIT 1
+       )
+         AND changes() = 1`,
+    )
+    .bind(nowMs, input.obligationId);
+
+  const results = await db.batch([closeOblStmt, releaseRedemptionStmt, decrementCouponStmt]);
+  return {
+    closed: (results[0]?.meta?.changes ?? 0) === 1,
+    couponReleased: (results[1]?.meta?.changes ?? 0) === 1,
+  };
+}
+
+/**
+ * Expires stale `'open'` subscription obligations (`due_at <= nowMs`) for a tenant that have
+ * no unresolved/paid attempts, releasing any reserved promotional coupon atomically.
+ */
+export async function expireStaleOpenObligationsForTenant(
+  db: D1Database,
+  tenantId: string,
+  nowMs: number,
+): Promise<number> {
+  const safeNow = Math.trunc(nowMs);
+  const staleRows = await db
+    .prepare(
+      `SELECT id
+       FROM billing_obligations bo
+       WHERE bo.tenant_id = ?
+         AND bo.status = 'open'
+         AND bo.plan_interval IN ('monthly', 'yearly')
+         AND bo.review_required = 0
+         AND bo.due_at <= ?
+         AND NOT EXISTS (
+           SELECT 1
+           FROM payment_attempts pa
+           WHERE pa.obligation_id = bo.id
+             AND pa.lifecycle_state IN ('creating', 'creation_unknown', 'pending', 'review', 'paid')
+         )`,
+    )
+    .bind(tenantId, safeNow)
+    .all<{ readonly id: string }>();
+
+  let closedCount = 0;
+  for (const row of staleRows.results ?? []) {
+    const res = await closeBillingObligationNonPaid(db, {
+      obligationId: row.id,
+      tenantId,
+      targetStatus: "expired",
+      nowMs: safeNow,
+    });
+    if (res.closed) closedCount += 1;
+  }
+  return closedCount;
 }
 
 async function findUnresolvedAttemptForObligation(
@@ -822,7 +956,9 @@ export async function beginDurablePaymentAttempt(
     { min: 0 },
   );
 
-  // 3. Reuse or create the single open subscription obligation for this tenant
+  // 3. Expire any stale open obligations past due_at (releasing reserved coupons atomically),
+  //    then reuse or create the single open subscription obligation for this tenant
+  await expireStaleOpenObligationsForTenant(db, input.tenantId, input.nowMs);
   let obligation = await findOpenSubscriptionObligation(db, input.tenantId);
 
   if (obligation) {

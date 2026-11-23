@@ -17,6 +17,7 @@ import {
   computeBillingRequestHash,
   type BillingPlanInterval,
 } from "@punyasitus/core/billing/index";
+import { parseSingleCouponCodeInput } from "@punyasitus/core/billing/coupons";
 import type { EmailPort } from "@punyasitus/core/email/index";
 import {
   UuidSchema,
@@ -26,6 +27,9 @@ import {
   beginDurablePaymentAttempt,
   completePaymentAttemptPending,
   ensureBillingObligationsSchema,
+  expireStaleOpenObligationsForTenant,
+  extractLockedCouponCodeFromObligation,
+  findOpenSubscriptionObligation,
   getTenantObligationById,
   loadPlatformBillingPricing,
   loadTenantBillingContext,
@@ -36,6 +40,10 @@ import {
   type BillingObligationRecord,
   type PaymentAttemptRecord,
 } from "@punyasitus/db/billing/index";
+import {
+  beginDurablePaymentAttemptWithCoupon,
+  previewCouponForTenantCheckout,
+} from "@punyasitus/db/billing/coupons/index";
 import {
   createAutoLarisClient,
   type AutoLarisBillingClient,
@@ -124,12 +132,14 @@ export function billingErrorResponse(
   requestId: string,
   fields?: readonly { readonly field: string; readonly code: string; readonly message: string }[],
   extraHeaders?: HeadersInit,
+  reasonCode?: string,
 ): Response {
   return billingJsonResponse(
     status,
     {
       error: {
         code,
+        ...(reasonCode ? { reasonCode } : {}),
         message,
         ...(fields && fields.length > 0 ? { fields } : {}),
       },
@@ -140,6 +150,11 @@ export function billingErrorResponse(
 }
 
 export function formatObligationSummary(record: BillingObligationRecord): Record<string, unknown> {
+  const extendedSnapshot = record.snapshot as typeof record.snapshot & {
+    readonly coupon?: { readonly code?: string } | null;
+  };
+  const couponCode =
+    typeof extendedSnapshot.coupon?.code === "string" ? extendedSnapshot.coupon.code : null;
   return {
     obligationId: record.id,
     plan: record.plan,
@@ -148,6 +163,7 @@ export function formatObligationSummary(record: BillingObligationRecord): Record
     baseAmountIdr: record.baseAmountIdr,
     discountAmountIdr: record.discountAmountIdr,
     netAmountIdr: record.netAmountIdr,
+    ...(couponCode ? { couponCode } : {}),
     currency: record.currency,
     periodStartAt: record.periodStartAtIso,
     periodEndAt: record.periodEndAtIso,
@@ -661,22 +677,8 @@ export async function createDurableBillingObligationAndInstruction(
     }
   }
 
-  // Coupon engine arrives in TASK-082; reject unverified coupon codes safely in TASK-055
-  if (input.couponCode !== undefined) {
-    if (typeof input.couponCode !== "string" || !/^[A-Z0-9_-]{2,40}$/.test(input.couponCode.trim())) {
-      throw new BillingValidationError(
-        "INVALID_COUPON_CODE",
-        "Format kode kupon tidak valid.",
-        [{ field: "couponCode", code: "INVALID_COUPON_CODE", message: "Invalid coupon code format." }],
-      );
-    }
-    throw new BillingValidationError(
-      "COUPON_NOT_FOUND",
-      "Kode kupon tidak ditemukan atau tidak aktif.",
-      [{ field: "couponCode", code: "COUPON_NOT_FOUND", message: "Coupon is not active." }],
-    );
-  }
-  const normalizedCoupon: string | null = null;
+  // Single promotional coupon validation & anti-stacking (REQ-082, TASK-082)
+  const normalizedCoupon: string | null = parseSingleCouponCodeInput(input.couponCode);
 
   await ensureBillingObligationsSchema(ctx.platformDb, () => ctx.nowMs);
 
@@ -780,10 +782,63 @@ export async function createDurableBillingObligationAndInstruction(
 
   // 5. Resolve server-configured AutoLaris static-IP relay client & revalidate channel at runtime
   const autolaris = resolveAutoLarisClient(runtimeEnv, options);
-  const pricing = await loadPlatformBillingPricing(ctx.platformDb);
-  const planBaseAmountIdr = plan === "yearly" ? pricing.yearlyPriceIdr : pricing.monthlyPriceIdr;
 
-  const enabledChannels = await autolaris.listPaymentChannels(planBaseAmountIdr);
+  // Expire any stale open obligations past due_at (atomically releasing reserved coupons) before checking open obligation
+  await expireStaleOpenObligationsForTenant(ctx.platformDb, ctx.member.tenantId, ctx.nowMs);
+  const existingOpenObligation = await findOpenSubscriptionObligation(
+    ctx.platformDb,
+    ctx.member.tenantId,
+  );
+
+  let expectedChargeNetBaseIdr: number;
+  if (existingOpenObligation) {
+    if (existingOpenObligation.plan !== plan) {
+      throw new BillingConflictError(
+        "CONFLICT",
+        "OPEN_OBLIGATION_PLAN_MISMATCH",
+        `Tagihan terbuka saat ini memakai paket "${existingOpenObligation.plan}"; selesaikan atau batalkan sebelum mengganti paket.`,
+      );
+    }
+
+    const lockedCouponCode = extractLockedCouponCodeFromObligation(existingOpenObligation);
+    if (normalizedCoupon !== null && lockedCouponCode !== normalizedCoupon) {
+      throw new BillingConflictError(
+        "CONFLICT",
+        "COUPON_CONFLICT_WITH_OPEN_OBLIGATION",
+        "Tagihan terbuka sudah dikunci dengan ketentuan kupon berbeda; selesaikan atau batalkan tagihan terbuka terlebih dahulu.",
+      );
+    }
+
+    // Retry on the SAME open obligation (with same couponCode OR omitted couponCode):
+    // ALWAYS use the exact stored openObligation.netAmountIdr for both listPaymentChannels & AutoLaris!
+    expectedChargeNetBaseIdr = existingOpenObligation.netAmountIdr;
+  } else {
+    const pricing = await loadPlatformBillingPricing(ctx.platformDb);
+    const planBaseAmountIdr = plan === "yearly" ? pricing.yearlyPriceIdr : pricing.monthlyPriceIdr;
+
+    expectedChargeNetBaseIdr = planBaseAmountIdr;
+    if (normalizedCoupon !== null) {
+      const preview = await previewCouponForTenantCheckout(ctx.platformDb, {
+        tenantId: ctx.member.tenantId,
+        plan,
+        payerType: ctx.payerType,
+        couponCode: normalizedCoupon,
+        baseAmountIdr: planBaseAmountIdr,
+        nowMs: ctx.nowMs,
+      });
+      if (!preview.ok) {
+        if (preview.status === 409) {
+          throw new BillingConflictError("CONFLICT", preview.code, preview.message);
+        }
+        throw new BillingValidationError(preview.code, preview.message, [
+          { field: "couponCode", code: preview.code, message: preview.message },
+        ]);
+      }
+      expectedChargeNetBaseIdr = preview.breakdown.netBaseAmountIdr;
+    }
+  }
+
+  const enabledChannels = await autolaris.listPaymentChannels(expectedChargeNetBaseIdr);
   const matchedChannel = enabledChannels.find((ch) => ch.code === classified.normalizedCode);
   if (!matchedChannel) {
     throw new BillingValidationError(
@@ -800,20 +855,37 @@ export async function createDurableBillingObligationAndInstruction(
   }
 
   // 6. Durable PRE-CALL persistence (no DB transaction held across outbound network call!)
-  const begun = await beginDurablePaymentAttempt(ctx.platformDb, {
-    tenantId: ctx.member.tenantId,
-    effectiveTenantStatus: ctx.member.tenantStatus,
-    payerType: ctx.payerType,
-    payerAgencyId: ctx.payerAgencyId,
-    plan,
-    channelKind: matchedChannel.kind,
-    channelCode: matchedChannel.code,
-    estimatedChannelFeeIdr: matchedChannel.estimatedFeeIdr,
-    idempotencyKey: input.idempotencyKey,
-    requestHash,
-    providerAccountId: autolaris.providerAccountId,
-    nowMs: ctx.nowMs,
-  });
+  const begun =
+    normalizedCoupon !== null
+      ? await beginDurablePaymentAttemptWithCoupon(ctx.platformDb, {
+          tenantId: ctx.member.tenantId,
+          effectiveTenantStatus: ctx.member.tenantStatus,
+          payerType: ctx.payerType,
+          payerAgencyId: ctx.payerAgencyId,
+          plan,
+          channelKind: matchedChannel.kind,
+          channelCode: matchedChannel.code,
+          estimatedChannelFeeIdr: matchedChannel.estimatedFeeIdr,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          providerAccountId: autolaris.providerAccountId,
+          nowMs: ctx.nowMs,
+          couponCode: normalizedCoupon,
+        })
+      : await beginDurablePaymentAttempt(ctx.platformDb, {
+          tenantId: ctx.member.tenantId,
+          effectiveTenantStatus: ctx.member.tenantStatus,
+          payerType: ctx.payerType,
+          payerAgencyId: ctx.payerAgencyId,
+          plan,
+          channelKind: matchedChannel.kind,
+          channelCode: matchedChannel.code,
+          estimatedChannelFeeIdr: matchedChannel.estimatedFeeIdr,
+          idempotencyKey: input.idempotencyKey,
+          requestHash,
+          providerAccountId: autolaris.providerAccountId,
+          nowMs: ctx.nowMs,
+        });
 
   if (begun.mode === "replay") {
     return {
@@ -964,10 +1036,28 @@ export async function createDurableBillingObligationAndInstruction(
 
 export function mapBillingDomainErrorToResponse(err: unknown, requestId: string): Response {
   if (err instanceof BillingValidationError) {
-    return billingErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
+    return billingErrorResponse(
+      422,
+      "VALIDATION_ERROR",
+      err.message,
+      requestId,
+      err.fields,
+      undefined,
+      err.reasonCode,
+    );
   }
   if (err instanceof BillingConflictError) {
-    return billingErrorResponse(409, err.code, err.message, requestId);
+    return billingErrorResponse(
+      409,
+      err.code,
+      err.message,
+      requestId,
+      err.reasonCode.startsWith("COUPON_")
+        ? [{ field: "couponCode", code: err.reasonCode, message: err.message }]
+        : undefined,
+      undefined,
+      err.reasonCode,
+    );
   }
   if (err instanceof BillingNotFoundError) {
     return billingErrorResponse(404, "NOT_FOUND", err.message, requestId);
