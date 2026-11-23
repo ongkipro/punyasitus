@@ -14,6 +14,7 @@ jobs:
   verify:
     name: Spec, Lint, Typecheck, Tests & Build
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
       contents: read
     env:
@@ -22,6 +23,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - name: Setup pnpm
         uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
@@ -33,9 +36,7 @@ jobs:
           cache: "pnpm"
 
       - name: Check specification integrity
-        run: |
-          python3 scripts/check-spec.py
-          python3 scripts/test-check-spec.py
+        run: pnpm run spec:check
 
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
@@ -54,3 +55,63 @@ jobs:
 
       - name: Build and Wrangler dry-run budget check
         run: pnpm build
+
+  m1-gate:
+    name: Phase 1 Integration Checkpoint (M1 Gate)
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      CI: "true"
+      TASK063_SCREENSHOT_DIR: /tmp/task-063-screenshots
+      TASK063_REPORT_DIR: /tmp/task-063-reports
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @punyasitus/web exec playwright-core install --with-deps chromium
+
+      - name: Build platform Worker artifact for M1 browser gates
+        run: pnpm --filter @punyasitus/web build
+
+      - name: M1 static & contract gate (m1-gate.mjs)
+        run: |
+          mkdir -p "$TASK063_REPORT_DIR" "$TASK063_SCREENSHOT_DIR"
+          node scripts/verify/m1-gate.mjs --report-out "$TASK063_REPORT_DIR/m1-gate.json"
+
+      - name: M1 performance & asset budget gate (m1-budget.mjs)
+        run: node tests/performance/m1-budget.mjs --report-out "$TASK063_REPORT_DIR/m1-budget.json"
+
+      - name: M1 multi-viewport & negative-case browser gate (m1-checkpoint.mjs)
+        run: node tests/e2e-gate/m1-checkpoint.mjs --report-out "$TASK063_REPORT_DIR/m1-checkpoint.json"
+
+      - name: TASK-063 M1 checkpoint orchestrator (tests/task-063/e2e.mjs)
+        run: node tests/task-063/e2e.mjs --verify-existing-reports
+
+      - name: Upload M1 checkpoint screenshots and reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: m1-checkpoint-evidence
+          path: |
+            /tmp/task-063-screenshots
+            /tmp/task-063-reports
+          retention-days: 7
+          if-no-files-found: ignore
