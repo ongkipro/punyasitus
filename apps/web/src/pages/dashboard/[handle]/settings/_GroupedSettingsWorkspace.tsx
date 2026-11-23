@@ -6,12 +6,15 @@ import {
   BookOpenIcon,
   Building2Icon,
   CheckCircle2Icon,
+  CheckIcon,
   ClockIcon,
+  CopyIcon,
   CreditCardIcon,
   ExternalLinkIcon,
   GlobeIcon,
   ImageIcon,
   Link2Icon,
+  MapPinIcon,
   PlusIcon,
   RefreshCwIcon,
   SaveIcon,
@@ -33,12 +36,14 @@ import {
   formatDateOnlyPreservingSemantics,
   formatTimestampInTenantTimezone,
   RECOMMENDED_INDONESIAN_TIMEZONES,
+  validateGoogleMapsReviewUrl,
   type EditableSettingsTab,
   type GroupedSettingsSnapshot,
   type HomepageMode,
   type ItemsPerPageOption,
   type SettingsSocialPlatform,
 } from "@punyasitus/core/settings/index";
+import { evaluateGoogleBusinessProfileChecklist } from "@punyasitus/core/presets/index";
 import type { OfferingType } from "@punyasitus/core/schemas/common";
 import type { GroupedSettingsAdminDto, SettingsPageOption } from "@punyasitus/db/settings/index";
 import {
@@ -221,6 +226,13 @@ export function GroupedSettingsWorkspace({
   const [province, setProvince] = useState(initialState.draft.business.province ?? "");
   const [postalCode, setPostalCode] = useState(initialState.draft.business.postalCode ?? "");
   const [mapsUrl, setMapsUrl] = useState(initialState.draft.business.mapsUrl ?? "");
+  const [googleMapsReviewUrl, setGoogleMapsReviewUrl] = useState(
+    initialState.draft.business.googleMapsReviewUrl ?? "",
+  );
+  const [publishedGoogleMapsReviewUrl, setPublishedGoogleMapsReviewUrl] = useState<string | null>(
+    initialState.published?.business?.googleMapsReviewUrl ?? null,
+  );
+  const [copiedGbpSiteUrl, setCopiedGbpSiteUrl] = useState(false);
   const [weekdayHours, setWeekdayHours] = useState(initialState.draft.business.weekdayHours ?? "");
   const [holidayHours, setHolidayHours] = useState(initialState.draft.business.holidayHours ?? "");
   const [serviceAreas, setServiceAreas] = useState<string[]>([
@@ -321,6 +333,7 @@ export function GroupedSettingsWorkspace({
       readonly updatedAt: string | null;
       readonly publishedAt: string | null;
       readonly availablePages?: readonly SettingsPageOption[];
+      readonly publishedSnapshot?: GroupedSettingsSnapshot | null;
     }) => {
       setSiteTitle(snapshot.general.siteTitle);
       setTagline(snapshot.general.tagline ?? "");
@@ -342,6 +355,12 @@ export function GroupedSettingsWorkspace({
       setProvince(snapshot.business.province ?? "");
       setPostalCode(snapshot.business.postalCode ?? "");
       setMapsUrl(snapshot.business.mapsUrl ?? "");
+      setGoogleMapsReviewUrl(snapshot.business.googleMapsReviewUrl ?? "");
+      if (meta.publishedSnapshot !== undefined) {
+        setPublishedGoogleMapsReviewUrl(
+          meta.publishedSnapshot?.business?.googleMapsReviewUrl ?? null,
+        );
+      }
       setWeekdayHours(snapshot.business.weekdayHours ?? "");
       setHolidayHours(snapshot.business.holidayHours ?? "");
       setServiceAreas([...snapshot.business.serviceAreas]);
@@ -435,6 +454,7 @@ export function GroupedSettingsWorkspace({
         updatedAt: latest.updatedAt,
         publishedAt: latest.publishedAt,
         availablePages: latest.availablePages,
+        publishedSnapshot: latest.published,
       });
       setDirtyTabs({});
       setBanner({
@@ -487,6 +507,7 @@ export function GroupedSettingsWorkspace({
           province: province.trim() || null,
           postalCode: postalCode.trim() || null,
           mapsUrl: mapsUrl.trim() || null,
+          googleMapsReviewUrl: googleMapsReviewUrl.trim() || null,
           weekdayHours: weekdayHours.trim() || null,
           holidayHours: holidayHours.trim() || null,
           serviceAreas: serviceAreas.map((s) => s.trim()).filter(Boolean),
@@ -537,6 +558,12 @@ export function GroupedSettingsWorkspace({
       if (mapsUrl.trim() && !mapsUrl.trim().startsWith("https://")) {
         errs.mapsUrl = "Tautan Google Maps harus diawali https://.";
       }
+      if (googleMapsReviewUrl.trim()) {
+        const reviewValidation = validateGoogleMapsReviewUrl(googleMapsReviewUrl.trim());
+        if (!reviewValidation.ok) {
+          errs.googleMapsReviewUrl = reviewValidation.message;
+        }
+      }
     }
     if (tab === "reading" && homepageMode === "page" && homepagePageId === null) {
       errs.homepagePageId = "Pilih halaman yang sudah diterbitkan sebagai beranda.";
@@ -572,6 +599,7 @@ export function GroupedSettingsWorkspace({
           updatedAt: saved.updatedAt,
           publishedAt: saved.publishedAt,
           availablePages: saved.availablePages,
+          publishedSnapshot: saved.published,
         });
       } else {
         setVersion(saved.version);
@@ -647,6 +675,9 @@ export function GroupedSettingsWorkspace({
       setHasUnpublishedChanges(false);
       setUpdatedAt(result.updatedAt);
       setPublishedAt(result.publishedAt);
+      setPublishedGoogleMapsReviewUrl(
+        result.published?.business?.googleMapsReviewUrl ?? (googleMapsReviewUrl.trim() || null),
+      );
       setDirtyTabs({});
       setBanner({
         tone: "success",
@@ -746,6 +777,39 @@ export function GroupedSettingsWorkspace({
     () => formatDateOnlyPreservingSemantics(SAMPLE_DATE_ONLY_DEPARTURE, locale),
     [locale],
   );
+
+  const googleMapsReviewValidation = useMemo(() => {
+    const trimmed = googleMapsReviewUrl.trim();
+    if (!trimmed) return null;
+    return validateGoogleMapsReviewUrl(trimmed);
+  }, [googleMapsReviewUrl]);
+
+  const gbpChecklist = useMemo(
+    () =>
+      evaluateGoogleBusinessProfileChecklist({
+        handle,
+        publicSiteHref,
+        googleMapsReviewUrl: googleMapsReviewUrl.trim() || null,
+        hasPublishedReviewUrl: Boolean(
+          publishedGoogleMapsReviewUrl &&
+            publishedGoogleMapsReviewUrl === googleMapsReviewUrl.trim(),
+        ),
+        isSitePublished: publishedVersion > 0,
+      }),
+    [handle, publicSiteHref, googleMapsReviewUrl, publishedGoogleMapsReviewUrl, publishedVersion],
+  );
+
+  async function copyPublicSiteUrlForGbp() {
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(gbpChecklist.publicSiteUrl);
+      }
+      setCopiedGbpSiteUrl(true);
+      window.setTimeout(() => setCopiedGbpSiteUrl(false), 2000);
+    } catch {
+      setCopiedGbpSiteUrl(false);
+    }
+  }
 
   const activeTabMeta = SETTINGS_TABS.find((t) => t.id === activeTab) ?? SETTINGS_TABS[0];
 
@@ -944,7 +1008,7 @@ export function GroupedSettingsWorkspace({
       </div>
 
       {/* Main Content Grid: Active Group Form + Related Modules Rail */}
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_20rem]">
         {/* Active Tab Panel */}
         <div
           role="tabpanel"
@@ -1202,14 +1266,14 @@ export function GroupedSettingsWorkspace({
 
               {/* TAB 2: BUSINESS & CONTACT */}
               {activeTab === "business" && (
-                <Card>
+                <Card className="min-w-0 overflow-hidden">
                   <CardHeader>
                     <CardTitle>{activeTabMeta?.label}</CardTitle>
                     <CardDescription>{activeTabMeta?.description}</CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-5">
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-1.5">
+                  <CardContent className="min-w-0 space-y-5">
+                    <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                      <div className="min-w-0 space-y-1.5">
                         <label
                           htmlFor="settings-business-name"
                           className="block text-sm font-medium text-foreground"
@@ -1231,7 +1295,7 @@ export function GroupedSettingsWorkspace({
                         <InlineFieldError message={fieldErrors.businessName} />
                       </div>
 
-                      <div className="space-y-1.5">
+                      <div className="min-w-0 space-y-1.5">
                         <label
                           htmlFor="settings-business-category"
                           className="block text-sm font-medium text-foreground"
@@ -1247,7 +1311,7 @@ export function GroupedSettingsWorkspace({
                             setBusinessCategory(e.target.value);
                             markTabDirty("business");
                           }}
-                          className="flex min-h-11 w-full rounded-md border border-input bg-card px-3 py-2 text-base text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-60 md:min-h-9 md:text-sm"
+                          className="flex min-h-11 w-full min-w-0 max-w-full rounded-md border border-input bg-card px-3 py-2 text-base text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed disabled:opacity-60 md:min-h-9 md:text-sm"
                         >
                           {ALLOWED_BUSINESS_CATEGORIES.map((cat) => (
                             <option key={cat} value={cat}>
@@ -1505,6 +1569,79 @@ export function GroupedSettingsWorkspace({
 
                     <Separator />
 
+                    {/* Google Maps Review Link (REQ-074, TASK-073) */}
+                    <div id="google-maps-review" className="min-w-0 space-y-2.5">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <label
+                          htmlFor="settings-google-maps-review-url"
+                          className="block text-sm font-medium text-foreground"
+                        >
+                          Tautan Ulasan Google Maps (Opsional)
+                        </label>
+                        {googleMapsReviewValidation && (
+                          <Badge
+                            variant={googleMapsReviewValidation.ok ? "success" : "destructive"}
+                            data-testid="google-maps-review-url-status"
+                          >
+                            {googleMapsReviewValidation.ok
+                              ? "Tautan Google Maps valid"
+                              : "Format tautan tidak diizinkan"}
+                          </Badge>
+                        )}
+                      </div>
+                      <Input
+                        id="settings-google-maps-review-url"
+                        data-testid="input-google-maps-review-url"
+                        type="url"
+                        value={googleMapsReviewUrl}
+                        disabled={readOnly}
+                        maxLength={2048}
+                        aria-invalid={Boolean(
+                          fieldErrors.googleMapsReviewUrl ||
+                            (googleMapsReviewValidation && !googleMapsReviewValidation.ok),
+                        )}
+                        aria-describedby="settings-google-maps-review-help"
+                        onChange={(e) => {
+                          setGoogleMapsReviewUrl(e.target.value);
+                          setFieldErrors((prev) => {
+                            if (!prev.googleMapsReviewUrl) return prev;
+                            const next = { ...prev };
+                            delete next.googleMapsReviewUrl;
+                            return next;
+                          });
+                          markTabDirty("business");
+                        }}
+                        className="min-h-11 text-base md:min-h-9 md:text-sm"
+                        placeholder="https://g.page/r/.../review atau https://maps.app.goo.gl/..."
+                      />
+                      <InlineFieldError
+                        message={
+                          fieldErrors.googleMapsReviewUrl ??
+                          (googleMapsReviewValidation && !googleMapsReviewValidation.ok
+                            ? googleMapsReviewValidation.message
+                            : undefined)
+                        }
+                      />
+                      <p
+                        id="settings-google-maps-review-help"
+                        className="break-words text-xs leading-relaxed text-muted-foreground"
+                      >
+                        Menerima tautan HTTPS resmi Google Maps saja:{" "}
+                        <code className="break-all">https://g.page/r/.../review</code>,{" "}
+                        <code className="break-all">https://maps.app.goo.gl/...</code>,{" "}
+                        <code className="break-all">https://www.google.com/maps/...</code>,{" "}
+                        <code className="break-all">https://maps.google.com/maps...</code>, atau{" "}
+                        <code className="break-all">
+                          https://search.google.com/local/writereview?placeid=...
+                        </code>
+                        . Tautan pengalihan seperti <code className="break-all">google.com/url</code>{" "}
+                        ditolak. Ditampilkan sebagai tautan polos di bagian Testimoni &amp; Kontak
+                        tanpa widget, skrip pihak ketiga, teks ulasan salinan, atau skema rating.
+                      </p>
+                    </div>
+
+                    <Separator />
+
                     {/* Service Areas */}
                     <div className="space-y-2.5">
                       <div className="flex items-center justify-between">
@@ -1651,6 +1788,170 @@ export function GroupedSettingsWorkspace({
                       )}
                       <InlineFieldError message={fieldErrors.socialLinks} />
                     </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {activeTab === "business" && (
+                <Card className="min-w-0 overflow-hidden" data-testid="gbp-checklist-card">
+                  <CardHeader>
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <MapPinIcon className="size-4 shrink-0 text-primary" aria-hidden="true" />
+                        <CardTitle className="break-words">{gbpChecklist.step.label}</CardTitle>
+                      </div>
+                      <Badge
+                        variant={
+                          gbpChecklist.completedCount === gbpChecklist.totalCount
+                            ? "success"
+                            : "outline"
+                        }
+                        className="shrink-0 tabular-nums"
+                        data-testid="gbp-checklist-progress"
+                      >
+                        {gbpChecklist.completedCount}/{gbpChecklist.totalCount} selesai
+                      </Badge>
+                    </div>
+                    <CardDescription>{gbpChecklist.step.description}</CardDescription>
+                  </CardHeader>
+                  <CardContent className="min-w-0 space-y-5">
+                    {/* Copyable website URL */}
+                    <div className="flex min-w-0 flex-col gap-2 rounded-md border border-border bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between">
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium text-muted-foreground">
+                          Alamat situs untuk ditempel di Google Business Profile
+                        </p>
+                        <p
+                          className="break-all font-mono text-sm text-foreground"
+                          data-testid="gbp-public-site-url"
+                        >
+                          {gbpChecklist.publicSiteUrl}
+                        </p>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void copyPublicSiteUrlForGbp()}
+                        className="min-h-11 shrink-0 md:min-h-9"
+                        data-testid="gbp-copy-site-url-btn"
+                      >
+                        {copiedGbpSiteUrl ? (
+                          <>
+                            <CheckIcon className="size-4" aria-hidden="true" />
+                            Tersalin
+                          </>
+                        ) : (
+                          <>
+                            <CopyIcon className="size-4" aria-hidden="true" />
+                            Salin URL
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {/* Verification status checklist */}
+                    <ul className="space-y-2.5" aria-label="Status checklist Google Business Profile">
+                      {gbpChecklist.items.map((item) => (
+                        <li
+                          key={item.id}
+                          className="flex items-start gap-2.5 rounded-md border border-border bg-card p-3"
+                          data-testid={`gbp-checklist-item-${item.id}`}
+                          data-done={item.done ? "true" : "false"}
+                        >
+                          <CheckCircle2Icon
+                            className={`mt-0.5 size-4 shrink-0 ${
+                              item.done ? "text-primary" : "text-muted-foreground/50"
+                            }`}
+                            aria-hidden="true"
+                          />
+                          <div className="min-w-0 space-y-0.5">
+                            <p className="text-sm font-medium text-foreground">{item.label}</p>
+                            <p className="text-xs leading-relaxed text-muted-foreground">
+                              {item.detail}
+                            </p>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+
+                    {/* Manual step-by-step instructions */}
+                    <div className="space-y-2">
+                      <p className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+                        Langkah Manual di Google Business Profile
+                      </p>
+                      <ol className="space-y-2 text-sm text-foreground">
+                        {gbpChecklist.step.manualSteps.map((step) => (
+                          <li key={step.id} className="flex items-start gap-2.5">
+                            <span className="mt-0.5 inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-xs font-semibold tabular-nums">
+                              {step.order}
+                            </span>
+                            <div className="min-w-0">
+                              <p className="font-medium text-foreground">{step.title}</p>
+                              <p className="text-xs leading-relaxed text-muted-foreground">
+                                {step.detail}
+                              </p>
+                            </div>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
+
+                    {/* Official help links */}
+                    <div className="flex flex-wrap items-center gap-2 pt-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="min-h-11 max-w-full whitespace-normal text-left md:min-h-9"
+                        data-testid="gbp-official-help-link"
+                        render={
+                          <a
+                            href={gbpChecklist.step.officialHelpUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          />
+                        }
+                      >
+                        <span>Panduan Resmi Google Business Profile</span>
+                        <ExternalLinkIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="min-h-11 max-w-full whitespace-normal text-left md:min-h-9"
+                        data-testid="gbp-review-help-link"
+                        render={
+                          <a
+                            href={gbpChecklist.step.officialReviewLinkHelpUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          />
+                        }
+                      >
+                        <span>Cara Ambil Tautan Ulasan Google</span>
+                        <ExternalLinkIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="min-h-11 max-w-full whitespace-normal text-left md:min-h-9"
+                        data-testid="gbp-punyasitus-help-link"
+                        render={
+                          <a
+                            href={`https://punyasitus.com${gbpChecklist.step.helpArticleHref}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                          />
+                        }
+                      >
+                        <BookOpenIcon className="size-3.5 shrink-0" aria-hidden="true" />
+                        <span>Artikel Bantuan PunyaSitus</span>
+                      </Button>
+                    </div>
+
+                    <p className="text-xs leading-relaxed text-muted-foreground">
+                      {gbpChecklist.step.noApiNotice}
+                    </p>
                   </CardContent>
                 </Card>
               )}

@@ -20,6 +20,7 @@ import {
   normalizeIndonesianWhatsAppNumber,
   WhatsAppValidationError,
 } from "../wa-dispatcher.ts";
+import { validateGoogleMapsReviewUrl } from "./google-maps-review.ts";
 
 /**
  * Grouped Tenant Settings & Public Defaults Core Contract (`packages/core/src/settings/index.ts`;
@@ -200,6 +201,7 @@ export const BUSINESS_GROUP_ALLOWED_KEYS: ReadonlySet<string> = new Set([
   "latitude",
   "longitude",
   "mapsUrl",
+  "googleMapsReviewUrl",
   "weekdayHours",
   "holidayHours",
   "openingHours",
@@ -265,6 +267,10 @@ export const ALLOWED_KEYS_BY_GROUP: Readonly<Record<SettingsGroup, ReadonlySet<s
 
 export type HomepageMode = "modular" | "page";
 
+export interface BusinessSettingsExtension {
+  readonly googleMapsReviewUrl: string | null;
+}
+
 export interface ReadingSettingsExtension {
   readonly homepageMode: HomepageMode;
   readonly homepagePageId: number | null;
@@ -286,6 +292,7 @@ export interface PrivacySettingsExtension {
 }
 
 export interface GroupedSettingsExtension {
+  readonly business: BusinessSettingsExtension;
   readonly reading: ReadingSettingsExtension;
   readonly seo: SeoSettingsExtension;
   readonly privacy: PrivacySettingsExtension;
@@ -317,6 +324,7 @@ export interface BusinessSettingsGroupData {
   readonly latitude: number | null;
   readonly longitude: number | null;
   readonly mapsUrl: string | null;
+  readonly googleMapsReviewUrl: string | null;
   readonly weekdayHours: string | null;
   readonly holidayHours: string | null;
   readonly serviceAreas: readonly string[];
@@ -386,6 +394,9 @@ export class SettingsValidationError extends PublicationValidationError {
 
 export function createDefaultGroupedSettingsExtension(): GroupedSettingsExtension {
   return {
+    business: {
+      googleMapsReviewUrl: null,
+    },
     reading: {
       homepageMode: "modular",
       homepagePageId: null,
@@ -467,6 +478,10 @@ export function extractGroupedSettingsExtension(
     return defaults;
   }
   const ext = rawExt as Record<string, unknown>;
+  const rawBusiness =
+    ext.business && typeof ext.business === "object" && !Array.isArray(ext.business)
+      ? (ext.business as Record<string, unknown>)
+      : {};
   const rawReading =
     ext.reading && typeof ext.reading === "object" && !Array.isArray(ext.reading)
       ? (ext.reading as Record<string, unknown>)
@@ -479,6 +494,10 @@ export function extractGroupedSettingsExtension(
     ext.privacy && typeof ext.privacy === "object" && !Array.isArray(ext.privacy)
       ? (ext.privacy as Record<string, unknown>)
       : {};
+
+  const rawReviewUrl = normalizeNullableString(rawBusiness.googleMapsReviewUrl, 2048);
+  const validatedReview = rawReviewUrl ? validateGoogleMapsReviewUrl(rawReviewUrl) : null;
+  const googleMapsReviewUrl = validatedReview?.ok ? validatedReview.href : null;
 
   const homepagePageId = normalizeNullablePositiveInt(rawReading.homepagePageId);
   const homepageMode: HomepageMode =
@@ -494,6 +513,9 @@ export function extractGroupedSettingsExtension(
       : 1;
 
   return {
+    business: {
+      googleMapsReviewUrl,
+    },
     reading: {
       homepageMode,
       homepagePageId: homepageMode === "page" ? homepagePageId : null,
@@ -756,6 +778,20 @@ function validateNullableHttpsUrl(value: unknown, field: string): string | null 
   }
 }
 
+function validateNullableGoogleMapsReviewUrl(value: unknown, field: string): string | null {
+  const text = validateText(value, field, {
+    required: false,
+    maxLength: 2048,
+    errorCode: "INVALID_GOOGLE_MAPS_REVIEW_URL",
+  });
+  if (!text) return null;
+  const res = validateGoogleMapsReviewUrl(text);
+  if (!res.ok) {
+    failSettingsValidation(res.message, field, "INVALID_GOOGLE_MAPS_REVIEW_URL");
+  }
+  return res.href;
+}
+
 export interface ValidatedGroupPatch {
   readonly group: SettingsGroup;
   readonly siteSettingsPatch?: Partial<SiteSettingsSnapshot>;
@@ -766,6 +802,7 @@ export interface ValidatedGroupPatch {
   }>;
   readonly businessProfilePatch?: Partial<BusinessProfileSnapshot>;
   readonly extensionPatch?: {
+    readonly business?: Partial<BusinessSettingsExtension>;
     readonly reading?: Partial<ReadingSettingsExtension>;
     readonly seo?: Partial<SeoSettingsExtension>;
     readonly privacy?: Partial<PrivacySettingsExtension>;
@@ -894,6 +931,7 @@ export function validateGroupedSettingsPatch(
 
     case "business": {
       const bp: Record<string, unknown> = {};
+      const businessExt: Record<string, unknown> = {};
 
       if (hasKey(body, "businessName")) {
         bp.businessName = validateText(body.businessName, "businessName", {
@@ -994,6 +1032,12 @@ export function validateGroupedSettingsPatch(
       if (hasKey(body, "mapsUrl")) {
         bp.mapsUrl = validateNullableHttpsUrl(body.mapsUrl, "mapsUrl");
       }
+      if (hasKey(body, "googleMapsReviewUrl")) {
+        businessExt.googleMapsReviewUrl = validateNullableGoogleMapsReviewUrl(
+          body.googleMapsReviewUrl,
+          "googleMapsReviewUrl",
+        );
+      }
       if (hasKey(body, "openingHours")) {
         const oh = body.openingHours;
         if (oh === null) {
@@ -1092,7 +1136,12 @@ export function validateGroupedSettingsPatch(
 
       return {
         group,
-        businessProfilePatch: bp as Partial<BusinessProfileSnapshot>,
+        ...(Object.keys(bp).length > 0
+          ? { businessProfilePatch: bp as Partial<BusinessProfileSnapshot> }
+          : {}),
+        ...(Object.keys(businessExt).length > 0
+          ? { extensionPatch: { business: businessExt as Partial<BusinessSettingsExtension> } }
+          : {}),
       };
     }
 
@@ -1532,3 +1581,5 @@ export function formatDateOnlyPreservingSemantics(
     timeZone: "UTC",
   }).format(utcDate);
 }
+
+export * from "./google-maps-review.ts";

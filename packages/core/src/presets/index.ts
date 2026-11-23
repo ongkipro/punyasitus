@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { PublicPageSectionDtoSchema } from "../schemas/public-dto.ts";
 import {
+  buildGoogleBusinessProfileChecklistStep,
+  type GoogleBusinessProfileChecklistStepView,
+} from "./gbp-checklist.ts";
+import {
   isHealthBusinessCategory,
   SECTION_REGISTRY_SCHEMA_VERSION,
   SectionIdSchema,
@@ -906,7 +910,8 @@ export type PresetChecklistItemId =
   | "contact_wa"
   | "privacy"
   | "preview"
-  | "domain";
+  | "domain"
+  | "google_business_profile";
 
 export type PresetChecklistItemStatus = "done" | "pending" | "optional_pending";
 
@@ -919,6 +924,8 @@ export interface PresetChecklistItem {
   readonly detail: string;
   readonly actionLabel: string;
   readonly actionHref: string;
+  readonly officialHelpUrl?: string;
+  readonly helpArticleHref?: string;
 }
 
 export interface PresetChecklistFacts {
@@ -935,6 +942,10 @@ export interface PresetChecklistFacts {
   readonly hasPreviewedPreset: boolean;
   readonly activeCustomHostname: string | null;
   readonly fallbackHost: string;
+  /** Optional TASK-073 / REQ-074 facts: when provided (or `includeGoogleBusinessProfileStep: true`), appends the GBP onboarding step. */
+  readonly googleMapsReviewUrl?: string | null;
+  readonly hasPublishedGoogleMapsReviewUrl?: boolean;
+  readonly includeGoogleBusinessProfileStep?: boolean;
 }
 
 export interface PresetChecklistSummary {
@@ -1044,14 +1055,45 @@ export function evaluatePresetChecklist(facts: PresetChecklistFacts): PresetChec
     },
   ];
 
-  const completedCount = items.filter((item) => item.status === "done").length;
-  const requiredItems = items.filter((item) => item.requiredForPublish);
+  const includeGbpStep =
+    facts.includeGoogleBusinessProfileStep === true ||
+    facts.googleMapsReviewUrl !== undefined;
+
+  const finalItems: readonly PresetChecklistItem[] = includeGbpStep
+    ? [
+        ...items,
+        (() => {
+          const gbp: GoogleBusinessProfileChecklistStepView =
+            buildGoogleBusinessProfileChecklistStep({
+              handle: facts.handle,
+              publicSiteHref: `https://${facts.activeCustomHostname ?? facts.fallbackHost}`,
+              googleMapsReviewUrl: facts.googleMapsReviewUrl ?? null,
+              hasPublishedReviewUrl: facts.hasPublishedGoogleMapsReviewUrl,
+            });
+          return {
+            id: gbp.id,
+            label: gbp.label,
+            description: gbp.description,
+            status: gbp.status,
+            requiredForPublish: false,
+            detail: gbp.detail,
+            actionLabel: gbp.actionLabel,
+            actionHref: gbp.actionHref,
+            officialHelpUrl: gbp.officialHelpUrl,
+            helpArticleHref: gbp.helpArticleHref,
+          };
+        })(),
+      ]
+    : items;
+
+  const completedCount = finalItems.filter((item) => item.status === "done").length;
+  const requiredItems = finalItems.filter((item) => item.requiredForPublish);
   const requiredCompletedCount = requiredItems.filter((item) => item.status === "done").length;
 
   return {
-    items,
+    items: finalItems,
     completedCount,
-    totalCount: items.length,
+    totalCount: finalItems.length,
     requiredCompletedCount,
     requiredTotalCount: requiredItems.length,
     readyForFirstPublish: requiredCompletedCount === requiredItems.length,
@@ -1203,3 +1245,4 @@ export function convertValidatedSectionToPublicPageSectionDto(
 
 export * from "./blueprints.ts";
 export * from "./checklist.ts";
+export * from "./gbp-checklist.ts";

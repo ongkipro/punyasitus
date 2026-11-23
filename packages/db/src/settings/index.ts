@@ -440,6 +440,7 @@ function buildGroupedSettingsSnapshot(params: {
     latitude: profile.latitude ?? null,
     longitude: profile.longitude ?? null,
     mapsUrl: profile.mapsUrl ?? null,
+    googleMapsReviewUrl: extension.business.googleMapsReviewUrl,
     weekdayHours: profile.weekdayHours ?? null,
     holidayHours: profile.holidayHours ?? null,
     serviceAreas: [...profile.serviceAreas],
@@ -870,6 +871,17 @@ export async function getPublishedGroupedSettings(
 }
 
 /**
+ * Public-safe helper returning ONLY the published, validated Google Maps review URL
+ * (REQ-074, TASK-073). NEVER reads `draft_json` so unpublished draft edits never leak publicly.
+ */
+export async function getPublishedGoogleMapsReviewUrl(
+  tenantDb: D1Database,
+): Promise<string | null> {
+  const published = await getPublishedGroupedSettings(tenantDb);
+  return published?.settings.business.googleMapsReviewUrl ?? null;
+}
+
+/**
  * Admin loader returning separated draft and published grouped settings for the scoped tenant,
  * plus available non-trashed pages for the Reading homepage & Privacy policy selectors.
  * MUST ONLY be invoked behind verified `settings:read` authorization.
@@ -1070,6 +1082,10 @@ export async function saveGroupedSettingsDraft(
   };
 
   const nextExtension: GroupedSettingsExtension = {
+    business: {
+      ...resolved.extension.business,
+      ...(validatedPatch.extensionPatch?.business ?? {}),
+    },
     reading: resolvedReadingExt,
     seo: {
       ...resolved.extension.seo,
@@ -1495,6 +1511,7 @@ export async function publishGroupedSettings(
     timezone: publishSiteData.timezone,
     homepageMode: resolved.extension.reading.homepageMode,
     homepagePageId: resolved.extension.reading.homepagePageId,
+    hasGoogleMapsReviewUrl: Boolean(resolved.extension.business.googleMapsReviewUrl),
   });
 
   // Guard Statement 0 (`site_settings`) on exact versions of every participating table/page so

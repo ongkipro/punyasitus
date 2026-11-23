@@ -1,4 +1,5 @@
 ---
+import { buildSafeGoogleMapsReviewLink } from "@punyasitus/core/settings/google-maps-review";
 import {
   PERMENKES_TESTIMONIALS_WARNING_MESSAGE,
   type TestimonialsSectionConfig,
@@ -10,6 +11,9 @@ export interface Props {
   readonly isHealthCategory?: boolean;
   readonly surfaceTone?: "surface" | "muted";
   readonly isFirstSection?: boolean;
+  readonly googleMapsReviewUrl?: string | null;
+  readonly googleMapsReviewLabel?: string;
+  readonly isPreview?: boolean;
 }
 
 const {
@@ -18,9 +22,15 @@ const {
   isHealthCategory = false,
   surfaceTone = "surface",
   isFirstSection = false,
+  googleMapsReviewUrl = null,
+  googleMapsReviewLabel,
+  isPreview = false,
 } = Astro.props;
 
 const headingId = `section-${id}-heading`;
+const reviewLink = buildSafeGoogleMapsReviewLink(googleMapsReviewUrl, {
+  label: googleMapsReviewLabel,
+});
 ---
 
 <section
@@ -76,5 +86,51 @@ const headingId = `section-${id}-heading`;
     ) : (
       <p class="ps-empty-state">Belum ada testimoni yang ditampilkan.</p>
     )}
+
+    {reviewLink && (
+      <div class="ps-review-link-row" data-testid={`section-${id}-google-review`}>
+        <a
+          href={isPreview ? undefined : reviewLink.href}
+          target={isPreview ? undefined : reviewLink.target}
+          rel={isPreview ? undefined : reviewLink.rel}
+          aria-disabled={isPreview ? "true" : undefined}
+          class:list={[
+            "ps-btn ps-btn--secondary ps-review-link-cta",
+            isPreview && "ps-btn--inert",
+          ]}
+          data-testid="google-maps-review-link"
+          data-review-link-kind={reviewLink.kind}
+        >
+          <span>{reviewLink.label}</span>
+          <span aria-hidden="true">&#8599;</span>
+        </a>
+        <p class="ps-review-link-note">
+          Tautan eksternal ke profil Google Maps resmi kami.
+        </p>
+      </div>
+    )}
   </div>
 </section>
+
+<style>
+  .ps-review-link-row {
+    margin-top: clamp(1.25rem, 2.5vw, 1.75rem);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+  }
+
+  .ps-review-link-cta {
+    min-height: 44px;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .ps-review-link-note {
+    margin: 0;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--ps-ink-muted);
+  }
+</style>
