@@ -1,0 +1,182 @@
+---
+import "../../themes/default/sections/sections.css";
+import "./_public-pages.css";
+import SEOHead from "../../components/SEOHead.astro";
+import type { PublicOfferingListingRenderResult } from "../../core/public-routes.ts";
+import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.astro";
+import Layout from "../../themes/default/Layout.astro";
+import PublicBreadcrumbs from "./_PublicBreadcrumbs.astro";
+import PublicPagination from "./_PublicPagination.astro";
+
+export interface Props {
+  readonly result: PublicOfferingListingRenderResult;
+}
+
+const { result } = Astro.props;
+const { descriptor, items, pagination } = result;
+
+function statusBadgeClass(status: string | null | undefined): string {
+  if (status === "sold") return "ps-badge ps-badge--sold";
+  if (status === "booked") return "ps-badge ps-badge--booked";
+  return "ps-badge ps-badge--secondary";
+}
+---
+
+<Layout
+  shell={result.shell}
+  pageTitle={result.pageTitle}
+  pageDescription={result.seoMetadata.description || undefined}
+  currentPath={result.currentPath}
+  initialCookieHeader={Astro.request.headers.get("cookie")}
+>
+  <SEOHead
+    slot="head"
+    metadata={result.seoMetadata}
+    jsonLd={result.schemaGraph ?? undefined}
+    omitTitle={true}
+    omitDescription={Boolean(result.seoMetadata.description)}
+  />
+
+  <section class="ps-route-hero" data-testid={`offering-listing-hero-${descriptor.offeringType}`}>
+    <div class="ps-container ps-route-hero-inner">
+      <PublicBreadcrumbs items={result.breadcrumbs} />
+      <h1 class="ps-route-title">{descriptor.listingHeading}</h1>
+      <p class="ps-route-lead">{descriptor.listingDescription}</p>
+    </div>
+  </section>
+
+  <section
+    class="ps-archive-section"
+    data-testid={`offering-listing-${descriptor.offeringType}`}
+    data-offering-type={descriptor.offeringType}
+  >
+    <div class="ps-container">
+      {items.length > 0 ? (
+        <>
+          <p class="ps-archive-summary">
+            Menampilkan {items.length} dari {pagination.totalItems}{" "}
+            {descriptor.pluralLabel.toLowerCase()}
+            {pagination.totalPages > 1
+              ? ` • Halaman ${pagination.page} dari ${pagination.totalPages}`
+              : ""}
+          </p>
+
+          <div class="ps-archive-grid" data-testid="offering-listing-grid">
+            {items.map((item) => (
+              <article
+                class="ps-card ps-offering-card"
+                data-testid="offering-card"
+                data-offering-type={item.offeringType}
+                data-offering-slug={item.slug}
+              >
+                <div class="ps-offering-media">
+                  {item.coverImage ? (
+                    <img
+                      src={item.coverImage.url}
+                      alt={item.coverImage.alt || item.title}
+                      width={item.coverImage.width}
+                      height={item.coverImage.height}
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  ) : (
+                    <div class="ps-offering-media-placeholder">{descriptor.singularLabel}</div>
+                  )}
+                </div>
+
+                <div class="ps-offering-body">
+                  <div class="ps-offering-badges">
+                    <span class="ps-badge">
+                      {item.categoryName ?? descriptor.singularLabel}
+                    </span>
+                    {item.badge && <span class="ps-badge ps-badge--brand">{item.badge}</span>}
+                    {item.unitStatusLabel && (
+                      <span class={statusBadgeClass(item.unitStatus)}>
+                        {item.unitStatusLabel}
+                      </span>
+                    )}
+                  </div>
+
+                  <h2 class="ps-card-title">
+                    <a
+                      href={item.href}
+                      class="ps-offering-title-link"
+                      data-testid="offering-card-link"
+                    >
+                      {item.title}
+                    </a>
+                  </h2>
+
+                  {item.summary && <p class="ps-card-desc">{item.summary}</p>}
+                  {item.metaLine && <p class="ps-card-meta">{item.metaLine}</p>}
+
+                  <div class="ps-offering-price-wrap">
+                    <p class="ps-offering-price" data-testid="offering-card-price">
+                      {item.priceText}
+                    </p>
+                    {item.originalPriceText && (
+                      <del class="ps-offering-original">{item.originalPriceText}</del>
+                    )}
+                  </div>
+                </div>
+
+                <div class="ps-offering-footer">
+                  <a
+                    href={item.href}
+                    class="ps-btn ps-btn--secondary"
+                    data-testid="offering-card-detail-btn"
+                  >
+                    Detail
+                  </a>
+                  <a
+                    href={item.cta.href}
+                    class:list={[
+                      "ps-btn",
+                      item.cta.isWhatsApp ? "ps-btn--whatsapp" : "ps-btn--primary",
+                    ]}
+                    target={item.cta.isExternal ? "_blank" : undefined}
+                    rel={item.cta.isExternal ? "noopener noreferrer" : undefined}
+                    data-testid="offering-card-cta"
+                    data-wa-event={item.cta.isWhatsApp ? "wa_click" : undefined}
+                  >
+                    {item.cta.label}
+                  </a>
+                </div>
+              </article>
+            ))}
+          </div>
+
+          <PublicPagination
+            pagination={pagination}
+            ariaLabel={`Navigasi halaman ${descriptor.pluralLabel}`}
+          />
+        </>
+      ) : (
+        <div class="ps-state-panel" data-testid="offering-empty-state">
+          <h2 class="ps-state-heading">{descriptor.emptyHeading}</h2>
+          <p class="ps-state-body">{descriptor.emptyBody}</p>
+          <div class="ps-actions">
+            <a href="/" class="ps-btn ps-btn--primary">
+              Kembali ke Beranda
+            </a>
+          </div>
+        </div>
+      )}
+    </div>
+  </section>
+
+  {result.floatingWa.phone && (
+    <FloatingWhatsApp
+      slot="floating"
+      shell={result.shell}
+      phone={result.floatingWa.phone}
+      businessName={result.floatingWa.businessName}
+      greetingMessage={result.floatingWa.greetingMessage}
+      operatingHours={result.floatingWa.operatingHours}
+      holidayHours={result.floatingWa.holidayHours}
+      primaryOrigin={result.floatingWa.primaryOrigin}
+      canonicalPath={result.floatingWa.canonicalPath}
+      itemTitle={result.floatingWa.itemTitle}
+    />
+  )}
+</Layout>

@@ -772,11 +772,17 @@ function buildOfferingSnapshotForPublication(
     negotiable: validated.pricing.negotiable,
     originalAmount: validated.pricing.originalAmount,
     badge: validated.badge,
+    badges: [...validated.badges],
     ctaMode: validated.cta.ctaMode,
+    ctaLabel: validated.cta.ctaLabel,
     externalUrl: validated.cta.externalUrl,
+    whatsappOverride: validated.cta.whatsappOverride,
+    whatsappTemplate: validated.cta.whatsappTemplate,
     unitStatus: validated.unitStatus,
+    categoryIds: [...validated.categoryIds],
     attributesVersion: validated.attributesVersion,
     attributes: projectToPublicOfferingAttributes(validated.offeringType, validated.attributes),
+    verticalAttributes: { ...(validated.attributes as Record<string, unknown>) },
     seo: validated.seo,
   };
 }

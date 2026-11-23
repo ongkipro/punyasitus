@@ -1,0 +1,115 @@
+---
+import { env } from "cloudflare:workers";
+import "../themes/default/sections/sections.css";
+import "./layanan/_public-pages.css";
+import SEOHead from "../components/SEOHead.astro";
+import {
+  applyPublicRouteResponseMeta,
+  buildPublicRouteDepsFromAstro,
+  resolvePublicPageRoute,
+} from "../core/public-routes.ts";
+import FloatingWhatsApp from "../themes/default/components/FloatingWhatsApp.astro";
+import Layout from "../themes/default/Layout.astro";
+import SectionRenderer from "../themes/default/sections/SectionRenderer.astro";
+import PublicNotFoundView from "./layanan/_PublicNotFoundView.astro";
+
+const deps = buildPublicRouteDepsFromAstro(
+  Astro.locals,
+  env as unknown as Record<string, unknown>,
+);
+const result = await resolvePublicPageRoute(Astro.request, deps, Astro.params.slug ?? "", {
+  url: Astro.url,
+});
+
+if (result.kind === "response") {
+  return result.response;
+}
+
+applyPublicRouteResponseMeta(Astro.response, result.http);
+---
+
+{result.kind === "not_found" ? (
+  <PublicNotFoundView result={result} />
+) : (
+  <Layout
+    shell={result.shell}
+    pageTitle={result.isHomepage ? undefined : result.pageTitle}
+    pageDescription={result.seoMetadata.description || undefined}
+    layoutMode={result.layoutMode}
+    currentPath={result.currentPath}
+    initialCookieHeader={Astro.request.headers.get("cookie")}
+  >
+    <SEOHead
+      slot="head"
+      metadata={result.seoMetadata}
+      jsonLd={result.schemaGraph ?? undefined}
+      omitTitle={true}
+      omitDescription={Boolean(result.seoMetadata.description)}
+    />
+
+    {result.page && result.page.sections.length > 0 ? (
+      <SectionRenderer
+        sections={result.page.sections}
+        themeId={result.shell.themeId}
+        routePath={result.currentPath}
+        pageSlug={result.isHomepage ? null : result.page.slug}
+        isHomepage={result.isHomepage}
+        mode="published"
+        businessCategory={result.shell.business.category}
+        heroVariant={result.shell.themeStyle.variants.heroVariant}
+        primaryOrigin={result.primaryOrigin}
+        fallbackOfferings={result.fallbackOfferings}
+        fallbackPosts={result.fallbackPosts}
+        fallbackBusiness={{
+          address: result.shell.business.address,
+          weekdayHours: result.shell.business.weekdayHours,
+          holidayHours: result.shell.business.holidayHours,
+          phone: result.shell.business.phone,
+          whatsappE164: result.shell.business.whatsappE164,
+          email: result.shell.business.email,
+          mapsUrl: result.shell.business.mapsUrl,
+        }}
+      />
+    ) : (
+      <section class="ps-archive-section" data-testid="public-page-empty">
+        <div class="ps-container">
+          <div class="ps-state-panel">
+            <h1 class="ps-state-heading">{result.pageTitle}</h1>
+            <p class="ps-state-body">
+              {result.shell.business.description ??
+                result.shell.site.tagline ??
+                "Informasi halaman akan ditampilkan di sini setelah konten diterbitkan."}
+            </p>
+            <div class="ps-actions">
+              {result.shell.site.catalogEnabled && (
+                <a href="/layanan" class="ps-btn ps-btn--primary">
+                  Lihat Layanan
+                </a>
+              )}
+              {result.shell.site.blogEnabled && (
+                <a href="/blog" class="ps-btn ps-btn--secondary">
+                  Baca Blog
+                </a>
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
+    )}
+
+    {result.floatingWa.phone && (
+      <FloatingWhatsApp
+        slot="floating"
+        shell={result.shell}
+        phone={result.floatingWa.phone}
+        businessName={result.floatingWa.businessName}
+        greetingMessage={result.floatingWa.greetingMessage}
+        operatingHours={result.floatingWa.operatingHours}
+        holidayHours={result.floatingWa.holidayHours}
+        primaryOrigin={result.floatingWa.primaryOrigin}
+        canonicalPath={result.floatingWa.canonicalPath}
+        itemTitle={result.floatingWa.itemTitle}
+      />
+    )}
+  </Layout>
+)}

@@ -1,0 +1,594 @@
+---
+import "../../themes/default/sections/sections.css";
+import "./_public-pages.css";
+import SEOHead from "../../components/SEOHead.astro";
+import {
+  formatDateOnlyIndonesian,
+  type PublicOfferingDetailRenderResult,
+} from "../../core/public-routes.ts";
+import { formatIdrPlain } from "../../core/section-registry.ts";
+import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.astro";
+import Layout from "../../themes/default/Layout.astro";
+import PublicBreadcrumbs from "./_PublicBreadcrumbs.astro";
+
+export interface Props {
+  readonly result: PublicOfferingDetailRenderResult;
+}
+
+const { result } = Astro.props;
+const { descriptor, offering, relatedOfferings } = result;
+
+const serviceModeLabels: Readonly<Record<string, string>> = {
+  onsite: "Di lokasi klien",
+  remote: "Jarak jauh (online)",
+  hybrid: "Hybrid (daring & lokasi)",
+  in_store: "Di kantor / gerai",
+};
+
+const stockStatusLabels: Readonly<Record<string, string>> = {
+  ready: "Tersedia",
+  preorder: "Pre-order",
+  limited: "Stok terbatas",
+  out_of_stock: "Stok habis",
+};
+
+const tourDepartureStatusLabels: Readonly<Record<string, string>> = {
+  open: "Dibuka",
+  limited: "Terbatas",
+  full: "Penuh",
+  closed: "Ditutup",
+};
+
+const vehicleConditionLabels: Readonly<Record<string, string>> = {
+  new: "Baru",
+  used: "Bekas",
+};
+
+const vehicleFuelLabels: Readonly<Record<string, string>> = {
+  bensin: "Bensin",
+  diesel: "Diesel",
+  hybrid: "Hybrid",
+  listrik: "Listrik (EV)",
+};
+
+const vehicleTransLabels: Readonly<Record<string, string>> = {
+  manual: "Manual",
+  automatic: "Otomatis",
+  cvt: "CVT",
+  dct: "DCT",
+  ev: "Single-Speed EV",
+};
+
+const vehicleBodyLabels: Readonly<Record<string, string>> = {
+  mpv: "MPV",
+  suv: "SUV",
+  sedan: "Sedan",
+  hatchback: "Hatchback",
+  pickup: "Pickup",
+  double_cabin: "Double Cabin",
+  crossover: "Crossover",
+  matic: "Skutik / Matic",
+  bebek: "Motor Bebek",
+  sport: "Sport",
+  niaga: "Niaga",
+  other: "Lainnya",
+};
+
+function statusBadgeClass(status: string | null | undefined): string {
+  if (status === "sold") return "ps-badge ps-badge--sold";
+  if (status === "booked") return "ps-badge ps-badge--booked";
+  return "ps-badge ps-badge--secondary";
+}
+
+// Build typed specification key-value rows for clean tabular rendering
+const specRows: Array<{ readonly label: string; readonly value: string }> = [];
+
+if (offering.serviceAttributes) {
+  const a = offering.serviceAttributes;
+  if (a.duration) specRows.push({ label: "Durasi", value: a.duration });
+  if (a.turnaround) specRows.push({ label: "Estimasi pengerjaan", value: a.turnaround });
+  if (a.serviceMode) {
+    specRows.push({ label: "Mode layanan", value: serviceModeLabels[a.serviceMode] ?? a.serviceMode });
+  }
+  if (a.serviceArea) specRows.push({ label: "Area layanan", value: a.serviceArea });
+  if (a.warranty) specRows.push({ label: "Garansi", value: a.warranty });
+}
+
+if (offering.productAttributes) {
+  const a = offering.productAttributes;
+  if (a.brand) specRows.push({ label: "Merek", value: a.brand });
+  if (a.sku) specRows.push({ label: "SKU", value: a.sku });
+  if (a.stockStatus) {
+    specRows.push({
+      label: "Ketersediaan",
+      value: stockStatusLabels[a.stockStatus] ?? a.stockStatus,
+    });
+  }
+  if (a.moq) specRows.push({ label: "Minimal pemesanan", value: `${a.moq}${a.unit ? ` ${a.unit}` : ""}` });
+  if (a.unit && !a.moq) specRows.push({ label: "Satuan", value: a.unit });
+  if (a.material) specRows.push({ label: "Material", value: a.material });
+  if (a.dimensions) specRows.push({ label: "Dimensi", value: a.dimensions });
+  if (a.weightGrams) specRows.push({ label: "Berat", value: `${a.weightGrams.toLocaleString("id-ID")} gram` });
+  if (a.specs) {
+    for (const s of a.specs) {
+      specRows.push({ label: s.label, value: s.value });
+    }
+  }
+}
+
+if (offering.tourAttributes) {
+  const a = offering.tourAttributes;
+  if (a.destination) specRows.push({ label: "Destinasi", value: a.destination });
+  if (a.durationDays !== undefined) {
+    const dur =
+      a.durationNights !== undefined
+        ? `${a.durationDays} Hari ${a.durationNights} Malam`
+        : `${a.durationDays} Hari`;
+    specRows.push({ label: "Durasi perjalanan", value: dur });
+  }
+  if (a.departureCity) specRows.push({ label: "Kota keberangkatan", value: a.departureCity });
+  if (a.airline) specRows.push({ label: "Maskapai / Transportasi", value: a.airline });
+  if (a.hotel) specRows.push({ label: "Akomodasi / Hotel", value: a.hotel });
+  if (a.minPax) specRows.push({ label: "Minimal peserta", value: `${a.minPax} orang` });
+  const ppiu = a.ppiuNumber ?? a.umrahLicense;
+  if (ppiu) specRows.push({ label: "Izin resmi PPIU / PIHK", value: ppiu });
+}
+
+if (offering.vehicleAttributes) {
+  const a = offering.vehicleAttributes;
+  if (a.brand) specRows.push({ label: "Merek", value: a.brand });
+  if (a.model) specRows.push({ label: "Model", value: a.model });
+  if (a.variant) specRows.push({ label: "Varian", value: a.variant });
+  if (a.year) specRows.push({ label: "Tahun", value: String(a.year) });
+  if (a.condition) {
+    specRows.push({ label: "Kondisi", value: vehicleConditionLabels[a.condition] ?? a.condition });
+  }
+  if (a.transmission) {
+    specRows.push({ label: "Transmisi", value: vehicleTransLabels[a.transmission] ?? a.transmission });
+  }
+  if (a.fuelType) {
+    specRows.push({ label: "Bahan bakar", value: vehicleFuelLabels[a.fuelType] ?? a.fuelType });
+  }
+  if (a.bodyType) {
+    specRows.push({ label: "Tipe bodi", value: vehicleBodyLabels[a.bodyType] ?? a.bodyType });
+  }
+  if (a.mileageKm !== undefined) {
+    specRows.push({
+      label: "Jarak tempuh",
+      value: `${String(a.mileageKm).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} km`,
+    });
+  }
+  if (a.engineCc) specRows.push({ label: "Kapasitas mesin", value: `${a.engineCc} cc` });
+  if (a.seats) specRows.push({ label: "Kapasitas kursi", value: `${a.seats} penumpang` });
+  if (a.color) specRows.push({ label: "Warna", value: a.color });
+  if (a.location) specRows.push({ label: "Lokasi unit", value: a.location });
+  if (a.plateRegion) specRows.push({ label: "Wilayah pelat", value: a.plateRegion });
+  if (a.stnkExpiry) {
+    specRows.push({ label: "Masa berlaku STNK", value: formatDateOnlyIndonesian(a.stnkExpiry) });
+  }
+  if (a.ownershipCount) {
+    specRows.push({ label: "Tangan ke-", value: String(a.ownershipCount) });
+  }
+  if (a.otrPriceNote) specRows.push({ label: "Catatan harga", value: a.otrPriceNote });
+}
+
+const creditTenors = offering.vehicleCreditRows[0]?.installments.map((i) => i.tenorMonths) ?? [];
+---
+
+<Layout
+  shell={result.shell}
+  pageTitle={result.pageTitle}
+  pageDescription={result.seoMetadata.description || undefined}
+  currentPath={result.currentPath}
+  initialCookieHeader={Astro.request.headers.get("cookie")}
+>
+  <SEOHead
+    slot="head"
+    metadata={result.seoMetadata}
+    jsonLd={result.schemaGraph ?? undefined}
+    omitTitle={true}
+    omitDescription={Boolean(result.seoMetadata.description)}
+  />
+
+  <section class="ps-route-hero">
+    <div class="ps-container ps-route-hero-inner">
+      <PublicBreadcrumbs items={result.breadcrumbs} />
+      <div class="ps-offering-badges">
+        <span class="ps-badge">{descriptor.singularLabel}</span>
+        {offering.categoryNames.map((cat) => (
+          <span class="ps-badge">{cat}</span>
+        ))}
+        {offering.badge && <span class="ps-badge ps-badge--brand">{offering.badge}</span>}
+        {offering.unitStatusLabel && (
+          <span class={statusBadgeClass(offering.unitStatus)} data-testid="vehicle-unit-status">
+            {offering.unitStatusLabel}
+          </span>
+        )}
+      </div>
+      <h1 class="ps-route-title" data-testid="offering-detail-title">{offering.title}</h1>
+      {offering.summary && <p class="ps-route-lead">{offering.summary}</p>}
+    </div>
+  </section>
+
+  <article
+    class="ps-detail-shell"
+    data-testid={`offering-detail-${descriptor.offeringType}`}
+    data-offering-slug={offering.slug}
+  >
+    <div class="ps-container ps-detail-grid">
+      <div class="ps-detail-main">
+        {offering.coverImage && (
+          <figure class="ps-detail-cover">
+            <img
+              src={offering.coverImage.url}
+              alt={offering.coverImage.alt || offering.title}
+              width={offering.coverImage.width}
+              height={offering.coverImage.height}
+              loading="eager"
+              decoding="async"
+            />
+          </figure>
+        )}
+
+        {offering.galleryImages.length > 0 && (
+          <div class="ps-detail-gallery" aria-label="Galeri foto" data-testid="offering-gallery">
+            {offering.galleryImages.map((img, idx) => (
+              <figure class="ps-detail-thumb">
+                <img
+                  src={img.url}
+                  alt={img.alt || `${offering.title} — Foto ${idx + 2}`}
+                  width={img.width}
+                  height={img.height}
+                  loading="lazy"
+                  decoding="async"
+                />
+              </figure>
+            ))}
+          </div>
+        )}
+
+        {offering.descriptionHtml && (
+          <section class="ps-detail-block" aria-labelledby="desc-heading">
+            <h2 id="desc-heading">Deskripsi</h2>
+            <div class="ps-prose" set:html={offering.descriptionHtml} />
+          </section>
+        )}
+
+        {specRows.length > 0 && (
+          <section class="ps-detail-block" aria-labelledby="specs-heading" data-testid="offering-specs">
+            <h2 id="specs-heading">Spesifikasi &amp; Informasi Utama</h2>
+            <dl class="ps-spec-list">
+              {specRows.map((row) => (
+                <div class="ps-spec-row">
+                  <dt>{row.label}</dt>
+                  <dd>{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+
+        {/* Service: Deliverables, Consultation Steps & Pricing Tiers */}
+        {offering.serviceAttributes?.deliverables && offering.serviceAttributes.deliverables.length > 0 && (
+          <section class="ps-detail-block" aria-labelledby="deliverables-heading">
+            <h2 id="deliverables-heading">Yang Anda Dapatkan</h2>
+            <ul class="ps-check-list">
+              {offering.serviceAttributes.deliverables.map((item) => (
+                <li>{item}</li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {offering.serviceAttributes?.serviceSteps && offering.serviceAttributes.serviceSteps.length > 0 && (
+          <section class="ps-detail-block" aria-labelledby="steps-heading">
+            <h2 id="steps-heading">Cara Kerja</h2>
+            <ol class="ps-check-list">
+              {offering.serviceAttributes.serviceSteps.map((step) => (
+                <li>{step}</li>
+              ))}
+            </ol>
+          </section>
+        )}
+
+        {offering.serviceAttributes?.tiers && offering.serviceAttributes.tiers.length > 0 && (
+          <section class="ps-detail-block" aria-labelledby="tiers-heading">
+            <h2 id="tiers-heading">Pilihan Paket Layanan</h2>
+            <div class="ps-card-grid">
+              {offering.serviceAttributes.tiers.map((tier) => (
+                <div class="ps-card">
+                  <h3 class="ps-card-title">{tier.name}</h3>
+                  {tier.summary && <p class="ps-card-desc">{tier.summary}</p>}
+                  {typeof tier.price === "number" && (
+                    <p class="ps-offering-price">{formatIdrPlain(tier.price)}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {/* Product: Variants */}
+        {offering.productAttributes?.variants && offering.productAttributes.variants.length > 0 && (
+          <section class="ps-detail-block" aria-labelledby="variants-heading">
+            <h2 id="variants-heading">Pilihan Varian</h2>
+            <dl class="ps-spec-list">
+              {offering.productAttributes.variants.map((variant) => (
+                <div class="ps-spec-row">
+                  <dt>{variant.name}</dt>
+                  <dd>{variant.values.join(", ")}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+
+        {/* Tour: Inclusions / Exclusions, Day-by-Day Itinerary & Date-Only Departures */}
+        {offering.tourAttributes &&
+          ((offering.tourAttributes.inclusions?.length ?? 0) > 0 ||
+            (offering.tourAttributes.exclusions?.length ?? 0) > 0) && (
+            <section class="ps-detail-block" aria-labelledby="inc-exc-heading">
+              <h2 id="inc-exc-heading">Fasilitas Termasuk &amp; Tidak Termasuk</h2>
+              <div class="ps-check-columns">
+                {offering.tourAttributes.inclusions && offering.tourAttributes.inclusions.length > 0 && (
+                  <div class="ps-card">
+                    <h3 class="ps-card-title">Termasuk dalam Paket</h3>
+                    <ul class="ps-check-list">
+                      {offering.tourAttributes.inclusions.map((inc) => (
+                        <li>{inc}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {offering.tourAttributes.exclusions && offering.tourAttributes.exclusions.length > 0 && (
+                  <div class="ps-card">
+                    <h3 class="ps-card-title">Tidak Termasuk</h3>
+                    <ul class="ps-check-list">
+                      {offering.tourAttributes.exclusions.map((exc) => (
+                        <li>{exc}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </section>
+          )}
+
+        {offering.tourAttributes?.itinerary && offering.tourAttributes.itinerary.length > 0 && (
+          <section class="ps-detail-block" aria-labelledby="itinerary-heading">
+            <h2 id="itinerary-heading">Rencana Perjalanan Harian</h2>
+            <div class="ps-faq-list">
+              {offering.tourAttributes.itinerary.map((day, idx) => (
+                <details class="ps-faq-item" open={idx === 0}>
+                  <summary class="ps-faq-summary">
+                    <span>
+                      Hari {day.day}: {day.title}
+                    </span>
+                    <svg
+                      class="ps-faq-icon"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="2"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      aria-hidden="true"
+                    >
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </summary>
+                  {day.description && (
+                    <div class="ps-faq-answer">
+                      <p>{day.description}</p>
+                    </div>
+                  )}
+                </details>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {offering.tourAttributes &&
+          ((offering.tourAttributes.departures?.length ?? 0) > 0 ||
+            (offering.tourAttributes.departureDates?.length ?? 0) > 0) && (
+            <section class="ps-detail-block" aria-labelledby="departures-heading">
+              <h2 id="departures-heading">Jadwal Keberangkatan</h2>
+              <div class="ps-table-wrap">
+                <table class="ps-data-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Tanggal Berangkat</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Keterangan</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {offering.tourAttributes.departures && offering.tourAttributes.departures.length > 0
+                      ? offering.tourAttributes.departures.map((dep) => (
+                          <tr>
+                            <td>{formatDateOnlyIndonesian(dep.departureDate)}</td>
+                            <td>{tourDepartureStatusLabels[dep.status] ?? dep.status}</td>
+                            <td>{dep.note ?? "—"}</td>
+                          </tr>
+                        ))
+                      : offering.tourAttributes.departureDates?.map((iso) => (
+                          <tr>
+                            <td>{formatDateOnlyIndonesian(iso)}</td>
+                            <td>Terjadwal</td>
+                            <td>Hubungi kami untuk konfirmasi ketersediaan</td>
+                          </tr>
+                        ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          )}
+
+        {/* Vehicle: Static Server-Rendered Credit Estimate Table (Zero JS, Available + Fixed Only) */}
+        {offering.vehicleCreditRows.length > 0 && creditTenors.length > 0 && (
+          <section
+            class="ps-detail-block"
+            aria-labelledby="credit-heading"
+            data-testid="vehicle-credit-table"
+          >
+            <h2 id="credit-heading">Simulasi Estimasi Cicilan</h2>
+            <div class="ps-table-wrap">
+              <table class="ps-data-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Uang Muka (DP)</th>
+                    {creditTenors.map((tenor) => (
+                      <th scope="col">Tenor {tenor} Bln</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {offering.vehicleCreditRows.map((row) => (
+                    <tr>
+                      <td>{row.dpLabel}</td>
+                      {row.installments.map((inst) => (
+                        <td>{inst.monthlyLabel}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p class="ps-disclaimer">
+              Simulasi cicilan di atas merupakan estimasi statis flat dan bukan penawaran
+              pembiayaan mengikat. Nilai aktual mengikuti hasil verifikasi serta ketentuan lembaga
+              pembiayaan yang berlaku.
+            </p>
+          </section>
+        )}
+      </div>
+
+      {/* Conversion Summary Card (Zero JS, Visible Price + Primary CTA) */}
+      <aside class="ps-detail-sidebar" aria-label="Ringkasan penawaran" data-testid="offering-summary-card">
+        <div>
+          <p class="ps-eyebrow">{descriptor.singularLabel}</p>
+          <p class="ps-detail-price" data-testid="offering-detail-price">
+            {offering.priceText}
+          </p>
+          {offering.originalPriceText && (
+            <p class="ps-detail-note">
+              Harga sebelumnya: <del class="ps-offering-original">{offering.originalPriceText}</del>
+            </p>
+          )}
+        </div>
+
+        <div class="ps-detail-cta-stack">
+          <a
+            href={offering.cta.href}
+            class:list={[
+              "ps-btn",
+              offering.cta.isWhatsApp ? "ps-btn--whatsapp" : "ps-btn--primary",
+            ]}
+            target={offering.cta.isExternal ? "_blank" : undefined}
+            rel={offering.cta.isExternal ? "noopener noreferrer" : undefined}
+            data-testid="offering-detail-primary-cta"
+            data-wa-event={offering.cta.isWhatsApp ? "wa_click" : undefined}
+          >
+            {offering.cta.label}
+          </a>
+
+          {offering.fallbackContactHref && (
+            <a href={offering.fallbackContactHref} class="ps-btn ps-btn--secondary">
+              Kontak Langsung
+            </a>
+          )}
+
+          <a href={descriptor.prefix} class="ps-btn ps-btn--secondary">
+            &larr; {descriptor.backLabel}
+          </a>
+        </div>
+
+        {offering.cta.helperNote && <p class="ps-detail-note">{offering.cta.helperNote}</p>}
+
+        {(result.shell.business.weekdayHours || result.shell.business.address) && (
+          <dl class="ps-contact-dl">
+            {result.shell.business.weekdayHours && (
+              <div>
+                <dt>Jam Operasional</dt>
+                <dd>{result.shell.business.weekdayHours}</dd>
+              </div>
+            )}
+            {result.shell.business.address && (
+              <div>
+                <dt>Lokasi</dt>
+                <dd>
+                  {[result.shell.business.address, result.shell.business.city]
+                    .filter(Boolean)
+                    .join(", ")}
+                </dd>
+              </div>
+            )}
+          </dl>
+        )}
+      </aside>
+    </div>
+  </article>
+
+  {relatedOfferings.length > 0 && (
+    <section class="ps-related-section" aria-labelledby="related-offerings-heading">
+      <div class="ps-container">
+        <header class="ps-section-header ps-section-header--row">
+          <h2 id="related-offerings-heading" class="ps-section-title">
+            {descriptor.pluralLabel} Lainnya
+          </h2>
+          <a href={descriptor.prefix} class="ps-btn ps-btn--secondary">
+            {descriptor.backLabel}
+          </a>
+        </header>
+
+        <div class="ps-archive-grid">
+          {relatedOfferings.map((item) => (
+            <article class="ps-card ps-offering-card" data-offering-slug={item.slug}>
+              <div class="ps-offering-media">
+                {item.coverImage ? (
+                  <img
+                    src={item.coverImage.url}
+                    alt={item.coverImage.alt || item.title}
+                    width={item.coverImage.width}
+                    height={item.coverImage.height}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                ) : (
+                  <div class="ps-offering-media-placeholder">{descriptor.singularLabel}</div>
+                )}
+              </div>
+              <div class="ps-offering-body">
+                <h3 class="ps-card-title">
+                  <a href={item.href} class="ps-offering-title-link">
+                    {item.title}
+                  </a>
+                </h3>
+                {item.summary && <p class="ps-card-desc">{item.summary}</p>}
+                <div class="ps-offering-price-wrap">
+                  <p class="ps-offering-price">{item.priceText}</p>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+
+  {result.floatingWa.phone && (
+    <FloatingWhatsApp
+      slot="floating"
+      shell={result.shell}
+      phone={result.floatingWa.phone}
+      businessName={result.floatingWa.businessName}
+      greetingMessage={result.floatingWa.greetingMessage}
+      operatingHours={result.floatingWa.operatingHours}
+      holidayHours={result.floatingWa.holidayHours}
+      primaryOrigin={result.floatingWa.primaryOrigin}
+      canonicalPath={result.floatingWa.canonicalPath}
+      itemTitle={result.floatingWa.itemTitle}
+      itemPrice={result.floatingWa.itemPrice}
+    />
+  )}
+</Layout>
