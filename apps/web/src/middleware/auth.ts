@@ -14,6 +14,12 @@ import {
   type AuthorizedTenantMember,
   type VerifiedPlatformOperatorContext,
 } from "@punyasitus/auth";
+import {
+  evaluateTenantApiEntitlement,
+  loadLiveTenantEntitlement,
+  loadMemberTenantEntitlement,
+  type LiveTenantEntitlement,
+} from "@punyasitus/auth/entitlements/index";
 import { normalizeHost, PLATFORM_HOSTS, type SurfaceKind } from "@punyasitus/core";
 import {
   createLocalMailSink,
@@ -41,7 +47,8 @@ const CSRF_PROTECTED_API_PREFIXES = [
   "/api/console",
 ] as const;
 
-const DASHBOARD_HANDLE_RE = /^\/dashboard\/([^/]+)(?:\/|$)/i;
+const DASHBOARD_HANDLE_RE = /^\/dashboard\/([^/]+)(?:\/(.*))?$/i;
+const TENANT_API_SELECTOR_RE = /^\/api\/tenants\/([^/]+)(\/.*)?$/i;
 const ENCODED_SLASH_OR_BACKSLASH_RE = /%(?:2f|5c|00)/i;
 
 /**
@@ -106,6 +113,7 @@ export interface AuthMiddlewareLocals extends TenantMiddlewareLocals {
   authUser: AuthLocalsUser | null;
   authSession: AuthLocalsSession | null;
   authorizedTenantMember: AuthorizedTenantMember | null;
+  tenantEntitlement?: LiveTenantEntitlement | null;
   platformOperator?: VerifiedPlatformOperatorContext | null;
   twoFactorVerifiedAtMs?: number | null;
 }
@@ -305,6 +313,7 @@ export async function executeAuthMiddleware(
   context.locals.authUser = null;
   context.locals.authSession = null;
   context.locals.authorizedTenantMember = null;
+  context.locals.tenantEntitlement = null;
   context.locals.platformOperator = null;
   context.locals.twoFactorVerifiedAtMs = null;
 
@@ -545,6 +554,37 @@ export async function executeAuthMiddleware(
         nowMs: options.nowMs,
       });
       context.locals.authorizedTenantMember = member;
+
+      // Live per-tenant timed entitlement evaluation (REQ-060, TASK-059):
+      // recalculated independently on every request/tenant switch, never cached.
+      const entitlement = await loadLiveTenantEntitlement(
+        env.PLATFORM_DB,
+        { tenantId: member.tenantId },
+        { nowMs: options.nowMs },
+      );
+      context.locals.tenantEntitlement = entitlement;
+
+      // Block state-changing dashboard form/action mutations on locked/suspended tenants
+      // outside billing & service-status recovery paths.
+      if (entitlement && STATE_CHANGING_METHODS.has(method)) {
+        const subPathMatch = DASHBOARD_HANDLE_RE.exec(pathname);
+        const subPath = subPathMatch?.[2] ? `/${subPathMatch[2]}` : "/";
+        const decision = evaluateTenantApiEntitlement({
+          entitlement,
+          method,
+          subPath,
+          role: member.role,
+        });
+        if (!decision.allowed) {
+          const denyCode = decision.code ?? "SUBSCRIPTION_LOCKED";
+          const denyMessage =
+            decision.message ?? "Operasi tidak diizinkan pada status langganan saat ini.";
+          return jsonAuthError(decision.status === 404 ? 404 : 403, denyCode, denyMessage, {
+            effectiveStatus: decision.effectiveStatus,
+            error: { code: denyCode, message: denyMessage },
+          });
+        }
+      }
     } catch (err) {
       if (err instanceof AuthorizationError && err.status === 404) {
         return createStatePageResponse("not_found", { pathname, surface });
@@ -560,6 +600,63 @@ export async function executeAuthMiddleware(
         });
       }
       return createStatePageResponse("unavailable", { pathname, surface });
+    }
+  }
+
+  // 6. Central Live Entitlement Gate for `/api/tenants/{tenantIdOrHandle}/**` (REQ-060, TASK-059):
+  // - Always re-evaluates server wall-clock entitlement for the requested tenant (zero stale cross-tenant state).
+  // - On `locked` (H+4..H+7): CMS reads, billing, leads CSV export, and service-status succeed;
+  //   ALL CMS writes/publishes return `403 SUBSCRIPTION_LOCKED`.
+  // - On `suspended` (H+8+, unpaid trial expiry, or manual hold): ONLY billing, leads CSV export,
+  //   and service-status succeed; CMS reads & writes return `403 SUBSCRIPTION_LOCKED`.
+  // - On `trial`: custom domain connect / primary promotion return `403 TRIAL_DOMAIN_FORBIDDEN`.
+  const tenantApiMatch = TENANT_API_SELECTOR_RE.exec(pathname);
+  if (tenantApiMatch && context.locals.authUser && env.PLATFORM_DB) {
+    const selector = tenantApiMatch[1] ?? "";
+    const subPath = tenantApiMatch[2] ?? "/";
+    try {
+      const resolved = await loadMemberTenantEntitlement(env.PLATFORM_DB, {
+        userId: context.locals.authUser.id,
+        selector,
+        nowMs: options.nowMs,
+      });
+      if (resolved) {
+        context.locals.tenantEntitlement = resolved.entitlement;
+        context.locals.authorizedTenantMember = {
+          tenantId: resolved.entitlement.tenantId,
+          organizationId: resolved.entitlement.organizationId,
+          handle: resolved.entitlement.handle,
+          tenantName: resolved.entitlement.tenantName,
+          tenantStatus: resolved.entitlement.evaluation.effectiveStatus,
+          memberId: resolved.memberId,
+          userId: context.locals.authUser.id,
+          dbRole: resolved.dbRole,
+          role: resolved.role,
+        };
+
+        const decision = evaluateTenantApiEntitlement({
+          entitlement: resolved.entitlement,
+          method,
+          subPath,
+          role: resolved.role,
+        });
+
+        if (!decision.allowed) {
+          const denyCode = decision.code ?? "SUBSCRIPTION_LOCKED";
+          const denyMessage =
+            decision.message ?? "Operasi tidak diizinkan pada status langganan saat ini.";
+          return jsonAuthError(decision.status === 404 ? 404 : 403, denyCode, denyMessage, {
+            effectiveStatus: decision.effectiveStatus,
+            error: { code: denyCode, message: denyMessage },
+          });
+        }
+      }
+    } catch {
+      return jsonAuthError(
+        503,
+        "SERVICE_UNAVAILABLE",
+        "Gagal memverifikasi status hak akses langganan situs.",
+      );
     }
   }
 
