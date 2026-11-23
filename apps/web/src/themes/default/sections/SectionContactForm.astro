@@ -1,16 +1,19 @@
 ---
 import "./sections.css";
+import { buildSafeGoogleMapsReviewLink } from "@punyasitus/core/settings/google-maps-review";
 
 /**
  * Accessible Zero-JS Native Lead Capture Contact Form Section
  * (`apps/web/src/themes/default/sections/SectionContactForm.astro`;
- * TASK-021, REQ-031, REQ-038, REQ-039).
+ * TASK-021, REQ-031, REQ-038, REQ-039; TASK-073, REQ-074).
  *
  * - 100% functional WITHOUT JavaScript via native `<form method="POST" action="/api/leads">`
  *   with PRG `303 See Other` redirect rendering a durable status banner from query params.
  * - Progressively enhanced when JS is available (submits JSON with `Idempotency-Key` header
  *   while preserving exact server validation and error states).
- * - Consumes ONLY `--ps-*` public theme tokens; zero React/admin imports; >= 44px touch targets;
+ * - Renders an optional plain external Google Maps review link when configured (zero scripts,
+ *   zero widgets, zero copied review text, zero rating schema).
+ * - Consumes ONLY `--ps-*` public theme tokens; zero admin UI imports; >= 44px touch targets;
  *   zero horizontal overflow at 360px..2560px.
  */
 
@@ -26,6 +29,8 @@ export interface Props {
   readonly sourcePath?: string;
   readonly returnTo?: string;
   readonly turnstileSiteKey?: string;
+  readonly googleMapsReviewUrl?: string | null;
+  readonly googleMapsReviewLabel?: string;
   readonly surfaceTone?: "surface" | "muted";
   readonly isPreview?: boolean;
   readonly isFirstSection?: boolean;
@@ -43,10 +48,16 @@ const {
   sourcePath,
   returnTo,
   turnstileSiteKey,
+  googleMapsReviewUrl = null,
+  googleMapsReviewLabel,
   surfaceTone = "surface",
   isPreview = false,
   isFirstSection = false,
 } = Astro.props;
+
+const reviewLink = buildSafeGoogleMapsReviewLink(googleMapsReviewUrl, {
+  label: googleMapsReviewLabel,
+});
 
 const headingId = `section-${id}-heading`;
 const resolvedPath = sourcePath ?? (Astro.url.pathname || "/");
@@ -307,6 +318,32 @@ const cleanTurnstileSiteKey = turnstileSiteKey?.trim() || "";
           </p>
         </div>
       </form>
+
+      {reviewLink && (
+        <div class="ps-lead-review-box" data-testid="contact-google-review">
+          <div class="ps-lead-review-copy">
+            <p class="ps-lead-review-title">Ulasan Pelanggan di Google Maps</p>
+            <p class="ps-lead-review-desc">
+              Lihat ulasan pelanggan atau bagikan pengalaman Anda langsung di profil Google Maps kami.
+            </p>
+          </div>
+          <a
+            href={isPreview ? undefined : reviewLink.href}
+            target={isPreview ? undefined : reviewLink.target}
+            rel={isPreview ? undefined : reviewLink.rel}
+            aria-disabled={isPreview ? "true" : undefined}
+            class:list={[
+              "ps-btn ps-btn--secondary ps-lead-review-cta",
+              isPreview && "ps-btn--inert",
+            ]}
+            data-testid="contact-google-maps-review-link"
+            data-review-link-kind={reviewLink.kind}
+          >
+            <span>{reviewLink.label}</span>
+            <span aria-hidden="true">&#8599;</span>
+          </a>
+        </div>
+      )}
     </div>
   </div>
 </section>
@@ -499,6 +536,58 @@ const cleanTurnstileSiteKey = turnstileSiteKey?.trim() || "";
     font-size: 0.8125rem;
     color: var(--ps-ink-muted);
     line-height: 1.45;
+  }
+
+  .ps-lead-review-box {
+    margin-top: 1.5rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--ps-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    align-items: flex-start;
+  }
+
+  .ps-lead-review-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  .ps-lead-review-title {
+    margin: 0;
+    font-size: 0.9375rem;
+    font-weight: 700;
+    color: var(--ps-ink);
+  }
+
+  .ps-lead-review-desc {
+    margin: 0;
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-lead-review-cta {
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    min-height: 44px;
+  }
+
+  @media (min-width: 640px) {
+    .ps-lead-review-box {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1rem;
+    }
+
+    .ps-lead-review-cta {
+      width: auto;
+      flex-shrink: 0;
+    }
   }
 </style>
 
