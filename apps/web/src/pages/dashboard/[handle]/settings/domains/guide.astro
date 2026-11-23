@@ -1,0 +1,145 @@
+---
+import { env } from "cloudflare:workers";
+import type { TenantStatus, TenantVertical } from "@punyasitus/db/platform";
+import { DomainEmailGuide } from "@/components/admin/domain-guide";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { loadDomainGuidePage } from "./_loader";
+
+function neutralNotFoundResponse(): Response {
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>Halaman tidak ditemukan</title></head><body><main><h1>Halaman tidak ditemukan</h1></main></body></html>`,
+    {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    },
+  );
+}
+
+function mapLifecycle(status: TenantStatus): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+function offeringLabelForVertical(vertical?: TenantVertical): string {
+  switch (vertical) {
+    case "catalog":
+    case "resto":
+      return "Produk";
+    case "travel":
+      return "Paket Tur";
+    case "dealer":
+      return "Kendaraan";
+    default:
+      return "Layanan";
+  }
+}
+
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+const runtimeEnv = env as typeof env & {
+  readonly SAAS_ZONE?: string;
+  readonly SAAS_CNAME_TARGET?: string;
+};
+
+const nowMs = Date.now();
+const loaded = await loadDomainGuidePage({
+  rawHandle: Astro.params.handle ?? "",
+  surface: Astro.locals.surface ?? "unknown",
+  isLocalLoopback,
+  platformDb: env.PLATFORM_DB,
+  authUser: Astro.locals.authUser,
+  preResolvedMember: Astro.locals.authorizedTenantMember,
+  activeOrganizationId: Astro.locals.authSession?.activeOrganizationId ?? null,
+  saasZone: runtimeEnv.SAAS_ZONE,
+  cnameTarget: runtimeEnv.SAAS_CNAME_TARGET,
+  nowMs,
+});
+
+if (loaded.kind === "not_found") {
+  return neutralNotFoundResponse();
+}
+
+if (loaded.kind === "redirect") {
+  return new Response(null, {
+    status: 302,
+    headers: {
+      Location: loaded.location,
+      "Cache-Control": "private, no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const {
+  authorized,
+  vertical,
+  operatorHoldReason,
+  trialEndsAtMs,
+  canReadDomains,
+  saasZone,
+  cnameTarget,
+} = loaded;
+
+const lifecycleStatus = mapLifecycle(authorized.tenantStatus);
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof trialEndsAtMs === "number"
+    ? Math.max(0, Math.ceil((trialEndsAtMs - nowMs) / 86_400_000))
+    : undefined;
+
+const fallbackHost = `${authorized.handle}.${saasZone}`;
+const userRoleLabel =
+  authorized.role === "owner"
+    ? "Pemilik Situs"
+    : authorized.role === "admin"
+      ? "Admin"
+      : authorized.role === "agency_admin"
+        ? "Admin Agensi"
+        : "Editor";
+
+const encodedHandle = encodeURIComponent(authorized.handle);
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+Astro.response.status = loaded.httpStatus;
+---
+
+<DashboardLayout
+  title={`Panduan Domain & Email Bisnis — ${authorized.tenantName}`}
+  surface="dashboard"
+  workspaceName={authorized.tenantName}
+  workspaceSubtitle={fallbackHost}
+  activeNavId="settings"
+  basePath={`/dashboard/${authorized.handle}`}
+  offeringLabel={offeringLabelForVertical(vertical)}
+  lifecycleStatus={lifecycleStatus}
+  lifecycleDaysRemaining={lifecycleDaysRemaining}
+  lifecycleReason={operatorHoldReason ?? undefined}
+  publicSiteHref={`https://${fallbackHost}`}
+  userDisplayName={Astro.locals.authUser?.name ?? "Pemilik Situs"}
+  userRoleLabel={userRoleLabel}
+>
+  <DomainEmailGuide
+    client:load
+    handle={authorized.handle}
+    tenantName={authorized.tenantName}
+    tenantStatus={authorized.tenantStatus}
+    currentRole={authorized.role}
+    canReadDomains={canReadDomains}
+    cnameTarget={cnameTarget}
+    domainsHref={`/dashboard/${encodedHandle}/settings/domains`}
+    billingHref={`/dashboard/${encodedHandle}/billing`}
+  />
+</DashboardLayout>

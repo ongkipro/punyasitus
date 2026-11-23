@@ -62,9 +62,38 @@ export type DomainsSettingsPageLoadResult =
       readonly maxCustomHostnames: number;
     };
 
-export async function loadDomainsSettingsPage(
+export type DomainGuidePageLoadResult =
+  | { readonly kind: "not_found" }
+  | { readonly kind: "redirect"; readonly location: string }
+  | {
+      readonly kind: "render";
+      readonly httpStatus: 200 | 403;
+      readonly authorized: AuthorizedTenantMember;
+      readonly vertical?: TenantVertical;
+      readonly operatorHoldReason: string | null;
+      readonly trialEndsAtMs: number | null;
+      readonly canReadDomains: boolean;
+      readonly saasZone: string;
+      readonly cnameTarget: string;
+    };
+
+type DomainsAccessGateResult =
+  | { readonly kind: "not_found" }
+  | { readonly kind: "redirect"; readonly location: string }
+  | {
+      readonly kind: "allowed";
+      readonly platformDb: D1Database;
+      readonly authorized: AuthorizedTenantMember;
+      readonly canReadDomains: boolean;
+      readonly canManageDomains: boolean;
+      readonly saasZone: string;
+      readonly cnameTarget: string;
+      readonly nowMs: number;
+    };
+
+async function gateDomainsSettingsAccess(
   input: LoadDomainsSettingsPageInput,
-): Promise<DomainsSettingsPageLoadResult> {
+): Promise<DomainsAccessGateResult> {
   const rawHandle = input.rawHandle.trim().toLowerCase();
 
   // 1. Strict app-host isolation & valid handle syntax
@@ -98,7 +127,7 @@ export async function loadDomainsSettingsPage(
     return { kind: "not_found" };
   }
 
-  // 3. LIFECYCLE GATE BEFORE ANY DB READS (prevents leaking domain rows / DCV tokens on suspended/recovery/purging/purged!)
+  // 3. LIFECYCLE GATE BEFORE ANY DB READS (prevents leaking tenant/domain rows on suspended/recovery/purging/purged!)
   const tenantStatus: TenantStatus = authorized.tenantStatus;
   if (tenantStatus === "purged") {
     return { kind: "not_found" };
@@ -117,7 +146,7 @@ export async function loadDomainsSettingsPage(
     };
   }
 
-  // 4. RBAC check BEFORE reading domain tokens/records
+  // 4. RBAC check BEFORE reading any tenant/domain records
   const canReadDomains = canPerform(authorized.role, "domain:read");
   const canManageDomains = canPerform(authorized.role, "domain:connect");
 
@@ -126,7 +155,72 @@ export async function loadDomainsSettingsPage(
     input.cnameTarget?.trim().toLowerCase().replace(/\.$/, "") ||
     (saasZone ? `cname.${saasZone}` : DEFAULT_SAAS_CNAME_TARGET);
 
-  const tenantMeta = await input.platformDb
+  return {
+    kind: "allowed",
+    platformDb: input.platformDb,
+    authorized,
+    canReadDomains,
+    canManageDomains,
+    saasZone,
+    cnameTarget,
+    nowMs,
+  };
+}
+
+/**
+ * Server loader for `/dashboard/[handle]/settings/domains/guide` (TASK-070, REQ-071).
+ *
+ * Uses the exact same host/membership/lifecycle/RBAC gate as Settings > Domains strictly BEFORE
+ * any tenant DB read, and never queries domain tokens or external providers.
+ */
+export async function loadDomainGuidePage(
+  input: LoadDomainsSettingsPageInput,
+): Promise<DomainGuidePageLoadResult> {
+  const gated = await gateDomainsSettingsAccess(input);
+  if (gated.kind !== "allowed") {
+    return gated;
+  }
+
+  const { platformDb, authorized, canReadDomains, saasZone, cnameTarget } = gated;
+  const tenantMeta = await platformDb
+    .prepare(
+      `SELECT vertical, operator_hold_reason, trial_ends_at
+       FROM tenants
+       WHERE id = ?
+       LIMIT 1`,
+    )
+    .bind(authorized.tenantId)
+    .first<{
+      readonly vertical: TenantVertical;
+      readonly operator_hold_reason: string | null;
+      readonly trial_ends_at: number | null;
+    }>();
+
+  return {
+    kind: "render",
+    httpStatus: canReadDomains ? 200 : 403,
+    authorized,
+    vertical: tenantMeta?.vertical,
+    operatorHoldReason: tenantMeta?.operator_hold_reason ?? null,
+    trialEndsAtMs: tenantMeta?.trial_ends_at ?? null,
+    canReadDomains,
+    saasZone,
+    cnameTarget,
+  };
+}
+
+export async function loadDomainsSettingsPage(
+  input: LoadDomainsSettingsPageInput,
+): Promise<DomainsSettingsPageLoadResult> {
+  const gated = await gateDomainsSettingsAccess(input);
+  if (gated.kind !== "allowed") {
+    return gated;
+  }
+
+  const { platformDb, authorized, canReadDomains, canManageDomains, saasZone, cnameTarget, nowMs } =
+    gated;
+
+  const tenantMeta = await platformDb
     .prepare(
       `SELECT vertical, operator_hold_reason, trial_ends_at
        FROM tenants
@@ -153,7 +247,7 @@ export async function loadDomainsSettingsPage(
 
   if (canReadDomains) {
     try {
-      const settingsRow = await input.platformDb
+      const settingsRow = await platformDb
         .prepare(`SELECT value_json FROM platform_settings WHERE key = ? LIMIT 1`)
         .bind(PLATFORM_CONSOLE_SETTINGS_KEY)
         .first<{ readonly value_json: string }>();
@@ -176,7 +270,7 @@ export async function loadDomainsSettingsPage(
       // Keep safe default support email if settings table has no custom row yet
     }
 
-    const listed = await listTenantDomains(input.platformDb, authorized.tenantId);
+    const listed = await listTenantDomains(platformDb, authorized.tenantId);
     initialItems = listed.items.map(
       (record) =>
         formatDomainRecordResponse(record, {
