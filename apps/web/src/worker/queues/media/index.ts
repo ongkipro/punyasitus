@@ -37,6 +37,23 @@ import type {
   DurableQueueEnv,
   JobExecutionContext,
 } from "../consumer.ts";
+import {
+  createBrandAssetsQueueHandler,
+  deriveBrandAssetsFromLogo,
+  MEDIA_DERIVE_BRAND_ASSETS_TOPIC,
+  type DeriveBrandAssetsFromLogoResult,
+} from "./brand-assets.ts";
+
+export {
+  createBrandAssetsQueueHandler,
+  deriveBrandAssetsFromLogo,
+  MEDIA_DERIVE_BRAND_ASSETS_TOPIC,
+};
+export type {
+  DeriveBrandAssetsFromLogoInput,
+  DeriveBrandAssetsFromLogoResult,
+  DeriveBrandAssetsJobPayload,
+} from "./brand-assets.ts";
 
 /**
  * Bounded Cloudflare Images derivative queue worker (REQ-010, REQ-039, REQ-064; PLAN §7.2–7.3).
@@ -60,6 +77,8 @@ export interface MediaProcessImageJobPayload {
   readonly mediaId: number;
   readonly quarantineR2Key: string;
   readonly originalFilename: string;
+  /** Optional asset role: `"logo"` auto-derives unset `32x32`+`180x180` favicons and `1200x630 <=300 KiB` OG (REQ-091). */
+  readonly purpose?: "general" | "logo";
 }
 
 export interface MediaWorkerR2BucketLike {
@@ -85,6 +104,7 @@ export interface ProcessImageMediaJobResult {
   readonly status: "completed" | "already_ready";
   readonly media: MediaItemRecord;
   readonly quarantineDeleted: boolean;
+  readonly brandAssetsDerivation?: DeriveBrandAssetsFromLogoResult | null;
 }
 
 function bytesToReadableStream(bytes: Uint8Array): ReadableStream<Uint8Array> {
@@ -435,10 +455,26 @@ export async function processImageMediaJob(
     // 7. Delete quarantine original so NO public original fallback ever exists
     await deps.mediaBucket.delete(payload.quarantineR2Key);
 
+    // 8. When uploaded as site logo, auto-derive unset 32x32+180x180 favicons & <=300 KiB 1200x630 OG (REQ-091)
+    let brandAssetsDerivation: DeriveBrandAssetsFromLogoResult | null = null;
+    if (payload.purpose === "logo") {
+      brandAssetsDerivation = await deriveBrandAssetsFromLogo({
+        tenantId: deps.tenantId,
+        tenantDb: deps.tenantDb,
+        logoMediaId: payload.mediaId,
+        originalFilename: payload.originalFilename || intent.originalFilename,
+        sourceBytes: master.bytes,
+        images: deps.images,
+        mediaBucket: deps.mediaBucket,
+        nowMs,
+      });
+    }
+
     return {
       status: finalized.alreadyReady ? "already_ready" : "completed",
       media: finalized.media,
       quarantineDeleted: true,
+      ...(brandAssetsDerivation ? { brandAssetsDerivation } : {}),
     };
   } catch (err) {
     if (err instanceof NonRetryableJobError) {
@@ -473,11 +509,13 @@ function parseMediaJobPayload(ctx: JobExecutionContext): MediaProcessImageJobPay
       "E_INVALID_MEDIA_JOB_PAYLOAD",
     );
   }
+  const purpose = raw.purpose === "logo" ? "logo" : "general";
   return {
     intentId,
     mediaId,
     quarantineR2Key,
     originalFilename,
+    purpose,
   };
 }
 
@@ -741,5 +779,6 @@ export function createMediaJobRegistry(
   return {
     [MEDIA_PROCESS_IMAGE_TOPIC]: createMediaQueueHandler(options),
     [MEDIA_QUARANTINE_SWEEP_TOPIC]: createMediaQuarantineSweepQueueHandler(options),
+    [MEDIA_DERIVE_BRAND_ASSETS_TOPIC]: createBrandAssetsQueueHandler(options),
   };
 }

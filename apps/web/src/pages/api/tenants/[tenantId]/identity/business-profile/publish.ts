@@ -1,0 +1,128 @@
+import { env } from "cloudflare:workers";
+import type { CloudflareSendEmailBinding } from "@punyasitus/core/email/index";
+import { publishStructuredBusinessProfile } from "@punyasitus/db/business-profile/index";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import type { APIRoute } from "astro";
+import {
+  authorizeTenantIdentityRequest,
+  createRequestId,
+  extractExpectedVersion,
+  identityErrorResponse,
+  identityJsonResponse,
+  mapIdentityDomainErrorToResponse,
+  parseStrictIdentityJsonBody,
+  type TenantIdentityHandlerOptions,
+  type TenantIdentityRuntimeEnv,
+} from "../_shared.ts";
+
+/**
+ * Tenant-scoped Structured Business Profile atomic publish endpoint (TASK-091, REQ-091):
+ * - `POST /api/tenants/:tenantId/identity/business-profile/publish`
+ *
+ * Enforces `settings:publish` (Owner/Admin only; Editor -> 403 FORBIDDEN; Locked -> 403 SUBSCRIPTION_LOCKED),
+ * OCC `expectedVersion` -> `409 STALE_VERSION`, atomic `PLATFORM_DB.tenants.cache_version` bump,
+ * and `WHERE changes() = 1` audit log in `tenant_activity_log`.
+ */
+
+const PUBLISH_ALLOWED_KEYS = new Set(["version", "expectedVersion"]);
+
+export async function handleTenantBusinessProfilePublishRequest(
+  tenantId: string,
+  request: Request,
+  runtimeEnv: TenantIdentityRuntimeEnv,
+  options: TenantIdentityHandlerOptions = {},
+): Promise<Response> {
+  const method = request.method.toUpperCase();
+  const requestId = options.requestId ?? createRequestId();
+
+  if (method !== "POST") {
+    const auth = await authorizeTenantIdentityRequest(
+      tenantId,
+      request,
+      runtimeEnv,
+      "settings:read",
+      { ...options, requestId },
+    );
+    if (!auth.ok) return auth.response;
+    return identityErrorResponse(
+      405,
+      "BAD_REQUEST",
+      "Metode HTTP tidak diizinkan untuk publikasi profil bisnis.",
+      requestId,
+      undefined,
+      { Allow: "POST" },
+    );
+  }
+
+  const auth = await authorizeTenantIdentityRequest(
+    tenantId,
+    request,
+    runtimeEnv,
+    "settings:publish",
+    { ...options, requestId },
+  );
+  if (!auth.ok) {
+    return auth.response;
+  }
+
+  const { member, platformDb, tenantDb } = auth.ctx;
+
+  try {
+    const parsedBody = await parseStrictIdentityJsonBody(
+      request,
+      PUBLISH_ALLOWED_KEYS,
+      requestId,
+      { allowEmptyBody: true },
+    );
+    if (!parsedBody.ok) {
+      return parsedBody.response;
+    }
+
+    const versionCheck = extractExpectedVersion(parsedBody.body, requestId);
+    if (!versionCheck.ok) {
+      return versionCheck.response;
+    }
+
+    const published = await publishStructuredBusinessProfile(platformDb, tenantDb, {
+      tenantId: member.tenantId,
+      expectedVersion: versionCheck.expectedVersion,
+      actorUserId: member.userId,
+      actorRole: member.role,
+      nowMs: options.nowMs,
+    });
+
+    return identityJsonResponse(200, {
+      version: published.version,
+      versions: published.versions,
+      cacheVersion: published.cacheVersion,
+      publishedAt: published.publishedAt,
+      contentModifiedAt: published.contentModifiedAt,
+      published: published.published,
+      hasUnpublishedChanges: published.hasUnpublishedChanges,
+    });
+  } catch (err) {
+    return mapIdentityDomainErrorToResponse(err, requestId);
+  }
+}
+
+function buildRuntimeEnv(): TenantIdentityRuntimeEnv {
+  const runtimeEnv = env as typeof env & {
+    readonly AUTH_SECRET?: string;
+    readonly CONSOLE_AUTH_SECRET?: string;
+  };
+  return {
+    APP_ENV: runtimeEnv.APP_ENV,
+    PLATFORM_DOMAIN: runtimeEnv.PLATFORM_DOMAIN,
+    PLATFORM_DB: runtimeEnv.PLATFORM_DB,
+    AUTH_SECRET: runtimeEnv.AUTH_SECRET,
+    CONSOLE_AUTH_SECRET: runtimeEnv.CONSOLE_AUTH_SECRET,
+    EMAIL: runtimeEnv.EMAIL as unknown as CloudflareSendEmailBinding | undefined,
+    TENANT_STORE: runtimeEnv.TENANT_STORE as unknown as TenantStoreNamespaceLike | undefined,
+  };
+}
+
+export const ALL: APIRoute = ({ params, request, locals }) =>
+  handleTenantBusinessProfilePublishRequest(params.tenantId ?? "", request, buildRuntimeEnv(), {
+    authenticatedUser: locals.authUser ? { id: locals.authUser.id } : null,
+    activeOrganizationId: locals.authSession?.activeOrganizationId ?? null,
+  });

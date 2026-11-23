@@ -1,4 +1,10 @@
 import { PLATFORM_HOSTS } from "./index.ts";
+import {
+  formatTruthfulCredentialItems,
+  isPersonProfileCategory,
+  mapBusinessCategoryToSchemaOrg,
+  type IndonesianBusinessCredentials,
+} from "./business-profile/index.ts";
 import type {
   CatalogCtaMode,
   CatalogOfferingType,
@@ -73,6 +79,7 @@ export const SCHEMA_CURRENCY_IDR = "IDR" as const;
 export const SCHEMA_ENTITY_FRAGMENTS = {
   website: "#website",
   organization: "#organization",
+  person: "#person",
   webpage: "#webpage",
   breadcrumb: "#breadcrumb",
   article: "#article",
@@ -207,6 +214,7 @@ export interface SchemaBranchInput {
 
 export interface SchemaBusinessProfileInput {
   readonly businessName?: string | null;
+  readonly legalName?: string | null;
   readonly businessCategory?: string | null;
   readonly description?: string | null;
   readonly logo?: SchemaImageInput | null;
@@ -216,6 +224,12 @@ export interface SchemaBusinessProfileInput {
   readonly whatsappE164?: string | null;
   /** Public business contact email ONLY — never pass a private account/login email. */
   readonly publicEmail?: string | null;
+  /** Public privacy contact (email, phone/WA, or HTTPS URL) for UU PDP disclosure. */
+  readonly privacyContact?: string | null;
+  /** Role/title for `personal_brand` / `sales_executive` `ProfilePage` + `Person` nodes. */
+  readonly personRoleTitle?: string | null;
+  /** Affiliated official dealer / company name for `sales_executive` `Person.worksFor`. */
+  readonly affiliatedOrgName?: string | null;
   readonly address?: string | null;
   readonly city?: string | null;
   readonly province?: string | null;
@@ -226,10 +240,12 @@ export interface SchemaBusinessProfileInput {
   readonly mapsUrl?: string | null;
   readonly weekdayHours?: string | null;
   readonly holidayHours?: string | null;
+  readonly closedDays?: readonly string[] | null;
   readonly openingHours?: SchemaBusinessHoursInput | null;
   readonly serviceAreas?: readonly string[] | null;
   readonly socialLinks?: readonly (SchemaSocialLinkInput | string)[] | null;
   readonly sameAs?: readonly string[] | null;
+  readonly credentials?: IndonesianBusinessCredentials | null;
   readonly branches?: readonly SchemaBranchInput[] | null;
 }
 
@@ -638,7 +654,7 @@ export function resolveBusinessSchemaType(
   if (alias) {
     return alias;
   }
-  return "LocalBusiness";
+  return mapBusinessCategoryToSchemaOrg(cleaned);
 }
 
 function validatePublicHttpsUrl(rawUrl: string | null | undefined): string | null {
@@ -1058,18 +1074,67 @@ function buildWebsiteNode(params: {
   };
 }
 
+function buildPrivacyContactPoint(
+  rawPrivacyContact: string | null | undefined,
+): Record<string, unknown> | null {
+  if (typeof rawPrivacyContact !== "string" || !rawPrivacyContact.trim()) {
+    return null;
+  }
+  const email = sanitizePublicEmail(rawPrivacyContact);
+  if (email) {
+    return {
+      "@type": "ContactPoint",
+      contactType: "privacy",
+      email,
+    };
+  }
+  const url = validatePublicHttpsUrl(rawPrivacyContact);
+  if (url) {
+    return {
+      "@type": "ContactPoint",
+      contactType: "privacy",
+      url,
+    };
+  }
+  const telephone = sanitizeTelephone(rawPrivacyContact);
+  if (telephone) {
+    return {
+      "@type": "ContactPoint",
+      contactType: "privacy",
+      telephone,
+    };
+  }
+  return null;
+}
+
+function buildTruthfulCredentialIdentifiers(
+  credentials: IndonesianBusinessCredentials | null | undefined,
+  businessCategory: string | null | undefined,
+): readonly Record<string, unknown>[] {
+  const items = formatTruthfulCredentialItems(credentials, businessCategory);
+  return items.map((item) => ({
+    "@type": "PropertyValue",
+    propertyID: item.schemaPropertyId,
+    name: item.label,
+    value: item.value,
+  }));
+}
+
 function buildOrganizationAndBranchNodes(params: {
   readonly verifiedOrigin: string;
   readonly siteName: string;
   readonly business: SchemaBusinessProfileInput | null | undefined;
   readonly tenantId: string | null;
   readonly allowedOrigins: ReadonlySet<string>;
-}): readonly SchemaNode[] {
+}): { readonly nodes: readonly SchemaNode[]; readonly personId: string | null } {
   const business = params.business;
   const orgId = `${params.verifiedOrigin}/${SCHEMA_ENTITY_FRAGMENTS.organization}`;
   const businessName =
     (business?.businessName ? sanitizeSeoText(business.businessName, { maxLength: 160 }) : "") ||
     params.siteName;
+  const legalName = business?.legalName
+    ? sanitizeSeoText(business.legalName, { maxLength: 160 })
+    : "";
   const schemaType = resolveBusinessSchemaType(business?.businessCategory ?? "Organization");
   const description = business?.description
     ? sanitizeSeoText(business.description, { maxLength: 1000 })
@@ -1088,6 +1153,7 @@ function buildOrganizationAndBranchNodes(params: {
     sanitizeTelephone(business?.phone) ??
     sanitizeTelephone(business?.whatsappE164 ?? business?.whatsappNumber);
   const email = sanitizePublicEmail(business?.publicEmail);
+  const privacyContactPoint = buildPrivacyContactPoint(business?.privacyContact);
   const address = buildPostalAddress({
     address: business?.address,
     city: business?.city,
@@ -1106,6 +1172,10 @@ function buildOrganizationAndBranchNodes(params: {
     .map((area) => sanitizeSeoText(area, { maxLength: 80 }))
     .filter((area) => area.length > 0);
   const sameAs = collectValidatedSameAs(business?.socialLinks, business?.sameAs);
+  const credentialIdentifiers = buildTruthfulCredentialIdentifiers(
+    business?.credentials,
+    business?.businessCategory,
+  );
 
   // Build optional branch nodes (REQ-088: up to 10 branches, same Schema.org subtype)
   const branchNodes: SchemaNode[] = [];
@@ -1157,22 +1227,64 @@ function buildOrganizationAndBranchNodes(params: {
     "@type": schemaType,
     "@id": orgId,
     name: businessName,
+    ...(legalName ? { legalName } : {}),
     url: `${params.verifiedOrigin}/`,
     ...(description ? { description } : {}),
     ...(logo ? { logo: toImageObject(logo) } : {}),
     ...(image ? { image: image.url } : logo ? { image: logo.url } : {}),
     ...(telephone ? { telephone } : {}),
     ...(email ? { email } : {}),
+    ...(privacyContactPoint ? { contactPoint: [privacyContactPoint] } : {}),
     ...(address ? { address } : {}),
     ...(geo ? { geo } : {}),
     ...(hasMap ? { hasMap } : {}),
     ...(openingHours.length > 0 ? { openingHours } : {}),
     ...(serviceAreas.length > 0 ? { areaServed: serviceAreas } : {}),
     ...(sameAs.length > 0 ? { sameAs } : {}),
+    ...(credentialIdentifiers.length > 0 ? { identifier: credentialIdentifiers } : {}),
     ...(branchRefs.length > 0 ? { subOrganization: branchRefs } : {}),
   };
 
-  return [orgNode, ...branchNodes];
+  // REQ-091: personal_brand & sales_executive emit a truthful `Person` node for `ProfilePage`
+  const extraNodes: SchemaNode[] = [];
+  let personId: string | null = null;
+  if (isPersonProfileCategory(business?.businessCategory)) {
+    personId = `${params.verifiedOrigin}/${SCHEMA_ENTITY_FRAGMENTS.person}`;
+    const jobTitle = business?.personRoleTitle
+      ? sanitizeSeoText(business.personRoleTitle, { maxLength: 120 })
+      : "";
+    const worksForName =
+      (business?.affiliatedOrgName
+        ? sanitizeSeoText(business.affiliatedOrgName, { maxLength: 160 })
+        : "") || legalName;
+
+    extraNodes.push({
+      "@type": "Person",
+      "@id": personId,
+      name: businessName,
+      url: `${params.verifiedOrigin}/`,
+      ...(description ? { description } : {}),
+      ...(jobTitle ? { jobTitle } : {}),
+      ...(worksForName
+        ? {
+            worksFor: {
+              "@type": "Organization",
+              name: worksForName,
+            },
+          }
+        : {}),
+      ...(image ? { image: image.url } : logo ? { image: logo.url } : {}),
+      ...(telephone ? { telephone } : {}),
+      ...(email ? { email } : {}),
+      ...(sameAs.length > 0 ? { sameAs } : {}),
+      ...(credentialIdentifiers.length > 0 ? { identifier: credentialIdentifiers } : {}),
+    });
+  }
+
+  return {
+    nodes: [orgNode, ...extraNodes, ...branchNodes],
+    personId,
+  };
 }
 
 function buildBreadcrumbNode(
@@ -1834,13 +1946,14 @@ export function generateSchemaGraph(input: GenerateSchemaInput): SchemaGeneratio
   const nodes: SchemaNode[] = [];
   const policyNotes: string[] = [];
 
-  const orgAndBranches = buildOrganizationAndBranchNodes({
+  const orgResult = buildOrganizationAndBranchNodes({
     verifiedOrigin,
     siteName,
     business: input.business,
     tenantId,
     allowedOrigins,
   });
+  const orgAndBranches = orgResult.nodes;
 
   const websiteNode = buildWebsiteNode({
     verifiedOrigin,
@@ -1903,7 +2016,12 @@ export function generateSchemaGraph(input: GenerateSchemaInput): SchemaGeneratio
     (articleNode?.["@id"] as string | undefined) ??
     (offeringNode?.["@id"] as string | undefined) ??
     (faqNode?.["@id"] as string | undefined) ??
-    null;
+    (input.seo.routeKind === "homepage" && orgResult.personId ? orgResult.personId : null);
+
+  const effectivePageSchemaType =
+    input.pageSchemaType ??
+    input.seo.resourceSeo?.schemaType ??
+    (input.seo.routeKind === "homepage" && orgResult.personId ? "ProfilePage" : null);
 
   const webPageNode = buildWebPageNode({
     routeKind: input.seo.routeKind,
@@ -1911,7 +2029,7 @@ export function generateSchemaGraph(input: GenerateSchemaInput): SchemaGeneratio
     canonicalUrl,
     pageTitle,
     pageDescription,
-    pageSchemaType: input.pageSchemaType ?? input.seo.resourceSeo?.schemaType ?? null,
+    pageSchemaType: effectivePageSchemaType,
     datePublished: input.pageDatePublished ?? input.article?.datePublished ?? null,
     dateModified: input.pageDateModified ?? input.article?.dateModified ?? null,
     primaryImage: resolvedPageImage,
