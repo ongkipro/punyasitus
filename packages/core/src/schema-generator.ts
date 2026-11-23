@@ -196,8 +196,33 @@ export interface SchemaBusinessHoursInput {
   readonly holiday?: string | null;
 }
 
+export type OutletWeekdayKey =
+  | "monday"
+  | "tuesday"
+  | "wednesday"
+  | "thursday"
+  | "friday"
+  | "saturday"
+  | "sunday";
+
+export interface SchemaOpeningHoursSpecInput {
+  readonly day: OutletWeekdayKey;
+  readonly open?: string | null;
+  readonly close?: string | null;
+  readonly closed?: boolean;
+}
+
+export interface SchemaSpecialOpeningHoursSpecInput {
+  readonly date: string;
+  readonly label?: string | null;
+  readonly open?: string | null;
+  readonly close?: string | null;
+  readonly closed?: boolean;
+}
+
 export interface SchemaBranchInput {
   readonly id?: number | string | null;
+  readonly slug?: string | null;
   readonly name: string;
   readonly address?: string | null;
   readonly city?: string | null;
@@ -208,13 +233,17 @@ export interface SchemaBranchInput {
   readonly whatsappE164?: string | null;
   readonly whatsappNumber?: string | null;
   readonly mapsUrl?: string | null;
+  readonly directionsUrl?: string | null;
   readonly latitude?: number | null;
   readonly longitude?: number | null;
   readonly weekdayHours?: string | null;
   readonly holidayHours?: string | null;
   readonly openingHours?: SchemaBusinessHoursInput | null;
+  readonly weeklyHours?: readonly SchemaOpeningHoursSpecInput[] | null;
+  readonly specialHolidayHours?: readonly SchemaSpecialOpeningHoursSpecInput[] | null;
   readonly timezone?: string | null;
   readonly isPrimary?: boolean | null;
+  readonly status?: "draft" | "published" | null;
   readonly active?: boolean | null;
 }
 
@@ -958,6 +987,18 @@ function buildGeoCoordinates(
   };
 }
 
+const SCHEMA_WEEKDAY_TO_URI: Readonly<Record<OutletWeekdayKey, string>> = {
+  monday: "https://schema.org/Monday",
+  tuesday: "https://schema.org/Tuesday",
+  wednesday: "https://schema.org/Wednesday",
+  thursday: "https://schema.org/Thursday",
+  friday: "https://schema.org/Friday",
+  saturday: "https://schema.org/Saturday",
+  sunday: "https://schema.org/Sunday",
+};
+
+const SCHEMA_HHMM_RE = /^([01]\d|2[0-3]):([0-5]\d)$/;
+
 function collectOpeningHours(
   weekdayHours?: string | null,
   holidayHours?: string | null,
@@ -969,6 +1010,85 @@ function collectOpeningHours(
   if (weekday) out.push(weekday);
   if (holiday && holiday !== weekday) out.push(holiday);
   return out;
+}
+
+/**
+ * Builds Schema.org `OpeningHoursSpecification` nodes strictly from visible open weekday entries.
+ * Closed or invalid entries are omitted — never fabricates hours (REQ-054).
+ */
+export function buildOpeningHoursSpecifications(
+  weeklyHours?: readonly SchemaOpeningHoursSpecInput[] | null,
+): readonly Record<string, unknown>[] {
+  if (!weeklyHours || weeklyHours.length === 0) {
+    return [];
+  }
+  const seen = new Set<OutletWeekdayKey>();
+  const specs: Record<string, unknown>[] = [];
+  for (const entry of weeklyHours) {
+    if (!entry || entry.closed === true) continue;
+    const dayUri = SCHEMA_WEEKDAY_TO_URI[entry.day];
+    if (!dayUri || seen.has(entry.day)) continue;
+    const open = typeof entry.open === "string" ? entry.open.trim() : "";
+    const close = typeof entry.close === "string" ? entry.close.trim() : "";
+    if (!SCHEMA_HHMM_RE.test(open) || !SCHEMA_HHMM_RE.test(close) || open >= close) {
+      continue;
+    }
+    seen.add(entry.day);
+    specs.push({
+      "@type": "OpeningHoursSpecification",
+      dayOfWeek: dayUri,
+      opens: open,
+      closes: close,
+    });
+  }
+  return specs;
+}
+
+/**
+ * Builds Schema.org `specialOpeningHoursSpecification` nodes strictly from visible holiday entries.
+ * Closed holidays use Google/Schema.org `opens: "00:00", closes: "00:00"` with exact `validFrom`/`validThrough`.
+ */
+export function buildSpecialOpeningHoursSpecifications(
+  holidayHours?: readonly SchemaSpecialOpeningHoursSpecInput[] | null,
+): readonly Record<string, unknown>[] {
+  if (!holidayHours || holidayHours.length === 0) {
+    return [];
+  }
+  const seenDates = new Set<string>();
+  const specs: Record<string, unknown>[] = [];
+  for (const entry of holidayHours) {
+    if (!entry || typeof entry.date !== "string") continue;
+    const date = entry.date.trim();
+    if (!isValidCalendarDate(date) || seenDates.has(date)) continue;
+    const label = entry.label ? sanitizeSeoText(entry.label, { maxLength: 100 }) : "";
+    if (entry.closed === true) {
+      seenDates.add(date);
+      specs.push({
+        "@type": "OpeningHoursSpecification",
+        ...(label ? { name: label } : {}),
+        validFrom: date,
+        validThrough: date,
+        opens: "00:00",
+        closes: "00:00",
+      });
+      continue;
+    }
+    const open = typeof entry.open === "string" ? entry.open.trim() : "";
+    const close = typeof entry.close === "string" ? entry.close.trim() : "";
+    if (!SCHEMA_HHMM_RE.test(open) || !SCHEMA_HHMM_RE.test(close) || open >= close) {
+      continue;
+    }
+    seenDates.add(date);
+    specs.push({
+      "@type": "OpeningHoursSpecification",
+      ...(label ? { name: label } : {}),
+      validFrom: date,
+      validThrough: date,
+      opens: open,
+      closes: close,
+    });
+  }
+  return specs;
 }
 
 function collectValidatedSameAs(
@@ -1187,11 +1307,17 @@ function buildOrganizationAndBranchNodes(params: {
     business?.businessCategory,
   );
 
-  // Build optional branch nodes (REQ-088: up to 10 visible active branches, same Schema.org subtype)
+  // Build optional branch / outlet nodes (REQ-029 / REQ-088: up to 10 visible published active branches)
   const branchNodes: SchemaNode[] = [];
   const branchRefs: { readonly "@id": string }[] = [];
   const rawBranches = (business?.branches ?? [])
-    .filter((branch) => branch !== null && branch !== undefined && branch.active !== false)
+    .filter(
+      (branch) =>
+        branch !== null &&
+        branch !== undefined &&
+        branch.active !== false &&
+        branch.status !== "draft",
+    )
     .slice(0, 10);
   const branchType: AllowedBusinessSchemaType =
     schemaType === "Organization" ? "LocalBusiness" : schemaType;
@@ -1229,15 +1355,19 @@ function buildOrganizationAndBranchNodes(params: {
       postalCode: branch.postalCode,
       country: branch.country,
     });
-    // Visible-fact discipline (REQ-088): emit branch `telephone` strictly from visible `branch.phone`
-    // (never fall back to WhatsApp-only numbers that render only as a WhatsApp CTA button).
+    // Visible-fact discipline (REQ-029, REQ-054, REQ-088): emit branch `telephone` strictly from visible
+    // `branch.phone` (never fall back to WhatsApp-only numbers that render only as a WhatsApp CTA button).
     const branchPhone = sanitizeTelephone(branch.phone);
     const branchGeo = buildGeoCoordinates(branch.latitude, branch.longitude);
-    const branchMap = validatePublicHttpsUrl(branch.mapsUrl);
+    const branchMap = validatePublicHttpsUrl(branch.directionsUrl ?? branch.mapsUrl);
     const branchHours = collectOpeningHours(
       branch.weekdayHours,
       branch.holidayHours,
       branch.openingHours,
+    );
+    const openingHoursSpecification = buildOpeningHoursSpecifications(branch.weeklyHours);
+    const specialOpeningHoursSpecification = buildSpecialOpeningHoursSpecifications(
+      branch.specialHolidayHours,
     );
 
     branchRefs.push({ "@id": branchId });
@@ -1251,7 +1381,13 @@ function buildOrganizationAndBranchNodes(params: {
       ...(branchPhone ? { telephone: branchPhone } : {}),
       ...(branchGeo ? { geo: branchGeo } : {}),
       ...(branchMap ? { hasMap: branchMap } : {}),
-      ...(branchHours.length > 0 ? { openingHours: branchHours } : {}),
+      ...(openingHoursSpecification.length === 0 && branchHours.length > 0
+        ? { openingHours: branchHours }
+        : {}),
+      ...(openingHoursSpecification.length > 0 ? { openingHoursSpecification } : {}),
+      ...(specialOpeningHoursSpecification.length > 0
+        ? { specialOpeningHoursSpecification }
+        : {}),
     });
   }
 

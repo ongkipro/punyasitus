@@ -39,6 +39,10 @@ import {
   type ThemeTokens,
   type ThemeVariants,
 } from "@punyasitus/core/theme/index";
+import {
+  listPublishedOutletsForPublic,
+  type OutletRecord,
+} from "@punyasitus/db/outlets/index";
 import { getPublishedResource, type GetResourceParams } from "@punyasitus/db/publication/index";
 
 /**
@@ -338,6 +342,8 @@ export interface TenantShellRevisions {
   readonly pageVersion: number | null;
 }
 
+export type PublicOutletItem = OutletRecord;
+
 export interface TenantShellData {
   readonly isPreview: boolean;
   readonly layoutMode: ShellLayoutMode;
@@ -348,6 +354,7 @@ export interface TenantShellData {
   readonly business: PublicBusinessInfo;
   readonly menus: PublicShellMenus;
   readonly page: PageSnapshot | null;
+  readonly outlets?: readonly PublicOutletItem[];
   readonly revisions: TenantShellRevisions;
 }
 
@@ -909,6 +916,22 @@ async function loadPublishedGroupedReadingDefaults(
   }
 }
 
+/**
+ * Loads ONLY published and active tenant outlets for public directory rendering & JSON-LD
+ * (`REQ-029`, `REQ-054`, `TASK-019`). Fails closed to `[]` when `tenantDb` is unavailable
+ * and NEVER leaks draft or inactive outlets.
+ */
+export async function loadPublishedPublicOutlets(
+  tenantDb: D1Database | null | undefined,
+): Promise<readonly PublicOutletItem[]> {
+  if (!tenantDb) return [];
+  try {
+    return await listPublishedOutletsForPublic(tenantDb);
+  } catch {
+    return [];
+  }
+}
+
 export async function loadPublishedTenantShellData(
   tenantDb: D1Database | null | undefined,
   options: LoadPublishedTenantShellOptions = {},
@@ -926,22 +949,32 @@ export async function loadPublishedTenantShellData(
   let publishedGroupedReading: {
     readonly enabledOfferingTypes: PublicReadingDefaults["enabledOfferingTypes"];
   } | null = null;
+  let publishedOutlets: readonly PublicOutletItem[] = [];
 
   if (tenantDb) {
-    const [settingsRes, profileRes, headerRes, footerRes, mobileRes, pageDto, groupedReading] =
-      await Promise.all([
-        safeGetPublishedResource(tenantDb, { resourceType: "site_settings" }),
-        safeGetPublishedResource(tenantDb, { resourceType: "business_profile" }),
-        safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "header" }),
-        safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "footer" }),
-        safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "mobile" }),
-        options.pageSlug
-          ? safeGetPublishedResource(tenantDb, { resourceType: "page", slug: options.pageSlug }).then(
-              (r) => r.dto,
-            )
-          : loadPublishedHomepage(tenantDb),
-        loadPublishedGroupedReadingDefaults(tenantDb),
-      ]);
+    const [
+      settingsRes,
+      profileRes,
+      headerRes,
+      footerRes,
+      mobileRes,
+      pageDto,
+      groupedReading,
+      outletsList,
+    ] = await Promise.all([
+      safeGetPublishedResource(tenantDb, { resourceType: "site_settings" }),
+      safeGetPublishedResource(tenantDb, { resourceType: "business_profile" }),
+      safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "header" }),
+      safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "footer" }),
+      safeGetPublishedResource(tenantDb, { resourceType: "menu", location: "mobile" }),
+      options.pageSlug
+        ? safeGetPublishedResource(tenantDb, { resourceType: "page", slug: options.pageSlug }).then(
+            (r) => r.dto,
+          )
+        : loadPublishedHomepage(tenantDb),
+      loadPublishedGroupedReadingDefaults(tenantDb),
+      loadPublishedPublicOutlets(tenantDb),
+    ]);
 
     publishedSettings = settingsRes.dto;
     publishedProfile = profileRes.dto;
@@ -950,6 +983,7 @@ export async function loadPublishedTenantShellData(
     publishedMobileMenu = mobileRes.dto;
     publishedPage = pageDto;
     publishedGroupedReading = groupedReading;
+    publishedOutlets = outletsList;
   }
 
   let effectiveSettings: SiteSettingsSnapshot | null = publishedSettings?.data ?? null;
@@ -1096,6 +1130,7 @@ export async function loadPublishedTenantShellData(
         : sanitizedMobile,
     },
     page: effectivePage,
+    outlets: publishedOutlets,
     revisions: {
       siteSettingsVersion: publishedSettings?.version ?? null,
       businessProfileVersion: publishedProfile?.version ?? null,
