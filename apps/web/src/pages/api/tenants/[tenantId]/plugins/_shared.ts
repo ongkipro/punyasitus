@@ -63,6 +63,7 @@ export const PLUGIN_NO_STORE_HEADERS = {
 
 export interface TenantPluginRuntimeEnv extends AuthRuntimeEnv {
   readonly TENANT_STORE?: TenantStoreNamespaceLike | null;
+  readonly MEDIA_BUCKET?: R2Bucket | null;
 }
 
 export interface TenantPluginHandlerOptions {
