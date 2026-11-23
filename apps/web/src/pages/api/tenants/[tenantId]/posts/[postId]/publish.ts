@@ -144,6 +144,8 @@ export async function handleTenantPostPublishRequest(
       ...formatPostRecordResponse(result.post),
       cacheVersion: result.cacheVersion,
       revisionNumber: result.revisionNumber,
+      substantiveChanged: result.substantiveChanged,
+      contentFingerprint: result.contentFingerprint,
     });
   } catch (err) {
     return mapBlogDomainErrorToResponse(err, requestId);

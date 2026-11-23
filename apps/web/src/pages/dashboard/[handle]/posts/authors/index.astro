@@ -1,0 +1,59 @@
+---
+import { env } from "cloudflare:workers";
+import { listPostAuthors } from "@punyasitus/db/posts/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { AuthorsManagerClient, type AuthorProfileItemDto } from "./_AuthorsManagerClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const runtimeEnv = env as typeof env & { readonly MEDIA_PUBLIC_BASE_URL?: string };
+const authors = await listPostAuthors(ctx.tenantDb, {
+  tenantId: ctx.tenantId,
+  mediaBaseOrigin: runtimeEnv.MEDIA_PUBLIC_BASE_URL ?? null,
+  limit: 100,
+});
+
+const initialAuthors: AuthorProfileItemDto[] = authors.map((a) => ({
+  id: a.id,
+  name: a.name,
+  slug: a.slug,
+  roleTitle: a.roleTitle,
+  bio: a.bio,
+  avatarMediaId: a.avatarMediaId,
+  avatar: a.avatar,
+  sameAs: a.sameAs,
+  postCount: a.postCount,
+  publishedPostCount: a.publishedPostCount,
+  version: a.version,
+  updatedAt: a.updatedAt,
+}));
+---
+
+<DashboardLayout
+  title={`Profil Penulis — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="articles"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <AuthorsManagerClient
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialAuthors={initialAuthors}
+  />
+</DashboardLayout>

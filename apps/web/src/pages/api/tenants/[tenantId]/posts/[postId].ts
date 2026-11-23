@@ -39,10 +39,12 @@ const UPDATE_POST_ALLOWED_KEYS = new Set([
   "categoryIds",
   "tagIds",
   "authorId",
+  "authorProfileId",
   "authorUserId",
   "authorName",
   "enableToc",
   "showToc",
+  "tocEnabled",
   "seo",
   "version",
   "expectedVersion",
@@ -170,12 +172,16 @@ export async function handleTenantPostItemRequest(
             : {}),
           ...(body.tagIds !== undefined ? { tagIds: body.tagIds as readonly number[] } : {}),
           ...(body.authorId !== undefined ? { authorId: body.authorId as number | null } : {}),
+          ...(body.authorProfileId !== undefined
+            ? { authorProfileId: body.authorProfileId as number | null }
+            : {}),
           ...(body.authorUserId !== undefined
             ? { authorUserId: body.authorUserId as string | null }
             : {}),
           ...(body.authorName !== undefined ? { authorName: body.authorName as string | null } : {}),
           ...(body.enableToc !== undefined ? { enableToc: body.enableToc as boolean } : {}),
           ...(body.showToc !== undefined ? { showToc: body.showToc as boolean } : {}),
+          ...(body.tocEnabled !== undefined ? { tocEnabled: body.tocEnabled as boolean } : {}),
           ...(body.seo !== undefined ? { seo: body.seo } : {}),
           nowMs: options.nowMs,
         },

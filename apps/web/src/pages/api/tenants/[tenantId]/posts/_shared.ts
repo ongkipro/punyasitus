@@ -24,10 +24,15 @@ import {
   type TenantStoreNamespaceLike,
 } from "@punyasitus/db/connections";
 import {
+  PostAuthorConflictError,
+  PostAuthorNotFoundError,
+  PostAuthorStaleVersionError,
+  PostAuthorValidationError,
   TaxonomyConflictError,
   TaxonomyNotFoundError,
   TaxonomyStaleVersionError,
   type BlogTaxonomyRecord,
+  type PostAuthorRecord,
   type PostRecord,
 } from "@punyasitus/db/posts/index";
 import {
@@ -63,6 +68,7 @@ export const BLOG_NO_STORE_HEADERS = {
 
 export interface TenantBlogRuntimeEnv extends AuthRuntimeEnv {
   readonly TENANT_STORE?: TenantStoreNamespaceLike | null;
+  readonly MEDIA_PUBLIC_BASE_URL?: string;
 }
 
 export interface TenantBlogHandlerOptions {
@@ -147,10 +153,12 @@ export function formatPostRecordResponse(post: PostRecord): Record<string, unkno
     categoryIds: post.categoryIds,
     tagIds: post.tagIds,
     authorId: post.authorId,
+    authorProfileId: post.authorProfileId,
     authorUserId: post.authorUserId,
     authorName: post.authorName,
     enableToc: post.enableToc,
     showToc: post.showToc,
+    tocEnabled: post.tocEnabled,
     seo: post.seo,
     published: post.published,
     hasUnpublishedChanges: post.hasUnpublishedChanges,
@@ -158,9 +166,30 @@ export function formatPostRecordResponse(post: PostRecord): Record<string, unkno
     version: post.version,
     publishedAt: post.publishedAt,
     contentModifiedAt: post.contentModifiedAt,
+    contentFingerprint: post.contentFingerprint,
     deletedAt: post.deletedAt,
     createdAt: post.createdAt,
     updatedAt: post.updatedAt,
+  };
+}
+
+export function formatAuthorRecordResponse(author: PostAuthorRecord): Record<string, unknown> {
+  return {
+    id: author.id,
+    name: author.name,
+    slug: author.slug,
+    roleTitle: author.roleTitle,
+    role_title: author.roleTitle,
+    bio: author.bio,
+    avatarMediaId: author.avatarMediaId,
+    avatar_media_id: author.avatarMediaId,
+    avatar: author.avatar,
+    sameAs: author.sameAs,
+    postCount: author.postCount,
+    publishedPostCount: author.publishedPostCount,
+    version: author.version,
+    createdAt: author.createdAt,
+    updatedAt: author.updatedAt,
   };
 }
 
@@ -188,6 +217,7 @@ export function buildBlogRuntimeEnv(): TenantBlogRuntimeEnv {
   const runtimeEnv = env as typeof env & {
     readonly AUTH_SECRET?: string;
     readonly CONSOLE_AUTH_SECRET?: string;
+    readonly MEDIA_PUBLIC_BASE_URL?: string;
   };
   return {
     APP_ENV: runtimeEnv.APP_ENV,
@@ -197,6 +227,7 @@ export function buildBlogRuntimeEnv(): TenantBlogRuntimeEnv {
     CONSOLE_AUTH_SECRET: runtimeEnv.CONSOLE_AUTH_SECRET,
     EMAIL: runtimeEnv.EMAIL as unknown as CloudflareSendEmailBinding | undefined,
     TENANT_STORE: runtimeEnv.TENANT_STORE as unknown as TenantStoreNamespaceLike | undefined,
+    MEDIA_PUBLIC_BASE_URL: runtimeEnv.MEDIA_PUBLIC_BASE_URL,
   };
 }
 
@@ -726,6 +757,34 @@ export function mapBlogDomainErrorToResponse(err: unknown, requestId: string): R
   }
   if (err instanceof SlugValidationError) {
     return blogErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
+  }
+  if (err instanceof PostAuthorValidationError) {
+    return blogErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
+  }
+  if (err instanceof PostAuthorStaleVersionError) {
+    return blogErrorResponse(409, "STALE_VERSION", err.message, requestId, [
+      {
+        field: "version",
+        code: "STALE_VERSION",
+        message: err.message,
+      },
+    ]);
+  }
+  if (err instanceof PostAuthorConflictError) {
+    return blogJsonResponse(409, {
+      error: {
+        code: "CONFLICT",
+        reason: err.reason,
+        message: err.message,
+        fields: err.fields,
+        postCount: err.postCount,
+        publishedPostCount: err.publishedPostCount,
+      },
+      requestId,
+    });
+  }
+  if (err instanceof PostAuthorNotFoundError) {
+    return blogErrorResponse(404, "NOT_FOUND", err.message, requestId);
   }
   if (err instanceof PublicationValidationError) {
     return blogErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);

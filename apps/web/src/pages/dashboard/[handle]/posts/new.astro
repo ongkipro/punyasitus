@@ -1,5 +1,5 @@
 ---
-import { listBlogTaxonomies } from "@punyasitus/db/posts/index";
+import { listBlogTaxonomies, listPostAuthors } from "@punyasitus/db/posts/index";
 import { isSeoAutopilotEnabledForTenant } from "@punyasitus/db/seo/index";
 import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
 import DashboardLayout from "@/layouts/DashboardLayout.astro";
@@ -11,9 +11,10 @@ if (!resolved.ok) {
 }
 
 const { ctx } = resolved;
-const [catsRes, tagsRes, seoAutopilotEnabled] = await Promise.all([
-  listBlogTaxonomies(ctx.tenantDb, { kind: "post_category", limit: 100 }),
+const [catsRes, tagsRes, authorsRes, seoAutopilotEnabled] = await Promise.all([
+  listBlogTaxonomies(ctx.tenantDb, { kind: "post_category", limit: 100, sortOrder: "asc" }),
   listBlogTaxonomies(ctx.tenantDb, { kind: "post_tag", limit: 100 }),
+  listPostAuthors(ctx.tenantDb, { tenantId: ctx.tenantId, limit: 100 }),
   isSeoAutopilotEnabledForTenant(ctx.tenantDb),
 ]);
 ---
@@ -49,15 +50,30 @@ const [catsRes, tagsRes, seoAutopilotEnabled] = await Promise.all([
       body: { schemaVersion: 1, blocks: [] },
       status: "draft",
       featuredMediaId: null,
+      authorId: null,
       primaryCategoryId: null,
       categoryIds: [],
       tagIds: [],
       enableToc: true,
       seo: null,
       hasUnpublishedChanges: true,
+      publishedAt: null,
+      contentModifiedAt: null,
       version: 0,
     }}
-    categories={catsRes.items.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
+    categories={catsRes.items.map((c) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      depth: c.depth,
+      parentId: c.parentId,
+    }))}
     tags={tagsRes.items.map((t) => ({ id: t.id, name: t.name, slug: t.slug }))}
+    authors={authorsRes.map((a) => ({
+      id: a.id,
+      name: a.name,
+      roleTitle: a.roleTitle,
+      bio: a.bio,
+    }))}
   />
 </DashboardLayout>
