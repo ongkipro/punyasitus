@@ -1,7 +1,11 @@
 ---
 import { env } from "cloudflare:workers";
 import { canPerform } from "@punyasitus/auth";
-import { getTenantAnalyticsSettings } from "@punyasitus/db/analytics-settings/index";
+import {
+  createDefaultGtmKillSwitchState,
+  createDefaultVendorDeliveryModes,
+} from "@punyasitus/core/analytics/gtm";
+import { getTenantFullAnalyticsSettings } from "@punyasitus/db/analytics-settings/index";
 import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
 import type { TenantVertical } from "@punyasitus/db/platform";
 import type { LifecycleStatus } from "@/components/admin/navigation";
@@ -106,10 +110,15 @@ const canWriteSettings =
   lifecycleStatus !== "locked" &&
   lifecycleStatus !== "suspended";
 
-let initialSettings = {
+let initialGtmSettings = {
   ga4MeasurementId: null as string | null,
   metaPixelId: null as string | null,
   tiktokPixelId: null as string | null,
+  vendorModes: createDefaultVendorDeliveryModes(),
+  gtmContainerId: null as string | null,
+  gtmEnabled: false,
+  gtmRiskAck: null as import("@punyasitus/core/analytics/gtm").GtmRiskAcknowledgementRecord | null,
+  operatorKillSwitch: createDefaultGtmKillSwitchState(),
   version: 0,
   updatedAt: null as string | null,
 };
@@ -122,7 +131,11 @@ if (lifecycleStatus !== "suspended") {
   );
   if (tenantDb) {
     try {
-      initialSettings = await getTenantAnalyticsSettings(tenantDb);
+      initialGtmSettings = await getTenantFullAnalyticsSettings(
+        tenantDb,
+        env.PLATFORM_DB,
+        authorized.tenantId,
+      );
     } catch {
       initialLoadError =
         "Gagal memuat konfigurasi analitik terbaru dari penyimpanan situs. Coba muat ulang halaman.";
@@ -131,6 +144,35 @@ if (lifecycleStatus !== "suspended") {
     initialLoadError = "Penyimpanan data situs sementara tidak tersedia.";
   }
 }
+
+const initialGtmSettingsForClient = {
+  ga4MeasurementId: initialGtmSettings.ga4MeasurementId,
+  metaPixelId: initialGtmSettings.metaPixelId,
+  tiktokPixelId: initialGtmSettings.tiktokPixelId,
+  vendorModes: initialGtmSettings.vendorModes,
+  gtmContainerId: initialGtmSettings.gtmContainerId,
+  gtmEnabled: initialGtmSettings.gtmEnabled,
+  gtmRiskAck: initialGtmSettings.gtmRiskAck,
+  operatorKillSwitch: {
+    active: initialGtmSettings.operatorKillSwitch.disabled,
+    disabled: initialGtmSettings.operatorKillSwitch.disabled,
+    category: initialGtmSettings.operatorKillSwitch.reasonCategory,
+    reasonCategory: initialGtmSettings.operatorKillSwitch.reasonCategory,
+    reason: initialGtmSettings.operatorKillSwitch.reason,
+    disabledAt: initialGtmSettings.operatorKillSwitch.disabledAt,
+    liftedAt: initialGtmSettings.operatorKillSwitch.liftedAt,
+  },
+  version: initialGtmSettings.version,
+  updatedAt: initialGtmSettings.updatedAt,
+};
+
+const initialSettings = {
+  ga4MeasurementId: initialGtmSettings.ga4MeasurementId,
+  metaPixelId: initialGtmSettings.metaPixelId,
+  tiktokPixelId: initialGtmSettings.tiktokPixelId,
+  version: initialGtmSettings.version,
+  updatedAt: initialGtmSettings.updatedAt,
+};
 
 Astro.response.headers.set("Cache-Control", "private, no-store");
 Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
@@ -166,6 +208,7 @@ Astro.response.headers.set("Vary", "Cookie");
     currentRole={authorized.role}
     canEdit={canWriteSettings}
     initialSettings={initialSettings}
+    initialGtmSettings={initialGtmSettingsForClient}
     initialLoadError={initialLoadError}
   />
 </DashboardLayout>

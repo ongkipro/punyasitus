@@ -1,52 +1,88 @@
 ---
 import {
   buildAnalyticsHeadBootstrapPayload,
+  buildGoogleConsentModeUpdate,
+  buildGtmNoscriptUrl,
+  buildGtmScriptUrl,
+  GTM_CONSENT_MODE_V2_DEFAULT,
+  isValidCspNonce,
   safeSerializeAnalyticsBootstrap,
   type DirectAnalyticsConfig,
+  type GtmPageType,
   type ProviderScriptOverrides,
+  type PublicCspProfile,
+  type StoredAnalyticsSettings,
 } from "@punyasitus/core/analytics/config";
-import { CONSENT_COOKIE_NAME, CONSENT_POLICY_VERSION } from "../core/privacy.ts";
+import {
+  CONSENT_COOKIE_NAME,
+  CONSENT_POLICY_VERSION,
+  parseConsentCookie,
+} from "../core/privacy.ts";
 
 /**
- * Consent-Aware Direct Analytics Head Component (`apps/web/src/components/AnalyticsHead.astro`;
- * TASK-022, REQ-027, REQ-017, REQ-033, REQ-039).
+ * Consent-Aware Direct Analytics & Easy Google Tag Manager Head Component
+ * (`apps/web/src/components/AnalyticsHead.astro`;
+ * TASK-022 & TASK-076, REQ-027, REQ-017, REQ-033, REQ-039, DEC-027, PLAN §18.1).
  *
  * Security & privacy invariants:
- * - Emits ZERO third-party `<script src="...">` tags in SSR HTML (strict zero-tags-before-consent).
+ * - Emits ZERO third-party `<script src="...">` or GTM `<script>` / `<noscript><iframe>` tags
+ *   before explicit visitor consent (`__Host-ps_consent` with `analytics: true`).
  * - Emits NOTHING on non-tenant surfaces (`app`, `console`, `marketing`, `preview`, `error`),
- *   preview mode, or when no valid direct GA4 / Meta Pixel / TikTok Pixel ID is configured.
- * - Direct GA4 (`G-*`), Meta Pixel (`10-20` digits), and TikTok Pixel (`10-32` uppercase alphanumeric) ONLY;
- *   tenant Google Tag Manager (`GTM-*`) is owned by `TASK-076`.
- * - `vendorScriptOverrides` is stripped completely unless `APP_ENV` is strictly `"local"` or `"test"`.
- * - Embeds only an inert `<script type="application/json">` bootstrap payload escaped against
- *   `</script>` breakout, paired with the first-party consent-gated dispatcher (`../scripts/analytics.ts`).
+ *   preview mode, or when no valid direct provider or active GTM container is configured.
+ * - On consented public pages of GTM-enabled tenants (operator kill switch NOT active):
+ *   1. Sets Google Consent Mode v2 defaults to `denied` BEFORE GTM loads.
+ *   2. Updates Consent Mode v2 from the visitor's verified `__Host-ps_consent` preferences.
+ *   3. Loads standard GTM (`gtm.js` with CSP nonce propagation + `<noscript><iframe>`).
+ * - Direct vendors routed `"gtm"` are suppressed automatically so no vendor double-counts.
+ * - `vendorScriptOverrides` / `gtmScriptUrlOverride` / `gtmNoscriptUrlOverride` are stripped
+ *   completely outside `"local"` / `"test"` environments; NEVER read from URL query params.
  */
 
 export interface Props {
   readonly config?: Partial<DirectAnalyticsConfig> | null;
+  readonly gtmConfig?: Partial<StoredAnalyticsSettings> | null;
+  readonly operatorKillSwitchActive?: boolean;
   readonly surface?: "tenant" | "app" | "console" | "marketing" | "preview" | "error";
   readonly isPreview?: boolean;
   readonly policyVersion?: number;
   readonly cookieName?: string;
   readonly autoPageView?: boolean;
+  readonly initialCookieHeader?: string | null;
+  readonly cspNonce?: string | null;
+  readonly cspProfile?: PublicCspProfile;
+  readonly pageType?: GtmPageType;
+  readonly contentId?: string | null;
   /** Explicit runtime environment string (`"local" | "test" | "staging" | "production"`). */
   readonly appEnv?: string;
   /**
-   * Explicit programmatic test-harness override for mock vendor script URLs.
+   * Explicit programmatic test-harness override for direct vendor script URLs.
    * Stripped completely outside `"local"` / `"test"` environments; NEVER read from URL query params.
    */
   readonly vendorScriptOverrides?: ProviderScriptOverrides;
+  /** Explicit programmatic test-harness override for GTM `gtm.js` URL (`local` / `test` only). */
+  readonly gtmScriptUrlOverride?: string;
+  /** Explicit programmatic test-harness override for GTM `ns.html` URL (`local` / `test` only). */
+  readonly gtmNoscriptUrlOverride?: string;
 }
 
 const {
   config = null,
+  gtmConfig = null,
+  operatorKillSwitchActive = false,
   surface = "tenant",
   isPreview = false,
   policyVersion = CONSENT_POLICY_VERSION,
   cookieName = CONSENT_COOKIE_NAME,
   autoPageView = true,
+  initialCookieHeader,
+  cspNonce,
+  cspProfile,
+  pageType = "page",
+  contentId = null,
   appEnv,
   vendorScriptOverrides,
+  gtmScriptUrlOverride,
+  gtmNoscriptUrlOverride,
 } = Astro.props;
 
 const resolvedAppEnv = (
@@ -59,24 +95,154 @@ const resolvedAppEnv = (
   .toLowerCase();
 const allowTestOverrides = resolvedAppEnv === "local" || resolvedAppEnv === "test";
 
-const bootstrapPayload = buildAnalyticsHeadBootstrapPayload({
+const rawCookieHeader =
+  initialCookieHeader !== undefined
+    ? initialCookieHeader
+    : (Astro.request?.headers?.get("cookie") ?? null);
+
+const parsedConsent = parseConsentCookie(rawCookieHeader, {
+  expectedVersion: policyVersion,
+  cookieName,
+});
+
+const hasAnalyticsConsent =
+  parsedConsent.hasDecision === true && parsedConsent.preferences.analytics === true;
+
+const resolvedNonce = isValidCspNonce(cspNonce)
+  ? cspNonce
+  : isValidCspNonce(Astro.locals?.cspNonce)
+    ? Astro.locals.cspNonce
+    : undefined;
+
+const resolvedCspProfile: PublicCspProfile =
+  cspProfile ?? Astro.locals?.cspProfile ?? (hasAnalyticsConsent && resolvedNonce ? "gtm-relaxed" : "strict");
+
+// Probe payload first to determine whether GTM is actually active after mutual exclusion & kill switch
+const probePayload = buildAnalyticsHeadBootstrapPayload({
   config,
+  gtmConfig,
+  operatorKillSwitchActive,
   surface,
   isPreview,
   policyVersion,
   cookieName,
   autoPageView,
+  cspProfile: resolvedCspProfile,
+  cspNonce: resolvedNonce,
+  gtmSsrLoaded: false,
+  pageType,
+  contentId,
   allowTestOverrides,
   testScriptOverrides: allowTestOverrides ? vendorScriptOverrides : undefined,
+  testGtmScriptUrl: allowTestOverrides ? gtmScriptUrlOverride : undefined,
+  testGtmNoscriptUrl: allowTestOverrides ? gtmNoscriptUrlOverride : undefined,
 });
+
+const shouldEmitConsentedGtmSsr = Boolean(
+  probePayload?.gtm?.enabled &&
+    probePayload.gtm.containerId &&
+    hasAnalyticsConsent &&
+    surface === "tenant" &&
+    !isPreview,
+);
+
+const gtmScriptUrl =
+  shouldEmitConsentedGtmSsr && probePayload?.gtm
+    ? buildGtmScriptUrl(
+        probePayload.gtm.containerId,
+        allowTestOverrides ? probePayload.gtm.testScriptUrl : undefined,
+      )
+    : null;
+
+const gtmNoscriptUrl =
+  shouldEmitConsentedGtmSsr && probePayload?.gtm
+    ? buildGtmNoscriptUrl(
+        probePayload.gtm.containerId,
+        allowTestOverrides ? probePayload.gtm.testNoscriptUrl : undefined,
+      )
+    : null;
+
+const bootstrapPayload =
+  probePayload && shouldEmitConsentedGtmSsr && gtmScriptUrl
+    ? buildAnalyticsHeadBootstrapPayload({
+        config,
+        gtmConfig,
+        operatorKillSwitchActive,
+        surface,
+        isPreview,
+        policyVersion,
+        cookieName,
+        autoPageView,
+        cspProfile: resolvedCspProfile,
+        cspNonce: resolvedNonce,
+        gtmSsrLoaded: true,
+        pageType,
+        contentId,
+        allowTestOverrides,
+        testScriptOverrides: allowTestOverrides ? vendorScriptOverrides : undefined,
+        testGtmScriptUrl: allowTestOverrides ? gtmScriptUrlOverride : undefined,
+        testGtmNoscriptUrl: allowTestOverrides ? gtmNoscriptUrlOverride : undefined,
+      })
+    : probePayload;
 
 const serializedBootstrap = bootstrapPayload
   ? safeSerializeAnalyticsBootstrap(bootstrapPayload)
   : null;
+
+function escapeForInlineJsString(value: string): string {
+  return JSON.stringify(value)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+let consentedGtmLoaderScript: string | null = null;
+if (shouldEmitConsentedGtmSsr && probePayload?.gtm && gtmScriptUrl) {
+  const consentDefaultJson = escapeForInlineJsString(
+    JSON.stringify(GTM_CONSENT_MODE_V2_DEFAULT),
+  );
+  const consentUpdateJson = escapeForInlineJsString(
+    JSON.stringify(
+      buildGoogleConsentModeUpdate({
+        analytics: parsedConsent.preferences.analytics,
+        marketing: parsedConsent.preferences.marketing,
+        hasDecision: parsedConsent.hasDecision,
+      }),
+    ),
+  );
+  const containerIdJs = escapeForInlineJsString(probePayload.gtm.containerId);
+  const scriptUrlJs = escapeForInlineJsString(gtmScriptUrl);
+  const nonceJs = escapeForInlineJsString(resolvedNonce ?? "");
+
+  // Sets Consent Mode v2 default=denied FIRST, then updates to visitor consent,
+  // then injects standard GTM script with CSP nonce propagation inside try/catch.
+  consentedGtmLoaderScript = `(function(w,d){try{w.dataLayer=w.dataLayer||[];function gtag(){w.dataLayer.push(arguments);}if(typeof w.gtag!=='function'){w.gtag=gtag;}if(!w.__psConsentDefaultSet){w.gtag('consent','default',JSON.parse(${consentDefaultJson}));w.__psConsentDefaultSet=true;}w.gtag('consent','update',JSON.parse(${consentUpdateJson}));w.dataLayer.push({'gtm.start':new Date().getTime(),event:'gtm.js'});var s=d.createElement('script');s.async=true;s.src=${scriptUrlJs};s.dataset.psGtmLoaded='true';s.dataset.psGtmContainer=${containerIdJs};var n=${nonceJs};if(n){s.setAttribute('nonce',n);}s.addEventListener('error',function(){s.dataset.psGtmLoadError='true';});var f=d.getElementsByTagName('script')[0];if(f&&f.parentNode){f.parentNode.insertBefore(s,f);}else{(d.head||d.documentElement).appendChild(s);}}catch(e){}})(window,document);`;
+}
 ---
 
 {serializedBootstrap && (
   <>
+    {consentedGtmLoaderScript && (
+      <script
+        is:inline
+        nonce={resolvedNonce}
+        data-ps-gtm-consent-init="true"
+        set:html={consentedGtmLoaderScript}
+      />
+    )}
+    {shouldEmitConsentedGtmSsr && gtmNoscriptUrl && (
+      <noscript data-ps-gtm-noscript="true">
+        <iframe
+          src={gtmNoscriptUrl}
+          height="0"
+          width="0"
+          style="display:none;visibility:hidden"
+          title="Google Tag Manager"
+        />
+      </noscript>
+    )}
     <script
       type="application/json"
       id="ps-analytics-config"

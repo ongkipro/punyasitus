@@ -2,12 +2,18 @@ import {
   type AnalyticsHeadBootstrapPayload,
 } from "@punyasitus/core/analytics/config";
 import {
+  type GoogleConsentModeV2DefaultParams,
+  type GoogleConsentModeV2UpdateParams,
+  type PsDataLayerEventPayload,
+} from "@punyasitus/core/analytics/gtm";
+import {
   type DirectAnalyticsProvider,
   type SignalEventAlias,
 } from "@punyasitus/core/analytics/providers";
 import {
   createAnalyticsSignalDispatcher,
   type AnalyticsConsentState,
+  type AnalyticsGtmAdapter,
   type AnalyticsProviderAdapter,
   type AnalyticsSignalDispatcher,
   type LeadSignalInput,
@@ -17,27 +23,25 @@ import {
 } from "@punyasitus/core/analytics/signals";
 
 /**
- * Public-Site Consent-Aware Direct Analytics Runtime (`apps/web/src/scripts/analytics.ts`;
- * TASK-022, REQ-027, REQ-017, REQ-033, REQ-039).
+ * Public-Site Consent-Aware Direct Analytics & Easy GTM Runtime
+ * (`apps/web/src/scripts/analytics.ts`;
+ * TASK-022 & TASK-076, REQ-027, REQ-017, REQ-033, REQ-039, PLAN §18.1).
  *
  * Guarantees:
- * - Zero GA4 / Meta Pixel / TikTok Pixel `<script>` tags or network calls until explicit
- *   visitor consent (`analytics` for GA4; `marketing` for Meta & TikTok) is granted via
+ * - Zero GA4 / Meta Pixel / TikTok Pixel / GTM `<script>` tags or network calls until explicit
+ *   visitor consent (`analytics` for GA4 & GTM; `marketing` for Meta & TikTok) is granted via
  *   `Consent.astro` (`__Host-ps_consent` cookie / `punyasitus:consent-change` event).
+ * - Google Consent Mode v2 defaults are set to `denied` BEFORE GTM ever loads and update on
+ *   every consent grant, change, or revocation.
+ * - Standard PII-free `ps_*` `dataLayer` events (`ps_page_view`, `ps_wa_click`,
+ *   `ps_external_click` with host-only `destination_host`, `ps_lead_submitted` once per persisted lead).
  * - Official vendor bootstrap shims:
  *   - GA4 `gtag()` pushes real `IArguments` objects onto `window.dataLayer` (required by `gtag.js`).
  *   - Meta `fbq` matches official `callMethod.apply` / `queue.push(arguments)` + `_fbq` / `loaded` / `version = "2.0"`.
  *   - TikTok `ttq` matches official `TiktokAnalyticsObject = "ttq"`, `methods`, `setAndDefer`, `instance`, `load` (`_i`/`_t`/`_o`).
  * - Immediate teardown & halt on decline or consent revocation.
- * - Lead conversion signal (`lead_submitted`) fires at most ONCE per persisted `leadId`
- *   ONLY AFTER `POST /api/leads` confirms persistence:
- *   - `SectionContactForm.astro` live accepted banner (`data-status="accepted"` with `(#<id>)`)
- *   - Explicit `punyasitus:lead-persisted` custom event
- *   - Same-session PRG redirect (`?leadStatus=accepted&leadNumber=<id>` paired with a fresh
- *     same-origin `sessionStorage` `ps_lead_submit_pending` marker recorded on form submit,
- *     preventing crafted external URLs from forging fake lead conversions).
- * - Full `try/catch` fault isolation around every vendor call & script load so blocked or
- *   throwing ad-network scripts NEVER break WhatsApp CTAs, external links, or contact forms.
+ * - Full `try/catch` fault isolation around every vendor/GTM call & script load so blocked or
+ *   throwing ad-network/GTM scripts NEVER break WhatsApp CTAs, external links, or contact forms.
  */
 
 interface ConsentWindowEventDetail {
@@ -54,6 +58,7 @@ interface LeadPersistedEventDetail {
   readonly leadId?: number | string;
   readonly persisted?: boolean;
   readonly eventId?: string;
+  readonly formId?: string;
   readonly page_path?: string;
   readonly content_category?: string;
 }
@@ -109,6 +114,7 @@ export interface AnalyticsBrowserWindow {
     readonly hasDecision?: boolean;
   };
   __punyasitusAnalytics?: PunyaSitusAnalyticsGlobal;
+  __psConsentDefaultSet?: boolean;
   dataLayer?: unknown[];
   gtag?: (...args: unknown[]) => void;
   fbq?: MetaFbqFunction;
@@ -140,10 +146,68 @@ export const TIKTOK_OFFICIAL_METHODS = [
 const LEAD_SESSION_STORAGE_PREFIX = "ps_lead_sig_v1:";
 const PRG_LEAD_SUBMIT_PENDING_KEY = "ps_lead_submit_pending";
 const PRG_LEAD_SUBMIT_TTL_MS = 5 * 60 * 1000;
+const GTM_CSP_RELOAD_GUARD_KEY = "ps_gtm_csp_reload_v1";
+const GTM_CSP_RELOAD_COOLDOWN_MS = 15_000;
+
+/**
+ * Determines whether granting analytics consent on a GTM-enabled page that was originally
+ * served under `strict` CSP (before consent) should perform a single guarded reload so the
+ * server responds with the fresh per-response nonce and `gtm-relaxed` CSP header.
+ *
+ * Loop-safe: records a short-lived `sessionStorage` guard keyed by pathname so a page can
+ * NEVER enter a reload loop if cookies are blocked or the server stays on strict CSP.
+ */
+export function shouldReloadForConsentedGtmCsp(params: {
+  readonly gtmEnabled: boolean;
+  readonly cspProfile: "strict" | "gtm-relaxed";
+  readonly ssrLoaded: boolean;
+  readonly nextAnalyticsGranted: boolean;
+  readonly pathname: string;
+  readonly storage: Pick<Storage, "getItem" | "setItem" | "removeItem"> | null | undefined;
+  readonly nowMs?: number;
+}): boolean {
+  const nowMs = params.nowMs ?? Date.now();
+
+  if (params.cspProfile === "gtm-relaxed" || params.ssrLoaded) {
+    try {
+      params.storage?.removeItem(GTM_CSP_RELOAD_GUARD_KEY);
+    } catch {
+      // Ignore disabled storage
+    }
+    return false;
+  }
+
+  if (!params.gtmEnabled || !params.nextAnalyticsGranted) {
+    return false;
+  }
+
+  try {
+    const raw = params.storage?.getItem(GTM_CSP_RELOAD_GUARD_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as { readonly path?: string; readonly at?: number };
+      if (
+        parsed.path === params.pathname &&
+        typeof parsed.at === "number" &&
+        nowMs - parsed.at >= 0 &&
+        nowMs - parsed.at < GTM_CSP_RELOAD_COOLDOWN_MS
+      ) {
+        return false;
+      }
+    }
+    params.storage?.setItem(
+      GTM_CSP_RELOAD_GUARD_KEY,
+      JSON.stringify({ path: params.pathname, at: nowMs }),
+    );
+    return true;
+  } catch {
+    // If sessionStorage is blocked, do not risk an unguarded reload loop
+    return false;
+  }
+}
 
 /**
  * Official GA4 `gtag()` shim: MUST push real `IArguments` objects onto `window.dataLayer`
- * because production `gtag.js` ignores plain `Array` entries.
+ * because production `gtag.js` and GTM Consent Mode ignore plain `Array` entries.
  */
 export function ensureOfficialGtagShim(win: AnalyticsBrowserWindow): void {
   if (!Array.isArray(win.dataLayer)) {
@@ -155,6 +219,30 @@ export function ensureOfficialGtagShim(win: AnalyticsBrowserWindow): void {
       win.dataLayer?.push(arguments);
     };
   }
+}
+
+/**
+ * Sets Google Consent Mode v2 defaults to `denied` exactly once BEFORE any GTM load.
+ */
+export function ensureConsentModeV2DefaultDenied(
+  win: AnalyticsBrowserWindow,
+  defaults: GoogleConsentModeV2DefaultParams,
+): void {
+  ensureOfficialGtagShim(win);
+  if (win.__psConsentDefaultSet) return;
+  win.gtag?.("consent", "default", { ...defaults });
+  win.__psConsentDefaultSet = true;
+}
+
+/**
+ * Pushes a Google Consent Mode v2 update onto `window.dataLayer` via `gtag("consent", "update", ...)`.
+ */
+export function updateGoogleConsentModeV2(
+  win: AnalyticsBrowserWindow,
+  update: GoogleConsentModeV2UpdateParams,
+): void {
+  ensureOfficialGtagShim(win);
+  win.gtag?.("consent", "update", { ...update });
 }
 
 /**
@@ -321,6 +409,37 @@ function removeVendorScriptTag(provider: DirectAnalyticsProvider): void {
   }
 }
 
+function injectGtmScriptTag(containerId: string, scriptUrl: string, nonce?: string): void {
+  const existing = document.querySelector(
+    `script[data-ps-gtm-loaded="true"][data-ps-gtm-container="${CSS.escape(containerId)}"]`,
+  );
+  if (existing) return;
+
+  const script = document.createElement("script");
+  script.async = true;
+  script.src = scriptUrl;
+  script.dataset.psGtmLoaded = "true";
+  script.dataset.psGtmContainer = containerId;
+  if (nonce) {
+    script.setAttribute("nonce", nonce);
+  }
+  script.addEventListener("error", () => {
+    script.dataset.psGtmLoadError = "true";
+  });
+  (document.head ?? document.documentElement).appendChild(script);
+}
+
+function removeGtmElements(): void {
+  const scripts = document.querySelectorAll('script[data-ps-gtm-loaded="true"]');
+  for (const node of scripts) {
+    node.remove();
+  }
+  const noscripts = document.querySelectorAll('noscript[data-ps-gtm-noscript="true"]');
+  for (const node of noscripts) {
+    node.remove();
+  }
+}
+
 export function createBrowserProviderAdapter(
   win: AnalyticsBrowserWindow,
   injectScript: (provider: DirectAnalyticsProvider, scriptUrl: string) => void = injectVendorScriptTag,
@@ -389,6 +508,37 @@ export function createBrowserProviderAdapter(
       } else if (provider === "tiktok") {
         win.ttq?.revokeConsent?.();
       }
+    },
+  };
+}
+
+export function createBrowserGtmAdapter(
+  win: AnalyticsBrowserWindow,
+  injectGtm: (containerId: string, scriptUrl: string, nonce?: string) => void = injectGtmScriptTag,
+  removeGtm: () => void = removeGtmElements,
+): AnalyticsGtmAdapter {
+  return {
+    initConsentDefault(defaults) {
+      ensureConsentModeV2DefaultDenied(win, defaults);
+    },
+
+    updateConsentMode(update) {
+      updateGoogleConsentModeV2(win, update);
+    },
+
+    loadGtm(containerId, scriptUrl, _noscriptUrl, nonce) {
+      ensureOfficialGtagShim(win);
+      win.dataLayer?.push({ "gtm.start": Date.now(), event: "gtm.js" });
+      injectGtm(containerId, scriptUrl, nonce);
+    },
+
+    pushDataLayerEvent(payload: PsDataLayerEventPayload) {
+      ensureOfficialGtagShim(win);
+      win.dataLayer?.push({ ...payload });
+    },
+
+    revokeGtm() {
+      removeGtm();
     },
   };
 }
@@ -479,9 +629,14 @@ function attachLeadPersistenceObservers(dispatcher: AnalyticsSignalDispatcher): 
         /^[1-9][0-9]{0,12}$/.test(leadNumber) &&
         consumeFreshPrgLeadSubmitMarker(window.sessionStorage)
       ) {
+        const formId =
+          prgBanner.closest<HTMLElement>("[data-ps-form-id]")?.dataset.psFormId ??
+          prgBanner.dataset.formId ??
+          "contact_default";
         dispatcher.dispatchLeadSubmitted({
           leadId: leadNumber,
           persisted: true,
+          formId,
           page_path: currentPath(),
         });
       }
@@ -505,9 +660,15 @@ function attachLeadPersistenceObservers(dispatcher: AnalyticsSignalDispatcher): 
       } catch {
         // Non-blocking
       }
+      const formId =
+        banner.dataset.formId ??
+        banner.closest<HTMLElement>("[data-ps-form-id]")?.dataset.psFormId ??
+        banner.closest<HTMLFormElement>("form")?.id ??
+        "contact_default";
       dispatcher.dispatchLeadSubmitted({
         leadId,
         persisted: true,
+        formId,
         page_path: currentPath(),
       });
     };
@@ -538,6 +699,7 @@ function attachLeadPersistenceObservers(dispatcher: AnalyticsSignalDispatcher): 
         leadId: detail.leadId,
         persisted: true,
         eventId: detail.eventId,
+        formId: detail.formId,
         page_path: detail.page_path ?? currentPath(),
         content_category: detail.content_category,
       });
@@ -559,11 +721,19 @@ function attachNonBlockingCtaListeners(dispatcher: AnalyticsSignalDispatcher): v
         if (explicitEl) {
           const eventName = explicitEl.dataset.psAnalyticsEvent;
           if (eventName) {
+            const href =
+              explicitEl instanceof HTMLAnchorElement
+                ? explicitEl.getAttribute("href") || undefined
+                : explicitEl.closest<HTMLAnchorElement>("a[href]")?.getAttribute("href") || undefined;
             dispatcher.dispatch(eventName, {
               page_path: window.location.pathname || "/",
               content_category: explicitEl.dataset.psAnalyticsCategory,
               content_type: explicitEl.dataset.psAnalyticsContentType,
               cta_mode: explicitEl.dataset.psAnalyticsCtaMode,
+              item_id: explicitEl.dataset.psItemId,
+              item_title: explicitEl.dataset.psItemTitle,
+              placement: explicitEl.dataset.psPlacement,
+              destination_url: href,
             });
             return;
           }
@@ -579,12 +749,17 @@ function attachNonBlockingCtaListeners(dispatcher: AnalyticsSignalDispatcher): v
             page_path: window.location.pathname || "/",
             cta_mode: "whatsapp",
             content_type: "whatsapp",
+            item_id: anchor.dataset.psItemId,
+            item_title: anchor.dataset.psItemTitle,
+            placement: anchor.dataset.psPlacement ?? "other",
           });
         } else if (anchor.dataset.psExternalCta === "true") {
           dispatcher.dispatch("external_click", {
             page_path: window.location.pathname || "/",
             cta_mode: "external_link",
             content_type: "external",
+            item_id: anchor.dataset.psItemId,
+            destination_url: href,
           });
         }
       } catch {
@@ -623,6 +798,20 @@ export function initAnalyticsDispatcher(): PunyaSitusAnalyticsGlobal | null {
   const dispatcher = createAnalyticsSignalDispatcher({
     config: bootstrap.providers,
     adapter: createBrowserProviderAdapter(win),
+    gtm: bootstrap.gtm
+      ? {
+          enabled: bootstrap.gtm.enabled,
+          containerId: bootstrap.gtm.containerId,
+          vendorModes: bootstrap.gtm.vendorModes,
+          cspNonce: bootstrap.gtm.cspNonce,
+          ssrLoaded: bootstrap.gtm.ssrLoaded,
+          pageType: bootstrap.gtm.pageType,
+          contentId: bootstrap.gtm.contentId,
+          testScriptUrl: bootstrap.gtm.testScriptUrl,
+          testNoscriptUrl: bootstrap.gtm.testNoscriptUrl,
+        }
+      : null,
+    gtmAdapter: bootstrap.gtm ? createBrowserGtmAdapter(win) : undefined,
     expectedPolicyVersion: bootstrap.policyVersion,
     initialConsent,
     autoPageView: bootstrap.autoPageView,
@@ -644,17 +833,47 @@ export function initAnalyticsDispatcher(): PunyaSitusAnalyticsGlobal | null {
     },
   });
 
+  // Clear any prior GTM CSP reload guard once the page has been served under gtm-relaxed CSP
+  if (bootstrap.gtm?.cspProfile === "gtm-relaxed" || bootstrap.gtm?.ssrLoaded) {
+    try {
+      window.sessionStorage.removeItem(GTM_CSP_RELOAD_GUARD_KEY);
+    } catch {
+      // Ignore disabled storage
+    }
+  }
+
   // React live to Consent.astro decisions and revocations
   window.addEventListener("punyasitus:consent-change", (event) => {
     try {
       const detail = (event as CustomEvent<ConsentWindowEventDetail>).detail;
       if (!detail) return;
       const prefs = detail.preferences;
+      const nextAnalytics = Boolean(prefs?.analytics) && !detail.withdrawn;
+      const nextMarketing = Boolean(prefs?.marketing) && !detail.withdrawn;
+      const nextHasDecision = Boolean(detail.hasDecision) && !detail.withdrawn;
+
+      // First-visit consent on a GTM-enabled page served under pre-consent strict CSP:
+      // perform ONE guarded reload so the server emits the fresh nonce + gtm-relaxed CSP.
+      if (
+        bootstrap.gtm?.enabled &&
+        shouldReloadForConsentedGtmCsp({
+          gtmEnabled: bootstrap.gtm.enabled,
+          cspProfile: bootstrap.gtm.cspProfile,
+          ssrLoaded: bootstrap.gtm.ssrLoaded,
+          nextAnalyticsGranted: nextAnalytics && nextHasDecision,
+          pathname: window.location.pathname || "/",
+          storage: window.sessionStorage,
+        })
+      ) {
+        window.location.reload();
+        return;
+      }
+
       dispatcher.updateConsent({
         version: prefs?.version ?? bootstrap.policyVersion,
-        analytics: Boolean(prefs?.analytics) && !detail.withdrawn,
-        marketing: Boolean(prefs?.marketing) && !detail.withdrawn,
-        hasDecision: Boolean(detail.hasDecision) && !detail.withdrawn,
+        analytics: nextAnalytics,
+        marketing: nextMarketing,
+        hasDecision: nextHasDecision,
       });
     } catch {
       // Fault-isolated

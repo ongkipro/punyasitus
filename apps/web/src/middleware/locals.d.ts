@@ -37,6 +37,8 @@ declare global {
       tenantEntitlement: LiveTenantEntitlement | null;
       platformOperator: VerifiedPlatformOperatorContext | null;
       twoFactorVerifiedAtMs: number | null;
+      cspNonce?: string | null;
+      cspProfile?: "strict" | "gtm-relaxed";
     }
   }
 }

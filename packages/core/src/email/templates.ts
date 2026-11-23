@@ -14,6 +14,7 @@ export const EMAIL_TEMPLATE_NAMES = [
   "lifecycle-notice",
   "deletion-warning",
   "custom-theme-request-operator-notice",
+  "gtm-kill-switch-owner-notice",
 ] as const;
 
 export type EmailTemplateName = (typeof EMAIL_TEMPLATE_NAMES)[number];
@@ -282,6 +283,18 @@ export const CustomThemeRequestOperatorNoticeTemplateDataSchema = z.strictObject
   consoleUrl: z.string().trim().min(1).max(2048),
 });
 
+export const GtmKillSwitchReasonCategorySchema = z.enum(["abuse", "malware", "performance"]);
+
+export const GtmKillSwitchOwnerNoticeTemplateDataSchema = z.strictObject({
+  recipientName: z.string().trim().max(120).optional(),
+  tenantName: z.string().trim().min(1).max(160),
+  tenantHandle: z.string().trim().min(1).max(64),
+  containerId: z.string().trim().max(32).optional(),
+  reasonCategory: GtmKillSwitchReasonCategorySchema,
+  reason: z.string().trim().min(10).max(500),
+  analyticsSettingsUrl: z.string().trim().min(1).max(2048),
+});
+
 export interface EmailTemplateDataMap {
   readonly "verify-email": z.input<typeof VerifyEmailTemplateDataSchema>;
   readonly "reset-password": z.input<typeof ResetPasswordTemplateDataSchema>;
@@ -294,6 +307,9 @@ export interface EmailTemplateDataMap {
   readonly "deletion-warning": z.input<typeof DeletionWarningTemplateDataSchema>;
   readonly "custom-theme-request-operator-notice": z.input<
     typeof CustomThemeRequestOperatorNoticeTemplateDataSchema
+  >;
+  readonly "gtm-kill-switch-owner-notice": z.input<
+    typeof GtmKillSwitchOwnerNoticeTemplateDataSchema
   >;
 }
 
@@ -856,6 +872,63 @@ export function renderEmailTemplate<T extends EmailTemplateName>(
         `Preferensi Kontak: ${prefLabel}`,
         "",
         `Tinjau di Console Operasional: ${safeConsoleUrl}`,
+      ].join("\n");
+
+      return {
+        template,
+        subject,
+        html: wrapIndonesianHtmlEmail({
+          title: subject,
+          preheader,
+          bodyHtml,
+        }),
+        text,
+      };
+    }
+
+    case "gtm-kill-switch-owner-notice": {
+      const data = GtmKillSwitchOwnerNoticeTemplateDataSchema.parse(rawData);
+      const greet = greeting(data.recipientName);
+      const tenantName = sanitizePlainText(data.tenantName);
+      const tenantHandle = sanitizePlainText(data.tenantHandle);
+      const containerId = data.containerId ? sanitizePlainText(data.containerId) : null;
+      const reason = sanitizePlainText(data.reason);
+      const safeSettingsUrl = sanitizeActionUrl(data.analyticsSettingsUrl);
+
+      const categoryLabel =
+        data.reasonCategory === "abuse"
+          ? "Penyalahgunaan (Abuse)"
+          : data.reasonCategory === "malware"
+            ? "Malware / Skrip Berbahaya"
+            : "Gangguan Performa Situs";
+
+      const subject = sanitizeHeaderValue(
+        `Google Tag Manager dinonaktifkan untuk ${tenantName} — PunyaSitus`,
+      );
+      const preheader = `Kontainer GTM pada ${tenantName} dinonaktifkan oleh operator (${categoryLabel}). Pelacak langsung tetap berjalan.`;
+
+      const bodyHtml = [
+        `<p style="margin:0 0 12px;">${greet.html}</p>`,
+        `<p style="margin:0 0 16px;">Kontainer <strong>Google Tag Manager (GTM)</strong>${containerId ? ` (<code>${escapeHtml(containerId)}</code>)` : ""} pada website <strong>${escapeHtml(tenantName)}</strong> (<code>@${escapeHtml(tenantHandle)}</code>) telah dinonaktifkan sementara oleh tim operasional PunyaSitus.</p>`,
+        '<table role="presentation" width="100%" cellspacing="0" cellpadding="6" style="margin:0 0 16px;border:1px solid #e2e8f0;border-radius:8px;font-size:14px;">',
+        `<tr><td style="color:#64748b;width:38%;">Kategori Alasan</td><td style="font-weight:600;">${escapeHtml(categoryLabel)}</td></tr>`,
+        `<tr><td style="color:#64748b;">Catatan Operasional</td><td>${escapeHtml(reason)}</td></tr>`,
+        "</table>",
+        '<p style="margin:0 0 16px;">Website publik Anda tetap aktif dan <strong>pelacak langsung (GA4, Meta Pixel, TikTok Pixel)</strong> yang diatur dalam mode <em>Langsung</em> tetap berjalan normal. Periksa isi kontainer GTM Anda dan hubungi dukungan PunyaSitus jika perbaikan telah selesai.</p>',
+        renderPrimaryButtonHtml("Buka Pengaturan Analitik & GTM", safeSettingsUrl),
+        `<p style="margin:0 0 12px;font-size:13px;color:#475569;word-break:break-all;">Tautan pengaturan: ${escapeHtml(safeSettingsUrl)}</p>`,
+      ].join("");
+
+      const text = [
+        greet.text,
+        "",
+        `Kontainer Google Tag Manager (GTM)${containerId ? ` (${containerId})` : ""} pada website ${tenantName} (@${tenantHandle}) telah dinonaktifkan sementara oleh tim operasional PunyaSitus.`,
+        `Kategori Alasan: ${categoryLabel}`,
+        `Catatan Operasional: ${reason}`,
+        "",
+        "Website publik Anda tetap aktif dan pelacak langsung (GA4, Meta Pixel, TikTok Pixel) yang diatur dalam mode Langsung tetap berjalan normal.",
+        "",
+        `Buka Pengaturan Analitik & GTM: ${safeSettingsUrl}`,
       ].join("\n");
 
       return {

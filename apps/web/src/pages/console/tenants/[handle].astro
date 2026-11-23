@@ -1,6 +1,7 @@
 ---
 import { env } from "cloudflare:workers";
 import { PLATFORM_HOSTS } from "@punyasitus/core";
+import { getConsoleTenantGtmStatus } from "@punyasitus/db/analytics-settings/index";
 import { getConsoleTenantDetail } from "@punyasitus/db/platform";
 import ConsoleLayout from "@/layouts/ConsoleLayout.astro";
 import {
@@ -58,6 +59,14 @@ const detail = rawParam
 if (!detail) {
   Astro.response.status = 404;
 }
+
+const initialGtmStatus = detail
+  ? await getConsoleTenantGtmStatus(
+      platformDb,
+      { tenantId: detail.tenant.id },
+      runtimeEnv.TENANT_STORE ?? null,
+    )
+  : null;
 
 const registeredCustomThemes = listRegisteredCustomThemeSummaries();
 const navLinks = [
@@ -156,6 +165,7 @@ const navLinks = [
         <TenantDetailPanel
           client:load
           initialDetail={detail}
+          initialGtmStatus={initialGtmStatus}
           registeredCustomThemes={registeredCustomThemes}
           stepUpFresh={gate.stepUpFresh}
         />

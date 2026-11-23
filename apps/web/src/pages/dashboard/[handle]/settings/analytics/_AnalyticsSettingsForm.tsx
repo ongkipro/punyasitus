@@ -35,6 +35,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { GtmSetupSection, type GtmSettingsSnapshot } from "./_GtmSetupSection";
+import {
+  createDefaultGtmKillSwitchState,
+  createDefaultVendorDeliveryModes,
+} from "@punyasitus/core/analytics/gtm";
 
 export interface AnalyticsSettingsSnapshot extends DirectAnalyticsConfig {
   readonly version: number;
@@ -48,6 +53,7 @@ export interface AnalyticsSettingsFormProps {
   readonly currentRole: string;
   readonly canEdit: boolean;
   readonly initialSettings: AnalyticsSettingsSnapshot;
+  readonly initialGtmSettings?: GtmSettingsSnapshot;
   readonly initialLoadError?: string | null;
 }
 
@@ -103,12 +109,27 @@ export function AnalyticsSettingsForm({
   currentRole,
   canEdit,
   initialSettings,
+  initialGtmSettings,
   initialLoadError = null,
 }: AnalyticsSettingsFormProps) {
   const apiUrl = `/api/tenants/${encodeURIComponent(handle)}/analytics`;
 
   const [savedSnapshot, setSavedSnapshot] =
     React.useState<AnalyticsSettingsSnapshot>(initialSettings);
+  const [gtmSnapshot, setGtmSnapshot] = React.useState<GtmSettingsSnapshot>(
+    initialGtmSettings ?? {
+      ga4MeasurementId: initialSettings.ga4MeasurementId,
+      metaPixelId: initialSettings.metaPixelId,
+      tiktokPixelId: initialSettings.tiktokPixelId,
+      vendorModes: createDefaultVendorDeliveryModes(),
+      gtmContainerId: null,
+      gtmEnabled: false,
+      gtmRiskAck: null,
+      operatorKillSwitch: createDefaultGtmKillSwitchState(),
+      version: initialSettings.version,
+      updatedAt: initialSettings.updatedAt,
+    },
+  );
   const [ga4Input, setGa4Input] = React.useState(initialSettings.ga4MeasurementId ?? "");
   const [metaInput, setMetaInput] = React.useState(initialSettings.metaPixelId ?? "");
   const [tiktokInput, setTiktokInput] = React.useState(initialSettings.tiktokPixelId ?? "");
@@ -258,6 +279,14 @@ export function AnalyticsSettingsForm({
           updatedAt: data.updatedAt ?? null,
         };
         setSavedSnapshot(nextSnap);
+        setGtmSnapshot((prev) => ({
+          ...prev,
+          ga4MeasurementId: nextSnap.ga4MeasurementId,
+          metaPixelId: nextSnap.metaPixelId,
+          tiktokPixelId: nextSnap.tiktokPixelId,
+          version: nextSnap.version,
+          updatedAt: nextSnap.updatedAt,
+        }));
         setGa4Input(nextSnap.ga4MeasurementId ?? "");
         setMetaInput(nextSnap.metaPixelId ?? "");
         setTiktokInput(nextSnap.tiktokPixelId ?? "");
@@ -693,6 +722,29 @@ export function AnalyticsSettingsForm({
           </CardFooter>
         </form>
       </Card>
+
+      {/* Easy Google Tag Manager Setup, Template Download & Guide (TASK-076) */}
+      <GtmSetupSection
+        handle={handle}
+        tenantName={tenantName}
+        currentRole={currentRole}
+        isLocked={isLocked}
+        canEdit={canEdit}
+        snapshot={gtmSnapshot}
+        onSnapshotSynced={(nextGtm) => {
+          setGtmSnapshot(nextGtm);
+          setSavedSnapshot({
+            ga4MeasurementId: nextGtm.ga4MeasurementId,
+            metaPixelId: nextGtm.metaPixelId,
+            tiktokPixelId: nextGtm.tiktokPixelId,
+            version: nextGtm.version,
+            updatedAt: nextGtm.updatedAt,
+          });
+          setGa4Input(nextGtm.ga4MeasurementId ?? "");
+          setMetaInput(nextGtm.metaPixelId ?? "");
+          setTiktokInput(nextGtm.tiktokPixelId ?? "");
+        }}
+      />
 
       {/* Provider Event-Mapping Reference Table */}
       <Card data-testid="analytics-event-mapping-card">

@@ -1,4 +1,21 @@
 import {
+  buildGtmNoscriptUrl,
+  buildGtmScriptUrl,
+  buildGoogleConsentModeUpdate,
+  buildPsExternalClickEvent,
+  buildPsLeadSubmittedEvent,
+  buildPsPageViewEvent,
+  buildPsWaClickEvent,
+  GTM_CONSENT_MODE_V2_DEFAULT,
+  isValidGtmContainerId,
+  normalizeGtmPageType,
+  type GoogleConsentModeV2DefaultParams,
+  type GoogleConsentModeV2UpdateParams,
+  type GtmPageType,
+  type PsDataLayerEventPayload,
+  type VendorDeliveryModes,
+} from "./gtm.ts";
+import {
   ANALYTICS_PROVIDER_DESCRIPTORS,
   ANALYTICS_PROVIDER_EVENT_MAPPINGS,
   buildProviderScriptUrl,
@@ -15,21 +32,25 @@ import {
 
 /**
  * Consent-Aware Analytics Signal Dispatcher & PII-Stripping Engine
- * (`packages/core/src/analytics/signals.ts`; TASK-022, REQ-027, REQ-017, REQ-033, REQ-039).
+ * (`packages/core/src/analytics/signals.ts`; TASK-022 & TASK-076, REQ-027, REQ-017, REQ-033, REQ-039).
  *
  * Core security & privacy invariants:
  * 1. STRICT ZERO-TAGS-BEFORE-CONSENT: defaults strictly to `{ analytics: false, marketing: false }`.
- *    No vendor script loads and no signal dispatches until explicit visitor consent is granted
- *    for the provider's category (`analytics` for GA4; `marketing` for Meta & TikTok).
- * 2. IMMEDIATE HALT ON DECLINE/REVOCATION: revoking consent immediately stops all future
- *    dispatches and notifies the adapter to tear down / disable vendor tags.
- * 3. ONE LEAD SIGNAL AFTER PERSISTENCE: `dispatchLeadSubmitted` requires `persisted === true`
+ *    No vendor or GTM script loads and no signal dispatches until explicit visitor consent is granted
+ *    for the provider's category (`analytics` for GA4 & GTM; `marketing` for Meta & TikTok).
+ * 2. CONSENT MODE V2 BEFORE GTM: sets Google Consent Mode v2 defaults to `denied` BEFORE `gtm.js`
+ *    ever loads, and pushes Consent Mode updates whenever consent changes or is revoked.
+ * 3. NO DOUBLE COUNTING: when GTM is active, any vendor routed via `"gtm"` is suppressed from direct
+ *    dispatch even if a legacy direct ID is present.
+ * 4. IMMEDIATE HALT ON DECLINE/REVOCATION: revoking consent immediately stops all future
+ *    dispatches and notifies the adapter to tear down / disable vendor & GTM tags.
+ * 5. ONE LEAD SIGNAL AFTER PERSISTENCE: `dispatchLeadSubmitted` requires `persisted === true`
  *    and a valid positive `leadId`, and deduplicates strictly by `leadId` so a persisted lead
  *    can fire at most ONCE across retries, double-clicks, or repeated DOM observations.
- * 4. ZERO PII LEAKAGE: allowlist-first sanitization + forbidden-field denylist + email/phone
+ * 6. ZERO PII LEAKAGE: allowlist-first sanitization + forbidden-field denylist + email/phone
  *    regex scrubbing guarantees visitor name, email, phone, message, and raw query strings
- *    are NEVER forwarded to GA4, Meta Pixel, or TikTok Pixel.
- * 5. FAULT ISOLATION: every provider load/dispatch/revoke call is wrapped in `try/catch` so
+ *    are NEVER forwarded to GA4, Meta Pixel, TikTok Pixel, or GTM `ps_*` `dataLayer` events.
+ * 7. FAULT ISOLATION: every provider/GTM load/dispatch/revoke call is wrapped in `try/catch` so
  *    ad-blockers, failed network scripts, or throwing vendor globals NEVER break CTAs or forms.
  */
 
@@ -50,12 +71,12 @@ export interface ProviderDeliveryRecord {
 
 export interface ProviderSkipRecord {
   readonly provider: DirectAnalyticsProvider;
-  readonly reason: "NOT_CONFIGURED" | "CONSENT_DENIED" | "INVALID_ID";
+  readonly reason: "NOT_CONFIGURED" | "CONSENT_DENIED" | "INVALID_ID" | "ROUTED_VIA_GTM";
 }
 
 export interface ProviderErrorRecord {
-  readonly provider: DirectAnalyticsProvider;
-  readonly phase: "load" | "send" | "revoke";
+  readonly provider: DirectAnalyticsProvider | "gtm";
+  readonly phase: "load" | "send" | "revoke" | "consent";
   readonly message: string;
 }
 
@@ -65,6 +86,7 @@ export interface SignalDispatchReport {
   readonly eventId: string;
   readonly sanitizedParams: SanitizedSignalParams;
   readonly deliveredTo: readonly ProviderDeliveryRecord[];
+  readonly gtmEventPushed?: PsDataLayerEventPayload | null;
   readonly skipped: readonly ProviderSkipRecord[];
   readonly errors: readonly ProviderErrorRecord[];
 }
@@ -73,6 +95,7 @@ export interface LeadSignalInput {
   readonly leadId: number | string | null | undefined;
   readonly persisted: boolean;
   readonly eventId?: string;
+  readonly formId?: string;
   readonly page_path?: string;
   readonly content_category?: string;
   readonly extra?: Readonly<Record<string, unknown>>;
@@ -110,9 +133,36 @@ export interface AnalyticsProviderAdapter {
   readonly revokeProvider?: (provider: DirectAnalyticsProvider, providerId: string) => void;
 }
 
+export interface AnalyticsGtmAdapter {
+  readonly initConsentDefault: (defaults: GoogleConsentModeV2DefaultParams) => void;
+  readonly updateConsentMode: (update: GoogleConsentModeV2UpdateParams) => void;
+  readonly loadGtm: (
+    containerId: string,
+    scriptUrl: string,
+    noscriptUrl: string,
+    nonce?: string,
+  ) => void;
+  readonly pushDataLayerEvent: (payload: PsDataLayerEventPayload) => void;
+  readonly revokeGtm?: (containerId: string) => void;
+}
+
+export interface AnalyticsDispatcherGtmOptions {
+  readonly enabled: boolean;
+  readonly containerId: string | null;
+  readonly vendorModes?: Partial<VendorDeliveryModes>;
+  readonly cspNonce?: string;
+  readonly ssrLoaded?: boolean;
+  readonly pageType?: GtmPageType;
+  readonly contentId?: string | null;
+  readonly testScriptUrl?: string;
+  readonly testNoscriptUrl?: string;
+}
+
 export interface AnalyticsDispatcherOptions {
   readonly config: Partial<DirectAnalyticsConfig> | null | undefined;
   readonly adapter: AnalyticsProviderAdapter;
+  readonly gtm?: AnalyticsDispatcherGtmOptions | null;
+  readonly gtmAdapter?: AnalyticsGtmAdapter;
   readonly expectedPolicyVersion?: number;
   readonly initialConsent?: Partial<AnalyticsConsentState> | null;
   readonly autoPageView?: boolean;
@@ -129,6 +179,9 @@ export interface AnalyticsDispatcherSnapshot {
   readonly loadedProviders: readonly DirectAnalyticsProvider[];
   readonly activeProviders: readonly DirectAnalyticsProvider[];
   readonly dispatchedLeadIds: readonly string[];
+  readonly gtmEnabled: boolean;
+  readonly gtmContainerId: string | null;
+  readonly gtmLoaded: boolean;
 }
 
 export interface AnalyticsSignalDispatcher {
@@ -399,6 +452,17 @@ export function canDispatchToProvider(
   return category === "analytics" ? consent.analytics === true : consent.marketing === true;
 }
 
+export function canDispatchToGtm(
+  consent: AnalyticsConsentState,
+  expectedPolicyVersion = 1,
+): boolean {
+  return (
+    consent.hasDecision === true &&
+    consent.version === expectedPolicyVersion &&
+    consent.analytics === true
+  );
+}
+
 function defaultEventId(): string {
   try {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -428,13 +492,78 @@ function toErrorMessage(err: unknown): string {
   return typeof err === "string" && err ? err : "Unknown provider error";
 }
 
+function buildGtmEventForCanonical(
+  canonical: CanonicalSignalEvent,
+  eventId: string,
+  pagePath: string,
+  rawParams: Readonly<Record<string, unknown>> | undefined,
+  gtmDefaults: { readonly pageType: GtmPageType; readonly contentId: string | null },
+): PsDataLayerEventPayload | null {
+  switch (canonical) {
+    case "page_view":
+      return buildPsPageViewEvent({
+        eventId,
+        pageType: rawParams?.page_type ?? gtmDefaults.pageType,
+        contentId: rawParams?.content_id ?? gtmDefaults.contentId,
+        pagePath,
+      });
+    case "whatsapp_click":
+      return buildPsWaClickEvent({
+        eventId,
+        itemId: rawParams?.item_id,
+        itemTitle: rawParams?.item_title ?? rawParams?.content_name,
+        placement: rawParams?.placement,
+        pagePath,
+      });
+    case "external_click":
+      return buildPsExternalClickEvent({
+        eventId,
+        itemId: rawParams?.item_id,
+        destinationHost: rawParams?.destination_host,
+        destinationUrl: rawParams?.destination_url,
+        pagePath,
+      });
+    case "lead_submitted":
+      return buildPsLeadSubmittedEvent({
+        eventId,
+        formId: rawParams?.form_id,
+        pagePath,
+      });
+    default:
+      return null;
+  }
+}
+
 export function createAnalyticsSignalDispatcher(
   options: AnalyticsDispatcherOptions,
 ): AnalyticsSignalDispatcher {
   const expectedPolicyVersion = options.expectedPolicyVersion ?? 1;
   const autoPageView = options.autoPageView ?? true;
-  const config = parseStoredDirectAnalyticsConfig(options.config);
+  const rawConfig = parseStoredDirectAnalyticsConfig(options.config);
   const generateEventId = options.generateEventId ?? defaultEventId;
+
+  const gtmOpt = options.gtm ?? null;
+  const gtmContainerId =
+    gtmOpt?.enabled === true && isValidGtmContainerId(gtmOpt.containerId)
+      ? gtmOpt.containerId
+      : null;
+  const gtmEnabled = gtmContainerId !== null;
+  const gtmVendorModes: VendorDeliveryModes = {
+    ga4: gtmOpt?.vendorModes?.ga4 === "gtm" ? "gtm" : "direct",
+    meta: gtmOpt?.vendorModes?.meta === "gtm" ? "gtm" : "direct",
+    tiktok: gtmOpt?.vendorModes?.tiktok === "gtm" ? "gtm" : "direct",
+  };
+  const gtmDefaults = {
+    pageType: normalizeGtmPageType(gtmOpt?.pageType),
+    contentId: gtmOpt?.contentId ?? null,
+  };
+
+  // Enforce mutual exclusion: any vendor routed via active GTM is never loaded directly
+  const config: DirectAnalyticsConfig = {
+    ga4MeasurementId: gtmEnabled && gtmVendorModes.ga4 === "gtm" ? null : rawConfig.ga4MeasurementId,
+    metaPixelId: gtmEnabled && gtmVendorModes.meta === "gtm" ? null : rawConfig.metaPixelId,
+    tiktokPixelId: gtmEnabled && gtmVendorModes.tiktok === "gtm" ? null : rawConfig.tiktokPixelId,
+  };
 
   let consent: AnalyticsConsentState = {
     version: options.initialConsent?.version ?? expectedPolicyVersion,
@@ -447,9 +576,33 @@ export function createAnalyticsSignalDispatcher(
   const pageViewSentProviders = new Set<DirectAnalyticsProvider>();
   const dispatchedLeadIds = new Set<string>();
 
+  let gtmConsentDefaultInitialized = false;
+  let gtmLoaded = gtmEnabled && gtmOpt?.ssrLoaded === true;
+  let gtmPageViewSent = false;
+
+  function ensureGtmConsentDefault(errors: ProviderErrorRecord[]): void {
+    if (!gtmEnabled || !options.gtmAdapter || gtmConsentDefaultInitialized) return;
+    try {
+      options.gtmAdapter.initConsentDefault(GTM_CONSENT_MODE_V2_DEFAULT);
+      gtmConsentDefaultInitialized = true;
+    } catch (err) {
+      errors.push({ provider: "gtm", phase: "consent", message: toErrorMessage(err) });
+    }
+  }
+
+  // Always set Google Consent Mode v2 default-denied BEFORE any GTM load can ever occur
+  if (gtmEnabled && options.gtmAdapter) {
+    ensureGtmConsentDefault([]);
+  }
+
+  function isProviderRoutedViaGtm(provider: DirectAnalyticsProvider): boolean {
+    return gtmEnabled && gtmVendorModes[provider] === "gtm";
+  }
+
   function getActiveProviders(): DirectAnalyticsProvider[] {
     const active: DirectAnalyticsProvider[] = [];
     for (const provider of DIRECT_ANALYTICS_PROVIDERS) {
+      if (isProviderRoutedViaGtm(provider)) continue;
       const id = getProviderIdFromConfig(config, provider);
       if (id && canDispatchToProvider(provider, consent, expectedPolicyVersion)) {
         active.push(provider);
@@ -458,10 +611,33 @@ export function createAnalyticsSignalDispatcher(
     return active;
   }
 
+  function ensureGtmLoaded(errors: ProviderErrorRecord[]): boolean {
+    if (!gtmEnabled || !gtmContainerId || !options.gtmAdapter) return false;
+    if (!canDispatchToGtm(consent, expectedPolicyVersion)) return false;
+
+    ensureGtmConsentDefault(errors);
+
+    if (!gtmLoaded) {
+      const scriptUrl = buildGtmScriptUrl(gtmContainerId, gtmOpt?.testScriptUrl);
+      const noscriptUrl = buildGtmNoscriptUrl(gtmContainerId, gtmOpt?.testNoscriptUrl);
+      if (!scriptUrl || !noscriptUrl) return false;
+      try {
+        options.gtmAdapter.updateConsentMode(buildGoogleConsentModeUpdate(consent));
+        options.gtmAdapter.loadGtm(gtmContainerId, scriptUrl, noscriptUrl, gtmOpt?.cspNonce);
+        gtmLoaded = true;
+      } catch (err) {
+        errors.push({ provider: "gtm", phase: "load", message: toErrorMessage(err) });
+        return false;
+      }
+    }
+    return true;
+  }
+
   function dispatchInternal(
     eventName: SignalEventAlias | string,
     rawParams?: Readonly<Record<string, unknown>>,
     restrictToProviders?: ReadonlySet<DirectAnalyticsProvider>,
+    includeGtm = true,
   ): SignalDispatchReport {
     const canonical = normalizeCanonicalSignalEvent(eventName);
     const sanitized = sanitizeAnalyticsSignalPayload(rawParams);
@@ -487,6 +663,7 @@ export function createAnalyticsSignalDispatcher(
         eventId,
         sanitizedParams: sanitized,
         deliveredTo: [],
+        gtmEventPushed: null,
         skipped: [],
         errors: [],
       };
@@ -499,6 +676,10 @@ export function createAnalyticsSignalDispatcher(
 
     for (const provider of DIRECT_ANALYTICS_PROVIDERS) {
       if (restrictToProviders && !restrictToProviders.has(provider)) {
+        continue;
+      }
+      if (isProviderRoutedViaGtm(provider)) {
+        skipped.push({ provider, reason: "ROUTED_VIA_GTM" });
         continue;
       }
       const id = getProviderIdFromConfig(config, provider);
@@ -542,12 +723,42 @@ export function createAnalyticsSignalDispatcher(
       }
     }
 
+    let gtmEventPushed: PsDataLayerEventPayload | null = null;
+    if (
+      includeGtm &&
+      gtmEnabled &&
+      options.gtmAdapter &&
+      canDispatchToGtm(consent, expectedPolicyVersion)
+    ) {
+      const ready = ensureGtmLoaded(errors);
+      if (ready) {
+        const pagePath =
+          typeof sanitized.page_path === "string" ? sanitized.page_path : "/";
+        const psPayload = buildGtmEventForCanonical(
+          canonical,
+          eventId,
+          pagePath,
+          rawParams,
+          gtmDefaults,
+        );
+        if (psPayload) {
+          try {
+            options.gtmAdapter.pushDataLayerEvent(psPayload);
+            gtmEventPushed = psPayload;
+          } catch (err) {
+            errors.push({ provider: "gtm", phase: "send", message: toErrorMessage(err) });
+          }
+        }
+      }
+    }
+
     return {
       ok: errors.length === 0,
       eventName: canonical,
       eventId,
       sanitizedParams: sanitized,
       deliveredTo,
+      gtmEventPushed,
       skipped,
       errors,
     };
@@ -570,6 +781,7 @@ export function createAnalyticsSignalDispatcher(
     const newlyConsentedForPageView = new Set<DirectAnalyticsProvider>();
 
     for (const provider of DIRECT_ANALYTICS_PROVIDERS) {
+      if (isProviderRoutedViaGtm(provider)) continue;
       const id = getProviderIdFromConfig(config, provider);
       if (!id) continue;
 
@@ -604,10 +816,46 @@ export function createAnalyticsSignalDispatcher(
       }
     }
 
-    if (newlyConsentedForPageView.size > 0) {
-      const report = dispatchInternal("page_view", undefined, newlyConsentedForPageView);
+    let shouldSendGtmPageView = false;
+    if (gtmEnabled && gtmContainerId && options.gtmAdapter) {
+      ensureGtmConsentDefault(errors);
+      const consentModeUpdate = buildGoogleConsentModeUpdate(consent);
+      try {
+        options.gtmAdapter.updateConsentMode(consentModeUpdate);
+      } catch (err) {
+        errors.push({ provider: "gtm", phase: "consent", message: toErrorMessage(err) });
+      }
+
+      if (canDispatchToGtm(consent, expectedPolicyVersion)) {
+        const ready = ensureGtmLoaded(errors);
+        if (ready && autoPageView && !gtmPageViewSent) {
+          shouldSendGtmPageView = true;
+        }
+      } else {
+        gtmPageViewSent = false;
+        if (gtmLoaded) {
+          gtmLoaded = false;
+          try {
+            options.gtmAdapter.revokeGtm?.(gtmContainerId);
+          } catch (err) {
+            errors.push({ provider: "gtm", phase: "revoke", message: toErrorMessage(err) });
+          }
+        }
+      }
+    }
+
+    if (newlyConsentedForPageView.size > 0 || shouldSendGtmPageView) {
+      const report = dispatchInternal(
+        "page_view",
+        undefined,
+        newlyConsentedForPageView.size > 0 ? newlyConsentedForPageView : new Set(),
+        shouldSendGtmPageView,
+      );
       for (const delivered of report.deliveredTo) {
         pageViewSentProviders.add(delivered.provider);
+      }
+      if (report.gtmEventPushed) {
+        gtmPageViewSent = true;
       }
       errors.push(...report.errors);
     }
@@ -620,11 +868,10 @@ export function createAnalyticsSignalDispatcher(
    *
    * Privacy-by-design non-retroactive rule:
    * - If visitor consent is NOT granted at the time of persistence, zero third-party vendor signals
-   *   are emitted and the lead is NEVER queued for retroactive third-party dispatch if consent is
-   *   granted later (first-party cookieless counts still record server-side on `POST /api/leads`).
+   *   or GTM `ps_lead_submitted` events are emitted and the lead is NEVER queued for retroactive
+   *   third-party dispatch if consent is granted later.
    */
   function dispatchLeadSubmitted(input: LeadSignalInput): LeadSignalResult {
-    // Strict invariant: NEVER fire lead conversion signal before server persistence is confirmed!
     if (input.persisted !== true) {
       return {
         ok: false,
@@ -677,6 +924,7 @@ export function createAnalyticsSignalDispatcher(
       event_id: eventId,
       lead_ref: markerKey,
       content_type: "contact_form",
+      ...(input.formId ? { form_id: input.formId } : {}),
       ...(input.page_path ? { page_path: input.page_path } : {}),
       ...(input.content_category ? { content_category: input.content_category } : {}),
     });
@@ -700,6 +948,9 @@ export function createAnalyticsSignalDispatcher(
       loadedProviders: [...loadedProviders],
       activeProviders: getActiveProviders(),
       dispatchedLeadIds: [...dispatchedLeadIds],
+      gtmEnabled,
+      gtmContainerId,
+      gtmLoaded,
     }),
     updateConsent,
     dispatch: (eventName, rawParams) => dispatchInternal(eventName, rawParams),

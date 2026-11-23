@@ -9,6 +9,8 @@ export {
   DomainNoticeTemplateDataSchema,
   EMAIL_TEMPLATE_NAMES,
   EmailTemplateError,
+  GtmKillSwitchOwnerNoticeTemplateDataSchema,
+  GtmKillSwitchReasonCategorySchema,
   LifecycleNoticeStateSchema,
   LifecycleNoticeTemplateDataSchema,
   MemberInvitationTemplateDataSchema,

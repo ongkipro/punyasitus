@@ -1,4 +1,8 @@
 import {
+  parseStoredAnalyticsSettings,
+  validateVendorMutualExclusion,
+} from "@punyasitus/core/analytics/gtm";
+import {
   createEmptyDirectAnalyticsConfig,
   parseStoredDirectAnalyticsConfig,
   validateDirectAnalyticsInput,
@@ -289,6 +293,19 @@ export async function updateTenantAnalyticsSettings(
         : existingDirect.tiktokPixelId,
     };
 
+    // Enforce anti-double-count mutual exclusion when GTM is actively enabled for a vendor
+    const existingFull = parseStoredAnalyticsSettings(existingObj);
+    if (existingFull.gtmEnabled && !existingFull.gtmOperatorDisabled) {
+      const conflicts = validateVendorMutualExclusion(nextDirect, existingFull.vendorModes);
+      if (conflicts.length > 0) {
+        throw new AnalyticsSettingsValidationError(
+          conflicts[0]?.message ??
+            "Vendor sedang diatur melalui Google Tag Manager dan tidak boleh aktif langsung secara bersamaan.",
+          conflicts,
+        );
+      }
+    }
+
     // Preserve ALL unrelated keys in `analytics_config_json` (future GTM flags, risk ack metadata, custom flags, etc.)
     const mergedAnalytics: Record<string, unknown> = {
       ...existingObj,
@@ -358,3 +375,6 @@ export async function updateTenantAnalyticsSettings(
     throw new AnalyticsSettingsStorageError();
   }
 }
+
+export * from "./gtm.ts";
+export * from "./migrations.ts";
