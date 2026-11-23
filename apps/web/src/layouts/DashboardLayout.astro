@@ -2,6 +2,11 @@
 import "../styles/admin/globals.css";
 import { buildServiceAccessViewModel } from "@punyasitus/auth/entitlements/index";
 import { AdminShell, type AdminShellProps } from "@/components/admin/AdminShell";
+import DashboardIncidentBanner from "@/components/admin/incident/DashboardIncidentBanner.astro";
+import {
+  loadActiveDashboardIncidentBanner,
+  resolvePlatformDbFromRuntime,
+} from "@/components/admin/incident/loader";
 import {
   ServiceAccessBanner,
   SuspendedRecoveryShell,
@@ -121,6 +126,12 @@ const showServiceAccessBanner =
   resolvedServiceAccess !== undefined &&
   resolvedServiceAccess.status !== "active" &&
   resolvedServiceAccess.status !== "suspended";
+const activeIncidentBanners =
+  !isDevFixtureRoute && !showDevMaintenancePreview && !isSuspendedRecoveryMode
+    ? await loadActiveDashboardIncidentBanner(
+        await resolvePlatformDbFromRuntime(Astro.locals),
+      )
+    : [];
 ---
 
 <!doctype html>
@@ -170,6 +181,9 @@ const showServiceAccessBanner =
         userDisplayName={userDisplayName}
         userRoleLabel={userRoleLabel}
       >
+        {activeIncidentBanners.length > 0 ? (
+          <DashboardIncidentBanner incidents={activeIncidentBanners} />
+        ) : null}
         {showServiceAccessBanner && resolvedServiceAccess ? (
           <ServiceAccessBanner client:load access={resolvedServiceAccess} />
         ) : null}

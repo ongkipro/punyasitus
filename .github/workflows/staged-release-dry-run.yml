@@ -1,0 +1,60 @@
+name: Staged Release Dry-Run
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: staged-release-dry-run-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dry-run:
+    name: Build Status Page & Wrangler Version Upload Dry-Run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      CI: "true"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build standalone static status page (zero Worker bindings)
+        run: |
+          node apps/status/scripts/build.mjs
+          test -f apps/status/dist/index.html
+          test -f apps/status/dist/status.json
+
+      - name: Build platform Worker artifact
+        run: pnpm --filter @punyasitus/web build
+
+      - name: Dry-run Wrangler version upload without deploying
+        working-directory: apps/web
+        run: |
+          OUTDIR="$(mktemp -d)"
+          trap 'rm -rf "$OUTDIR"' EXIT
+          pnpm exec wrangler versions upload \
+            --config dist/server/wrangler.json \
+            --dry-run \
+            --outdir "$OUTDIR" \
+            --message "ci-dry-run:${{ github.sha }}"
