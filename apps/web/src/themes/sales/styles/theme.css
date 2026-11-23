@@ -1,0 +1,151 @@
+/*
+ * PunyaSitus Platform Theme: `sales` — Sales Compro, Personal Branding & Services
+ * Executive Indigo & High-Trust Editorial (0 KiB JS, WCAG AA >= 4.5:1, 320px..2560px)
+ */
+
+[data-ps-platform-theme="sales"] {
+  --sl-primary: var(--ps-brand-primary, #1e40af);
+  --sl-secondary: var(--ps-brand-secondary, #0f766e);
+  --sl-on-primary: var(--ps-brand-on-primary, #ffffff);
+  --sl-surface: var(--ps-surface, #ffffff);
+  --sl-surface-muted: var(--ps-surface-muted, #f5f7fb);
+  --sl-ink: var(--ps-ink, #0f172a);
+  --sl-ink-muted: var(--ps-ink-muted, #475569);
+  --sl-border: var(--ps-border, #dbe3ee);
+  --sl-radius: var(--ps-radius, 8px);
+  background-color: var(--sl-surface);
+  color: var(--sl-ink);
+  overflow-x: clip;
+}
+
+/* Personal Authority & Affiliation Banner */
+[data-ps-platform-theme="sales"] .sl-authority-bar {
+  background-color: var(--sl-surface-muted);
+  border-bottom: 1px solid var(--sl-border);
+  padding-block: 0.625rem;
+}
+
+[data-ps-platform-theme="sales"] .sl-authority-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  font-size: 0.875rem;
+}
+
+[data-ps-platform-theme="sales"] .sl-authority-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 700;
+  color: var(--sl-primary);
+}
+
+[data-ps-platform-theme="sales"] .sl-authority-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 999px;
+  background-color: var(--sl-secondary);
+  flex-shrink: 0;
+}
+
+[data-ps-platform-theme="sales"] .sl-authority-meta {
+  margin: 0;
+  color: var(--sl-ink-muted);
+  font-size: 0.8125rem;
+}
+
+/* Executive Authority Hero */
+[data-ps-platform-theme="sales"] .ps-hero {
+  background-color: var(--sl-surface-muted);
+  border-top: 3px solid var(--sl-primary);
+  padding-block: clamp(2.75rem, 6.5vw, 5rem);
+}
+
+[data-ps-platform-theme="sales"] .ps-hero-heading {
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1.12;
+}
+
+[data-ps-platform-theme="sales"] .ps-eyebrow {
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--sl-border);
+  background-color: var(--sl-surface);
+  color: var(--sl-primary);
+  width: fit-content;
+}
+
+/* Conversion-Focused Step & Service Cards */
+[data-ps-platform-theme="sales"] .ps-card {
+  border: 1px solid var(--sl-border);
+  border-radius: var(--sl-radius);
+  background-color: var(--sl-surface);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+[data-ps-platform-theme="sales"] .ps-badge--brand {
+  background-color: var(--sl-primary);
+  color: var(--sl-on-primary);
+}
+
+/* ProfilePage / Executive Fact-Sheet & Static Credit Table */
+[data-ps-platform-theme="sales"] .ps-prose dl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.5rem;
+  margin: 1rem 0 1.5rem;
+  padding: 1.25rem;
+  border: 1px solid var(--sl-border);
+  border-left: 4px solid var(--sl-primary);
+  border-radius: var(--sl-radius);
+  background-color: var(--sl-surface-muted);
+}
+
+[data-ps-platform-theme="sales"] .ps-prose dt {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--sl-primary);
+}
+
+[data-ps-platform-theme="sales"] .ps-prose dd {
+  margin: 0 0 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--sl-border);
+  font-size: 0.9375rem;
+  color: var(--sl-ink);
+}
+
+[data-ps-platform-theme="sales"] .ps-prose dd:last-of-type {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+[data-ps-platform-theme="sales"] .ps-prose table {
+  border: 1px solid var(--sl-border);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-ps-platform-theme="sales"] .ps-prose thead th {
+  background-color: var(--sl-primary);
+  color: var(--sl-on-primary);
+  border-color: var(--sl-primary);
+}
+
+[data-ps-platform-theme="sales"] .ps-cta-box {
+  background-color: var(--sl-primary);
+  border-radius: calc(var(--sl-radius) + 4px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ps-platform-theme="sales"] * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,72 @@
+---
+import type {
+  BlogLatestSectionConfig,
+  HeroVariant,
+  SectionOfferingItem,
+} from "@punyasitus/core/theme/index";
+import type { PageAssemblyMode } from "../../../core/section-registry.ts";
+import DefaultSectionRenderer from "../../default/sections/SectionRenderer.astro";
+
+export interface FactSheetRow {
+  readonly label: string;
+  readonly value: string;
+}
+
+export interface Props {
+  readonly sections: unknown;
+  readonly themeId?: string;
+  readonly routePath?: string;
+  readonly pageSlug?: string | null;
+  readonly isHomepage?: boolean;
+  readonly mode?: PageAssemblyMode;
+  readonly businessCategory?: string | null;
+  readonly heroVariant?: HeroVariant;
+  readonly primaryOrigin?: string;
+  readonly fallbackOfferings?: readonly SectionOfferingItem[];
+  readonly fallbackPosts?: BlogLatestSectionConfig["posts"];
+  readonly fallbackBusiness?: {
+    readonly address?: string | null;
+    readonly weekdayHours?: string | null;
+    readonly holidayHours?: string | null;
+    readonly phone?: string | null;
+    readonly whatsappE164?: string | null;
+    readonly email?: string | null;
+    readonly mapsUrl?: string | null;
+  };
+  readonly aiFactSheetHeading?: string;
+  readonly aiFactSheetRows?: readonly FactSheetRow[];
+}
+
+const { aiFactSheetHeading, aiFactSheetRows = [], ...restProps } = Astro.props;
+---
+
+<div class="rs-sections-stack" data-testid="resto-sections">
+  <DefaultSectionRenderer {...restProps} themeId={restProps.themeId ?? "resto"} />
+
+  {aiFactSheetRows.length > 0 && (
+    <section
+      class="ps-section"
+      aria-label={aiFactSheetHeading ?? "Informasi Outlet & Jam Operasional"}
+      data-testid="ai-fact-sheet-dl"
+    >
+      <div class="ps-container">
+        <div class="ps-section-header">
+          <p class="ps-eyebrow">Fakta Terstruktur</p>
+          <h2 class="ps-section-title">
+            {aiFactSheetHeading ?? "Informasi Outlet & Jam Operasional"}
+          </h2>
+        </div>
+        <div class="ps-prose">
+          <dl>
+            {aiFactSheetRows.map((row) => (
+              <>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </>
+            ))}
+          </dl>
+        </div>
+      </div>
+    </section>
+  )}
+</div>

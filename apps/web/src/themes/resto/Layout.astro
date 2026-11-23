@@ -1,0 +1,60 @@
+---
+import "./styles/theme.css";
+import SEOHead from "../../components/SEOHead.astro";
+import type { PublicThemeRouteShellContract } from "../../core/theme-registry.ts";
+import DefaultLayout from "../default/Layout.astro";
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly pageTitle?: string;
+  readonly pageDescription?: string;
+}
+
+const { contract, pageTitle, pageDescription } = Astro.props;
+const isFocused = contract.shell.layoutMode === "focused";
+---
+
+<DefaultLayout
+  shell={contract.shell}
+  pageTitle={pageTitle}
+  pageDescription={pageDescription}
+  currentPath={contract.pathname}
+  privacyPolicyUrl={contract.consent.privacyPolicyUrl}
+  showConsent={contract.consent.required}
+  vendorScripts={contract.consent.vendorScripts}
+  mapEmbed={contract.consent.mapEmbed}
+  initialCookieHeader={contract.consent.initialCookieHeader}
+  headerCtaLabel={contract.headerCtaLabel}
+  headerCtaHref={contract.headerCtaHref}
+>
+  <SEOHead
+    slot="head"
+    metadata={contract.seoMetadata}
+    jsonLd={contract.schemaGraph ?? undefined}
+    omitTitle={true}
+    omitDescription={true}
+  />
+
+  <div
+    class="rs-theme-root"
+    data-ps-platform-theme="resto"
+    data-ps-route-kind={contract.routeKind}
+    data-testid="platform-theme-resto"
+  >
+    {!isFocused && (
+      <div class="rs-hospitality-bar" data-testid="resto-hospitality-bar">
+        <div class="ps-container rs-hospitality-inner">
+          <span class="rs-hospitality-name">{contract.shell.business.name}</span>
+          <p class="rs-hospitality-hours">
+            {contract.shell.business.weekdayHours ?? "Buka setiap hari sesuai jadwal cabang"}
+            {contract.shell.business.city ? ` · ${contract.shell.business.city}` : ""}
+          </p>
+        </div>
+      </div>
+    )}
+
+    <slot />
+  </div>
+
+  <slot name="floating" slot="floating" />
+</DefaultLayout>

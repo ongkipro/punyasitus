@@ -1,0 +1,130 @@
+/*
+ * PunyaSitus Platform Theme: `dealer` — Automotive & Vehicle Showroom
+ * Precision Graphite & Crimson Motorsport Spec Sheet (0 KiB JS, WCAG AA >= 4.5:1)
+ */
+
+[data-ps-platform-theme="dealer"] {
+  --dl-primary: var(--ps-brand-primary, #1e293b);
+  --dl-secondary: var(--ps-brand-secondary, #b91c1c);
+  --dl-on-primary: var(--ps-brand-on-primary, #ffffff);
+  --dl-surface: var(--ps-surface, #ffffff);
+  --dl-surface-muted: var(--ps-surface-muted, #f4f6f8);
+  --dl-ink: var(--ps-ink, #0f172a);
+  --dl-ink-muted: var(--ps-ink-muted, #475569);
+  --dl-border: var(--ps-border, #d6dce4);
+  --dl-radius: var(--ps-radius, 4px);
+  background-color: var(--dl-surface);
+  color: var(--dl-ink);
+  overflow-x: clip;
+}
+
+/* Showroom OTR & Unit Verification Bar */
+[data-ps-platform-theme="dealer"] .dl-showroom-bar {
+  background-color: var(--dl-primary);
+  color: var(--dl-on-primary);
+  border-bottom: 3px solid var(--dl-secondary);
+  padding-block: 0.5625rem;
+}
+
+[data-ps-platform-theme="dealer"] .dl-showroom-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1.25rem;
+  font-size: 0.8125rem;
+}
+
+[data-ps-platform-theme="dealer"] .dl-showroom-title {
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+}
+
+[data-ps-platform-theme="dealer"] .dl-showroom-meta {
+  margin: 0;
+  opacity: 0.92;
+}
+
+/* Precision Spec-Sheet Cards & Tabular OTR Pricing */
+[data-ps-platform-theme="dealer"] .ps-hero {
+  background-color: var(--dl-surface-muted);
+  border-bottom: 2px solid var(--dl-primary);
+}
+
+[data-ps-platform-theme="dealer"] .ps-eyebrow {
+  color: var(--dl-secondary);
+  letter-spacing: 0.08em;
+}
+
+[data-ps-platform-theme="dealer"] .ps-card {
+  border: 1px solid var(--dl-border);
+  border-top: 3px solid var(--dl-primary);
+  border-radius: var(--dl-radius);
+  background-color: var(--dl-surface);
+}
+
+[data-ps-platform-theme="dealer"] .ps-offering-price {
+  color: var(--dl-secondary);
+  font-size: 1.1875rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Static Server-Rendered Credit Estimate Table & Spec List */
+[data-ps-platform-theme="dealer"] .ps-prose table {
+  border: 1px solid var(--dl-border);
+  background-color: var(--dl-surface);
+  font-variant-numeric: tabular-nums;
+}
+
+[data-ps-platform-theme="dealer"] .ps-prose thead th {
+  background-color: var(--dl-primary);
+  color: var(--dl-on-primary);
+  border-color: var(--dl-primary);
+}
+
+[data-ps-platform-theme="dealer"] .ps-prose dl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  margin: 1rem 0 1.5rem;
+  border: 1px solid var(--dl-border);
+  border-left: 3px solid var(--dl-secondary);
+  border-radius: var(--dl-radius);
+}
+
+@media (min-width: 640px) {
+  [data-ps-platform-theme="dealer"] .ps-prose dl {
+    grid-template-columns: minmax(11rem, 35%) minmax(0, 1fr);
+  }
+}
+
+[data-ps-platform-theme="dealer"] .ps-prose dt {
+  padding: 0.6875rem 0.875rem;
+  background-color: var(--dl-surface-muted);
+  border-bottom: 1px solid var(--dl-border);
+  font-weight: 700;
+  font-size: 0.875rem;
+}
+
+[data-ps-platform-theme="dealer"] .ps-prose dd {
+  margin: 0;
+  padding: 0.6875rem 0.875rem;
+  border-bottom: 1px solid var(--dl-border);
+  font-size: 0.9375rem;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-ps-platform-theme="dealer"] .ps-cta-box {
+  background-color: var(--dl-primary);
+  border-left: 4px solid var(--dl-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ps-platform-theme="dealer"] * {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
