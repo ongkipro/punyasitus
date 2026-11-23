@@ -4,6 +4,7 @@ import {
   assertTenantPaidForCustomDomain,
   assertValidCustomHostname,
   doesCnameMatchTarget,
+  evaluateApexCapability,
   normalizeConnectMode,
   resolveSslMethodForMode,
   type DomainSslMethod,
@@ -11,6 +12,7 @@ import {
 import type { CloudflareSendEmailBinding } from "@punyasitus/core/email/index";
 import {
   claimTenantCustomHostname,
+  finalizeDomainRemoval,
   listTenantDomains,
   syncDomainProviderState,
 } from "@punyasitus/db/domains/index";
@@ -144,6 +146,40 @@ export async function handleTenantDomainsRequest(
         );
       }
 
+      // 3b. Evaluate apex capability before claiming or contacting Cloudflare (PLAN §3.1, TASK-039)
+      const providerSupportsApex =
+        options.apexCapabilitySupported !== undefined
+          ? options.apexCapabilitySupported
+          : runtimeEnv.CF_APEX_CAPABILITY_SUPPORTED?.trim().toLowerCase() !== "false";
+      const apexEval = evaluateApexCapability({
+        hostname: validatedHost.hostname,
+        isLikelyApex: validatedHost.isLikelyApex,
+        connectMode,
+        confirmApexFlattening: parsedBody.body.confirmApexFlattening as boolean | undefined,
+        providerSupportsApex,
+      });
+      if (!apexEval.supported) {
+        return domainsErrorResponse(
+          422,
+          "VALIDATION_ERROR",
+          apexEval.messageId ?? "Domain apex tidak didukung pada konfigurasi penyedia saat ini.",
+          requestId,
+          {
+            reasonCode: apexEval.reasonCode,
+            fields: [
+              {
+                field: "hostname",
+                code: apexEval.reasonCode,
+                message: apexEval.messageId ?? "Unsupported apex capability",
+              },
+            ],
+            details: {
+              suggestedWwwHostname: apexEval.suggestedWwwHostname,
+            },
+          },
+        );
+      }
+
       const idempotencyKey = request.headers.get("idempotency-key")?.trim() || null;
 
       // 4. Persist local `pending` claim first (prevents duplicate cross-tenant races & enables retry reconciliation)
@@ -188,6 +224,25 @@ export async function handleTenantDomainsRequest(
               headers: { "Retry-After": "15" },
             },
           );
+        }
+        // Non-retryable provider rejection (provider never created a custom hostname):
+        // release the brand-new local pending claim so it does not strand a 2-hostname slot!
+        if (!claim.alreadyExisted && !claim.record.cfCustomHostnameId) {
+          try {
+            await finalizeDomainRemoval(auth.ctx.platformDb, {
+              tenantId: auth.ctx.member.tenantId,
+              hostname: claim.record.hostname,
+              cfCustomHostnameId: null,
+              actorUserId: auth.ctx.member.userId,
+              actorRole: auth.ctx.member.role,
+              requestId,
+              action: "domain.connect.rolled_back",
+              reason: "Provider rejected custom hostname creation with non-retryable error",
+              nowMs: auth.ctx.nowMs,
+            });
+          } catch {
+            // Preserve the original provider error if rollback cleanup fails
+          }
         }
         throw err;
       }
@@ -249,6 +304,7 @@ export function buildDomainsRuntimeEnv(): TenantDomainsRuntimeEnv {
     readonly CF_SAAS_ZONE_ID?: string;
     readonly CF_SAAS_API_TOKEN?: string;
     readonly CF_API_BASE_URL?: string;
+    readonly CF_APEX_CAPABILITY_SUPPORTED?: string;
     readonly DOMAIN_MARKER_SECRET?: string;
   };
   return {
@@ -263,6 +319,7 @@ export function buildDomainsRuntimeEnv(): TenantDomainsRuntimeEnv {
     CF_SAAS_ZONE_ID: runtimeEnv.CF_SAAS_ZONE_ID,
     CF_SAAS_API_TOKEN: runtimeEnv.CF_SAAS_API_TOKEN,
     CF_API_BASE_URL: runtimeEnv.CF_API_BASE_URL,
+    CF_APEX_CAPABILITY_SUPPORTED: runtimeEnv.CF_APEX_CAPABILITY_SUPPORTED,
     DOMAIN_MARKER_SECRET: runtimeEnv.DOMAIN_MARKER_SECRET,
   };
 }

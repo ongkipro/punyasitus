@@ -439,11 +439,13 @@ export async function claimTenantCustomHostname(
   }
 
   // 2. Enforce REQ-065 per-tenant domain set cap (max 2 custom hostnames, same domain pair)
+  // Exclude `deleting` rows consistently with the atomic INSERT guard below.
   const listed = await listTenantDomains(platformDb, input.tenantId);
   const existingCustomHosts = listed.items
-    .filter((item) => item.kind === "custom")
+    .filter((item) => item.kind === "custom" && item.status !== "deleting")
     .map((item) => item.hostname);
   assertTenantDomainSetCompatibility(existingCustomHosts, hostname);
+  const counterpartHost = hostname.startsWith("www.") ? hostname.slice(4) : `www.${hostname}`;
 
   // 3. Allocate next sequential positive `domain_id` for this tenant (>= 2 when subdomain exists)
   const maxIdRow = await platformDb
@@ -476,7 +478,7 @@ export async function claimTenantCustomHostname(
   });
 
   try {
-    // Atomic max-2 custom hostname cap + race-safe sequential domain_id allocation inside ONE D1 batch
+    // Atomic max-2 custom hostname cap + same-tenant counterpart compatibility + race-safe sequential domain_id allocation inside ONE D1 batch
     const [insertHostRes] = await platformDb.batch([
       platformDb
         .prepare(
@@ -489,7 +491,15 @@ export async function claimTenantCustomHostname(
            WHERE (
              SELECT COUNT(*) FROM tenant_hosts
              WHERE tenant_id = ? AND kind = 'custom' AND status != 'deleting'
-           ) < ?`,
+           ) < ?
+             AND NOT EXISTS (
+               SELECT 1 FROM tenant_hosts
+               WHERE tenant_id = ?
+                 AND kind = 'custom'
+                 AND status != 'deleting'
+                 AND host != ?
+                 AND host != ?
+             )`,
         )
         .bind(
           hostname,
@@ -498,6 +508,9 @@ export async function claimTenantCustomHostname(
           nowMs,
           input.tenantId,
           MAX_CUSTOM_HOSTNAMES_PER_TENANT,
+          input.tenantId,
+          hostname,
+          counterpartHost,
         ),
       platformDb
         .prepare(
@@ -573,6 +586,11 @@ export async function claimTenantCustomHostname(
           return { record: sameTenant, alreadyExisted: true };
         }
       }
+      const freshList = await listTenantDomains(platformDb, input.tenantId);
+      const activeCustomHosts = freshList.items
+        .filter((item) => item.kind === "custom" && item.status !== "deleting")
+        .map((item) => item.hostname);
+      assertTenantDomainSetCompatibility(activeCustomHosts, hostname);
       throw new DomainConflictError(
         "DOMAIN_LIMIT_REACHED",
         `Maksimal ${MAX_CUSTOM_HOSTNAMES_PER_TENANT} custom hostname per website (misalnya domain utama dan versi www).`,

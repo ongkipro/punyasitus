@@ -56,6 +56,46 @@ const IPV4_LITERAL_RE = /^\d{1,3}(?:\.\d{1,3}){3}$/;
 const NUMERIC_TLD_RE = /^\d+$/;
 const DNS_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
+/**
+ * Explicit multi-label public suffixes for Indonesian & common regional apex domains
+ * (e.g. `bisnis.co.id`, `toko.web.id`, `sekolah.sch.id`) used for syntactic apex detection
+ * and REQ-065 counterpart suggestion. Never used to claim DNS authority (PLAN §3.1).
+ */
+export const MULTI_LABEL_PUBLIC_SUFFIXES: ReadonlySet<string> = new Set([
+  "co.id",
+  "web.id",
+  "or.id",
+  "ac.id",
+  "sch.id",
+  "go.id",
+  "my.id",
+  "biz.id",
+  "desa.id",
+  "ponpes.id",
+  "co.uk",
+  "com.sg",
+  "com.my",
+  "com.au",
+]);
+
+/**
+ * Syntactically determines whether a hostname is a root/apex domain (e.g. `toko.id`,
+ * `bisnis.co.id`, `sekolah.sch.id`) as opposed to `www.*` or a deeper subdomain.
+ */
+export function isApexDomainHostname(rawHostname: string): boolean {
+  const hostname = rawHostname.trim().toLowerCase().replace(/\.+$/, "");
+  if (!hostname) return false;
+  const labels = hostname.split(".");
+  if (labels.length < 2) return false;
+  if (labels[0] === "www") return false;
+  if (labels.length === 2) return true;
+  if (labels.length === 3) {
+    const lastTwo = `${labels[1]}.${labels[2]}`;
+    return MULTI_LABEL_PUBLIC_SUFFIXES.has(lastTwo);
+  }
+  return false;
+}
+
 export type HostnameValidationErrorCode =
   | "HOSTNAME_EMPTY"
   | "HOSTNAME_MALFORMED"
@@ -418,8 +458,8 @@ export function validateCustomHostname(
   const isWww = labels[0] === "www" && labels.length >= 3;
   const apexCounterpart = isWww ? labels.slice(1).join(".") : null;
   const suggestedWwwCounterpart = !isWww ? `www.${hostname}` : null;
-  // Syntactic indicator only (never claims DNS authority per PLAN §3.1)
-  const isLikelyApex = !isWww && labels.length === 2;
+  // Syntactic indicator only including Indonesian multi-label suffixes (never claims DNS authority per PLAN §3.1)
+  const isLikelyApex = isApexDomainHostname(hostname);
 
   return {
     ok: true,
@@ -496,4 +536,203 @@ export function assertTenantPaidForCustomDomain(tenantStatus: string): void {
       "Website masa percobaan (trial) tidak dapat menghubungkan custom domain. Aktifkan paket berbayar terlebih dahulu.",
     );
   }
+}
+
+/**
+ * Checks whether any observed authoritative NS record belongs to Cloudflare
+ * (`*.ns.cloudflare.com`), used solely as a non-authorizing setup hint (PLAN §3.2).
+ */
+export function isCloudflareNameserver(nameservers?: readonly string[] | null): boolean {
+  if (!nameservers || nameservers.length === 0) return false;
+  return nameservers.some((ns) => {
+    const cleaned = ns.trim().toLowerCase().replace(/\.+$/, "");
+    return cleaned.endsWith(".ns.cloudflare.com") || cleaned === "ns.cloudflare.com";
+  });
+}
+
+export interface ApexCapabilityEvaluationInput {
+  readonly hostname: string;
+  readonly isLikelyApex?: boolean;
+  readonly connectMode?: DomainConnectMode;
+  readonly confirmApexFlattening?: boolean;
+  readonly providerSupportsApex?: boolean;
+  readonly nameservers?: readonly string[];
+}
+
+export interface ApexCapabilityEvaluation {
+  readonly isApex: boolean;
+  readonly supported: boolean;
+  readonly reasonCode:
+    | "NOT_APEX"
+    | "APEX_SUPPORTED"
+    | "APEX_UNSUPPORTED_CAPABILITY"
+    | "APEX_FLATTENING_UNCONFIRMED";
+  readonly messageId: string | null;
+  readonly suggestedWwwHostname: string | null;
+  readonly cloudflareNameserverDetected: boolean;
+}
+
+/**
+ * Evaluates apex/root domain setup capability before creating a custom hostname (PLAN §3.1).
+ * Never tells users to create a standards-invalid apex CNAME, guess IP addresses, or change nameservers.
+ */
+export function evaluateApexCapability(
+  input: ApexCapabilityEvaluationInput,
+): ApexCapabilityEvaluation {
+  const normalized = input.hostname.trim().toLowerCase().replace(/\.$/, "");
+  const isApex = input.isLikelyApex ?? isApexDomainHostname(normalized);
+  const cloudflareNameserverDetected = isCloudflareNameserver(input.nameservers);
+  if (!isApex) {
+    return {
+      isApex: false,
+      supported: true,
+      reasonCode: "NOT_APEX",
+      messageId: null,
+      suggestedWwwHostname: null,
+      cloudflareNameserverDetected,
+    };
+  }
+
+  const suggestedWwwHostname = normalized.startsWith("www.") ? null : `www.${normalized}`;
+
+  if (input.providerSupportsApex === false) {
+    return {
+      isApex: true,
+      supported: false,
+      reasonCode: "APEX_UNSUPPORTED_CAPABILITY",
+      messageId:
+        `Penyedia/paket domain saat ini belum mendukung proxying root/apex domain (${normalized}) tanpa CNAME flattening/ALIAS. Gunakan ${suggestedWwwHostname ?? normalized} sebagai domain utama, lalu atur pengalihan apex-ke-www di registrar Anda.`,
+      suggestedWwwHostname,
+      cloudflareNameserverDetected,
+    };
+  }
+
+  const requiresExplicitConfirm =
+    input.confirmApexFlattening === false ||
+    (input.connectMode === "new_domain" && input.confirmApexFlattening !== true);
+
+  if (requiresExplicitConfirm) {
+    return {
+      isApex: true,
+      supported: false,
+      reasonCode: "APEX_FLATTENING_UNCONFIRMED",
+      messageId:
+        `Domain root/apex (${normalized}) hanya dapat dihubungkan jika penyedia DNS Anda mendukung CNAME flattening, ALIAS, atau ANAME. Konfirmasi dukungan DNS Anda atau gunakan ${suggestedWwwHostname ?? normalized} sebagai domain utama.`,
+      suggestedWwwHostname,
+      cloudflareNameserverDetected,
+    };
+  }
+
+  return {
+    isApex: true,
+    supported: true,
+    reasonCode: "APEX_SUPPORTED",
+    messageId:
+      `Pastikan penyedia DNS Anda mendukung CNAME flattening/ALIAS/ANAME untuk ${normalized}; jika tidak, gunakan ${suggestedWwwHostname ?? normalized} sebagai domain utama.`,
+    suggestedWwwHostname,
+    cloudflareNameserverDetected,
+  };
+}
+
+export interface ConnectSituationInput {
+  readonly hasLiveSite: boolean;
+  readonly usesCloudflareNameservers: boolean;
+}
+
+export function suggestConnectModeFromSituation(input: ConnectSituationInput): DomainConnectMode {
+  if (input.usesCloudflareNameservers) {
+    return "cloudflare_o2o";
+  }
+  if (input.hasLiveSite) {
+    return "zero_downtime_migration";
+  }
+  return "new_domain";
+}
+
+export interface TenantDomainCapabilityInput {
+  readonly id: number;
+  readonly hostname: string;
+  readonly kind: "subdomain" | "custom";
+  readonly status: string;
+  readonly sslStatus: string;
+  readonly isPrimary: boolean;
+  readonly isLocked: boolean;
+}
+
+export interface PerDomainActionEligibility {
+  readonly id: number;
+  readonly hostname: string;
+  readonly canRecheck: boolean;
+  readonly canMakePrimary: boolean;
+  readonly canOwnerRemove: boolean;
+  readonly lockedAfterActivation: boolean;
+}
+
+export interface TenantDomainSetCapabilities {
+  readonly customCount: number;
+  readonly maxCustomHostnames: typeof MAX_CUSTOM_HOSTNAMES_PER_TENANT;
+  readonly customDomainLocked: boolean;
+  readonly canAddMoreCustomHostnames: boolean;
+  readonly suggestedCounterpartHostname: string | null;
+  readonly domains: readonly PerDomainActionEligibility[];
+}
+
+/**
+ * Evaluates REQ-065 2-hostname counterpart rules, post-activation lock,
+ * and per-domain eligibility (counterpart add & primary switch remain allowed while locked!).
+ */
+export function evaluateTenantDomainSetCapabilities(
+  items: readonly TenantDomainCapabilityInput[],
+): TenantDomainSetCapabilities {
+  const customItems = items.filter((item) => item.kind === "custom");
+  const customCount = customItems.length;
+  const customDomainLocked = customItems.some(
+    (item) => item.isLocked || item.status === "active",
+  );
+  const canAddMoreCustomHostnames = customCount < MAX_CUSTOM_HOSTNAMES_PER_TENANT;
+
+  let suggestedCounterpartHostname: string | null = null;
+  if (customCount === 1) {
+    const existing = customItems[0]!.hostname.trim().toLowerCase().replace(/\.$/, "");
+    const labels = existing.split(".");
+    if (labels[0] === "www" && labels.length >= 3) {
+      const stripped = labels.slice(1).join(".");
+      if (isApexDomainHostname(stripped)) {
+        suggestedCounterpartHostname = stripped;
+      }
+    } else if (isApexDomainHostname(existing)) {
+      suggestedCounterpartHostname = `www.${existing}`;
+    }
+  }
+
+  const domains: PerDomainActionEligibility[] = items.map((item) => {
+    const isCustom = item.kind === "custom";
+    const isDeleting = item.status === "disabled" || item.status === "deleting";
+    const lockedAfterActivation = isCustom && (item.isLocked || item.status === "active");
+    const canRecheck = isCustom && !isDeleting;
+    const canMakePrimary =
+      !item.isPrimary &&
+      item.status === "active" &&
+      (item.kind === "subdomain" || item.sslStatus === "active");
+    // Owner may remove ONLY before activation; active domains are locked (REQ-065)
+    const canOwnerRemove = isCustom && !lockedAfterActivation && !isDeleting;
+
+    return {
+      id: item.id,
+      hostname: item.hostname,
+      canRecheck,
+      canMakePrimary,
+      canOwnerRemove,
+      lockedAfterActivation,
+    };
+  });
+
+  return {
+    customCount,
+    maxCustomHostnames: MAX_CUSTOM_HOSTNAMES_PER_TENANT,
+    customDomainLocked,
+    canAddMoreCustomHostnames,
+    suggestedCounterpartHostname,
+    domains,
+  };
 }
