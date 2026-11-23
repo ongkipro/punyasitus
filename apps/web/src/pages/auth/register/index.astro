@@ -12,6 +12,10 @@ function sanitizeNextPath(raw: string | null): string {
   if (
     trimmed === "/account" ||
     trimmed.startsWith("/account/") ||
+    trimmed === "/auth/onboarding" ||
+    trimmed.startsWith("/auth/onboarding?") ||
+    trimmed === "/auth/verify-email" ||
+    trimmed.startsWith("/auth/verify-email?") ||
     trimmed.startsWith("/dashboard/") ||
     trimmed.startsWith("/agency") ||
     trimmed.startsWith("/affiliate")
