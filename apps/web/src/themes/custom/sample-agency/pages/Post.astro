@@ -1,0 +1,65 @@
+---
+import { sanitizeRichTextHtml } from "@punyasitus/core/content/index";
+import { formatIndonesianPublishedDate } from "../../../../core/section-registry.ts";
+import type { SampleAgencyBlogPostRouteData } from "./types.ts";
+
+export interface Props {
+  readonly data: SampleAgencyBlogPostRouteData;
+}
+
+const { data } = Astro.props;
+const { post } = data;
+const safeBodyHtml = sanitizeRichTextHtml(post.bodyHtml);
+const formattedDate = formatIndonesianPublishedDate(post.publishedAt);
+---
+
+<article data-testid="route-blog-post">
+  <nav class="sa-breadcrumb-bar" aria-label="Breadcrumb">
+    <div class="ps-container">
+      <ol class="sa-breadcrumb-list">
+        <li><a href="/" class="sa-breadcrumb-link">Beranda</a></li>
+        <li aria-hidden="true" class="sa-breadcrumb-sep">/</li>
+        <li><a href="/blog" class="sa-breadcrumb-link">Blog</a></li>
+        <li aria-hidden="true" class="sa-breadcrumb-sep">/</li>
+        <li aria-current="page">{post.title}</li>
+      </ol>
+    </div>
+  </nav>
+
+  <header class="sa-route-hero">
+    <div class="ps-container">
+      {post.categoryName && <p class="sa-eyebrow">{post.categoryName}</p>}
+      <h1 class="sa-route-title">{post.title}</h1>
+      <div class="sa-card-meta">
+        {post.authorName && (
+          <span>
+            Ditulis oleh <strong>{post.authorName}</strong>
+            {post.authorRoleTitle ? ` — ${post.authorRoleTitle}` : ""}
+          </span>
+        )}
+        {formattedDate && <span>{formattedDate}</span>}
+        {post.readingTimeMinutes && <span>{post.readingTimeMinutes} menit baca</span>}
+      </div>
+    </div>
+  </header>
+
+  <section class="sa-band">
+    <div class="ps-container">
+      <div class="sa-prose" data-testid="blog-post-body" set:html={safeBodyHtml} />
+
+      {post.tags && post.tags.length > 0 && (
+        <div class="sa-actions" aria-label="Topik artikel">
+          {post.tags.map((tag) => (
+            <span class="sa-badge">#{tag}</span>
+          ))}
+        </div>
+      )}
+
+      <div class="sa-pagination">
+        <a href="/blog" class="sa-btn sa-btn-secondary">
+          Kembali ke Daftar Artikel
+        </a>
+      </div>
+    </div>
+  </section>
+</article>

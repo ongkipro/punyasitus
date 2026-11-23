@@ -1,0 +1,33 @@
+---
+import type { SampleAgencyNotFoundRouteData } from "./types.ts";
+
+export interface Props {
+  readonly data: SampleAgencyNotFoundRouteData;
+}
+
+const { data } = Astro.props;
+---
+
+<section class="sa-band" data-testid="route-not-found" role="region" aria-labelledby="sa-404-heading">
+  <div class="ps-container">
+    <div class="sa-empty-card">
+      <p class="sa-eyebrow">Status 404</p>
+      <h1 id="sa-404-heading" class="sa-route-title">Halaman Tidak Ditemukan</h1>
+      <p class="sa-route-lead">
+        Tautan yang Anda buka tidak tersedia atau sudah dipindahkan. Anda dapat kembali ke beranda
+        untuk melihat informasi terbaru.
+      </p>
+      {data.requestedPath && (
+        <p class="sa-card-meta">Alamat diminta: {data.requestedPath}</p>
+      )}
+      <div class="sa-actions">
+        <a href="/" class="sa-btn sa-btn-primary" data-testid="not-found-home-link">
+          Kembali ke Beranda
+        </a>
+        <a href="/blog" class="sa-btn sa-btn-secondary">
+          Lihat Artikel
+        </a>
+      </div>
+    </div>
+  </div>
+</section>

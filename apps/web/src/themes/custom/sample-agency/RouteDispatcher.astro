@@ -1,0 +1,48 @@
+---
+import type { PublicThemeRouteShellContract } from "../../../core/theme-registry.ts";
+import SampleAgencyLayout from "./Layout.astro";
+import Home from "./pages/Home.astro";
+import NotFound from "./pages/NotFound.astro";
+import OfferingDetail from "./pages/OfferingDetail.astro";
+import OfferingList from "./pages/OfferingList.astro";
+import Page from "./pages/Page.astro";
+import Post from "./pages/Post.astro";
+import PostList from "./pages/PostList.astro";
+import type { SampleAgencyRouteData } from "./pages/types.ts";
+
+/**
+ * Sample Agency Public Route Dispatcher (`apps/web/src/themes/custom/sample-agency/RouteDispatcher.astro`).
+ *
+ * Renders EVERY public route (`home`, `page`, `blog_index`, `blog_post`,
+ * `catalog_index`, `catalog_detail`, `not_found`) strictly wrapped inside
+ * `SampleAgencyLayout` (which delegates `<head>` SEO/Schema, token security,
+ * and `<Consent>` to the shared platform shell).
+ *
+ * If `contract.resolution.fallbackUsed === true`, `SampleAgencyLayout` suppresses
+ * custom styling and renders the verified default platform shell cleanly.
+ */
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly routeData: SampleAgencyRouteData;
+  readonly pageTitle?: string;
+  readonly pageDescription?: string;
+}
+
+const { contract, routeData, pageTitle, pageDescription } = Astro.props;
+---
+
+<SampleAgencyLayout
+  contract={contract}
+  pageTitle={pageTitle}
+  pageDescription={pageDescription}
+>
+  {routeData.kind === "home" && <Home contract={contract} data={routeData} />}
+  {routeData.kind === "page" && <Page contract={contract} data={routeData} />}
+  {routeData.kind === "blog_index" && <PostList data={routeData} />}
+  {routeData.kind === "blog_post" && <Post data={routeData} />}
+  {routeData.kind === "catalog_index" && <OfferingList contract={contract} data={routeData} />}
+  {routeData.kind === "catalog_detail" && <OfferingDetail contract={contract} data={routeData} />}
+  {routeData.kind === "not_found" && <NotFound data={routeData} />}
+  <slot name="floating" slot="floating" />
+</SampleAgencyLayout>

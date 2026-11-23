@@ -1,0 +1,125 @@
+---
+import { sanitizeRichTextHtml } from "@punyasitus/core/content/index";
+import type { OfferingType } from "@punyasitus/core/schemas/common";
+import {
+  formatSectionOfferingPriceText,
+  getOfferingTypeLabelId,
+  getVehicleUnitStatusLabelId,
+  resolveSectionOfferingCta,
+} from "../../../../core/section-registry.ts";
+import type { PublicThemeRouteShellContract } from "../../../../core/theme-registry.ts";
+import type { SampleAgencyCatalogDetailRouteData } from "./types.ts";
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly data: SampleAgencyCatalogDetailRouteData;
+}
+
+const { contract, data } = Astro.props;
+const { item } = data;
+
+const OFFERING_INDEX_PATH: Readonly<Record<OfferingType, string>> = {
+  service: "/layanan",
+  product: "/produk",
+  tour: "/tour",
+  vehicle: "/kendaraan",
+};
+
+const typeLabel = getOfferingTypeLabelId(item.offeringType);
+const indexPath = OFFERING_INDEX_PATH[item.offeringType];
+const priceText = formatSectionOfferingPriceText(item);
+const unitStatusLabel = getVehicleUnitStatusLabelId(item.unitStatus);
+const primaryOrigin =
+  data.primaryOrigin ?? contract.seoMetadata.verifiedOrigin ?? "https://situsku.click";
+const cta = resolveSectionOfferingCta(item, {
+  fallbackWhatsappPhone: contract.shell.business.whatsappE164,
+  primaryOrigin,
+});
+const safeDescriptionHtml = item.descriptionHtml
+  ? sanitizeRichTextHtml(item.descriptionHtml)
+  : null;
+---
+
+<article data-testid="route-catalog-detail" data-offering-type={item.offeringType}>
+  <nav class="sa-breadcrumb-bar" aria-label="Breadcrumb">
+    <div class="ps-container">
+      <ol class="sa-breadcrumb-list">
+        <li><a href="/" class="sa-breadcrumb-link">Beranda</a></li>
+        <li aria-hidden="true" class="sa-breadcrumb-sep">/</li>
+        <li><a href={indexPath} class="sa-breadcrumb-link">{typeLabel}</a></li>
+        <li aria-hidden="true" class="sa-breadcrumb-sep">/</li>
+        <li aria-current="page">{item.title}</li>
+      </ol>
+    </div>
+  </nav>
+
+  <header class="sa-route-hero">
+    <div class="ps-container">
+      <p class="sa-eyebrow">{item.categoryName ?? typeLabel}</p>
+      <h1 class="sa-route-title">{item.title}</h1>
+      {item.summary && <p class="sa-route-lead">{item.summary}</p>}
+    </div>
+  </header>
+
+  <section class="sa-band">
+    <div class="ps-container sa-detail-grid">
+      <div>
+        {safeDescriptionHtml ? (
+          <div class="sa-prose" data-testid="offering-detail-body" set:html={safeDescriptionHtml} />
+        ) : (
+          item.summary && (
+            <div class="sa-prose">
+              <p>{item.summary}</p>
+            </div>
+          )
+        )}
+
+        {item.highlights && item.highlights.length > 0 && (
+          <div>
+            <h2>Rincian &amp; Cakupan</h2>
+            <ul>
+              {item.highlights.map((point) => (
+                <li>{point}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+
+      <aside class="sa-summary-box" aria-label="Ringkasan penawaran">
+        <div class="sa-card-meta">
+          <span class="sa-badge">{typeLabel}</span>
+          {unitStatusLabel && <span class="sa-badge">{unitStatusLabel}</span>}
+        </div>
+        <p class="sa-price" data-testid="offering-detail-price">{priceText}</p>
+        {item.metaLine && <p class="sa-card-summary">{item.metaLine}</p>}
+
+        {item.facts && item.facts.length > 0 && (
+          <ul class="sa-facts-list">
+            {item.facts.map((fact) => (
+              <li class="sa-facts-item">
+                <span>{fact.label}</span>
+                <strong>{fact.value}</strong>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div class="sa-actions">
+          <a
+            href={cta.href}
+            class={cta.isWhatsApp ? "sa-btn sa-btn-whatsapp" : "sa-btn sa-btn-primary"}
+            target={cta.isExternal ? "_blank" : undefined}
+            rel={cta.isExternal ? "noopener noreferrer" : undefined}
+            data-testid="offering-detail-cta"
+          >
+            {cta.label}
+          </a>
+          <a href={indexPath} class="sa-btn sa-btn-secondary">
+            Semua {typeLabel}
+          </a>
+        </div>
+      </aside>
+    </div>
+  </section>
+</article>
