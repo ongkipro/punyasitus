@@ -38,6 +38,7 @@ import {
 import { createUniqueSectionId } from "@/components/admin/editor/section-id";
 import type { CmsAdminPermissions } from "@/components/admin/editor/cms-server-context";
 import { MediaPickerSheet, type MediaLibraryItemDto } from "@/components/admin/media";
+import { RevisionHistoryPanel } from "@/components/admin/revisions";
 import { SeoOverrideDrawer } from "@/components/admin/seo";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -965,6 +966,45 @@ export function PageEditorClient({
         readOnly={readOnly}
         fieldErrors={fieldErrors}
       />
+
+      {pageId !== null && (
+        <RevisionHistoryPanel
+          handle={handle}
+          resourceType="page"
+          resourceId={pageId}
+          currentVersion={version}
+          readOnly={readOnly}
+          onStaleConflict={(msg) => setConflictMessage(msg)}
+          onReloadLatest={handleReloadLatest}
+          onRestored={async (result) => {
+            const restoredPage = result.resource as Partial<PageEditorInitialData>;
+            if (typeof restoredPage.title === "string") setTitle(restoredPage.title);
+            if (typeof restoredPage.slug === "string") setSlug(restoredPage.slug);
+            if (typeof restoredPage.isHomepage === "boolean") setIsHomepage(restoredPage.isHomepage);
+            if (restoredPage.layoutMode === "standard" || restoredPage.layoutMode === "focused") {
+              setLayoutMode(restoredPage.layoutMode);
+            }
+            if (Array.isArray(restoredPage.sections)) setSections(restoredPage.sections);
+            if (restoredPage.seo !== undefined) setSeo(restoredPage.seo ?? {});
+            setStatus(result.status);
+            setVersion(result.version);
+            setHasUnpublishedChanges(result.hasUnpublishedChanges);
+            setIsDirty(false);
+            setSeoDirty(false);
+            setConflictMessage(null);
+            setFieldErrors({});
+            const warnSuffix =
+              result.warnings.length > 0
+                ? ` Catatan: ${result.warnings.map((w) => w.message).join(" ")}`
+                : "";
+            setBanner({
+              tone: "success",
+              title: `Revisi #${result.restoredFromRevisionNumber} dipulihkan sebagai draf`,
+              message: `Draf diperbarui ke versi v${result.version}. Halaman publik tidak berubah sampai Anda klik Terbitkan.${warnSuffix}`,
+            });
+          }}
+        />
+      )}
 
       {pageId !== null && status !== "trashed" && permissions.canWriteContent && (
         <div className="flex justify-end">

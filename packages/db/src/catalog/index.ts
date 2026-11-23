@@ -29,6 +29,9 @@ import {
   publishResourceAtomically,
   unpublishResourceAtomically,
 } from "../publication/index.ts";
+import { buildAppendRevisionStatements } from "../revisions/append.ts";
+import { hasContentRevisionHistoryColumns } from "../revisions/migrations.ts";
+import { buildRevisionSummaryText } from "../revisions/validation.ts";
 
 /**
  * Per-Tenant Catalog & Categories Repository (`packages/db/src/catalog/index.ts`; TASK-009).
@@ -1596,7 +1599,7 @@ export async function getCatalogOfferingById(
 export async function createCatalogOffering(
   tenantDb: D1Database,
   rawInput: unknown,
-  options: { readonly nowMs?: number } = {},
+  options: { readonly nowMs?: number; readonly actorUserId?: string | null } = {},
 ): Promise<StoredCatalogOffering> {
   const nowMs = options.nowMs ?? Date.now();
   const tenantWhatsAppE164 = await resolveTenantWhatsAppNumber(tenantDb);
@@ -1634,7 +1637,10 @@ export async function createCatalogOffering(
     }
   }
 
-  const id = await allocateTenantSequence(tenantDb, OFFERING_SEQUENCE_KIND);
+  const [id, hasRevisionHistory] = await Promise.all([
+    allocateTenantSequence(tenantDb, OFFERING_SEQUENCE_KIND),
+    hasContentRevisionHistoryColumns(tenantDb),
+  ]);
   const slug = await resolveSlugForCreate(tenantDb, {
     namespace,
     offeringType: validated.offeringType,
@@ -1644,6 +1650,7 @@ export async function createCatalogOffering(
   });
 
   const draftSnapshotJson = buildDraftSnapshotStorageJson(slug, validated);
+  const revisionSnapshotData = buildOfferingSnapshotForPublication(slug, validated);
 
   const stmts: D1PreparedStatement[] = [
     tenantDb
@@ -1707,6 +1714,20 @@ export async function createCatalogOffering(
     );
   }
 
+  if (hasRevisionHistory) {
+    stmts.push(
+      ...buildAppendRevisionStatements(tenantDb, {
+        resourceType: "offering",
+        resourceId: id,
+        triggerKind: "save",
+        data: revisionSnapshotData as unknown as Record<string, unknown>,
+        actorUserId: options.actorUserId ?? null,
+        nowMs,
+        hasExtendedColumns: true,
+      }),
+    );
+  }
+
   try {
     await tenantDb.batch(stmts);
   } catch (err) {
@@ -1727,7 +1748,7 @@ export async function updateCatalogOffering(
   tenantDb: D1Database,
   offeringId: number,
   rawPatch: Record<string, unknown>,
-  options: { readonly expectedVersion: number; readonly nowMs?: number },
+  options: { readonly expectedVersion: number; readonly nowMs?: number; readonly actorUserId?: string | null },
 ): Promise<StoredCatalogOffering> {
   assertValidExpectedVersion(options.expectedVersion);
   const nowMs = options.nowMs ?? Date.now();
@@ -1981,6 +2002,26 @@ export async function updateCatalogOffering(
     );
   }
 
+  const hasRevisionHistory = await hasContentRevisionHistoryColumns(tenantDb);
+  if (hasRevisionHistory) {
+    const revData = buildOfferingSnapshotForPublication(slugResolution.slug, validated);
+    stmts.push(
+      ...buildAppendRevisionStatements(tenantDb, {
+        resourceType: "offering",
+        resourceId: offeringId,
+        triggerKind: "save",
+        data: revData as unknown as Record<string, unknown>,
+        actorUserId: options.actorUserId ?? null,
+        nowMs,
+        hasExtendedColumns: true,
+        guard: {
+          sql: `EXISTS (${offeringBatchGuard.existsSql})`,
+          binds: offeringBatchGuard.binds,
+        },
+      }),
+    );
+  }
+
   let results: D1Result[];
   try {
     results = await tenantDb.batch(stmts);
@@ -2107,16 +2148,37 @@ export async function publishCatalogOffering(
   });
 
   // Restore full rich per-type `attributes_json` on the offering row without altering
-  // `published_snapshot_json` or `version`, so both public DTO extraction and rich
-  // vertical catalog attributes remain intact.
-  await tenantDb
-    .prepare(
-      `UPDATE offerings
-       SET attributes_json = ?
-       WHERE id = ? AND version = ?`,
-    )
-    .bind(JSON.stringify(validated.attributes), params.offeringId, published.version)
-    .run();
+  // `published_snapshot_json` or `version`, and enrich `content_revisions` summary when 0023 is present.
+  const hasRevisionHistory = await hasContentRevisionHistoryColumns(tenantDb);
+  const postPublishStmts: D1PreparedStatement[] = [
+    tenantDb
+      .prepare(
+        `UPDATE offerings
+         SET attributes_json = ?
+         WHERE id = ? AND version = ?`,
+      )
+      .bind(JSON.stringify(validated.attributes), params.offeringId, published.version),
+  ];
+
+  if (hasRevisionHistory && published.revisionNumber !== null) {
+    const pubSummary = buildRevisionSummaryText({
+      resourceType: "offering",
+      triggerKind: "publish",
+      title: validated.title,
+      slug: existing.slug,
+    });
+    postPublishStmts.push(
+      tenantDb
+        .prepare(
+          `UPDATE content_revisions
+           SET trigger_kind = 'publish', schema_version = 1, summary = ?
+           WHERE resource_type = 'offering' AND resource_id = ? AND revision_number = ?`,
+        )
+        .bind(pubSummary, params.offeringId, published.revisionNumber),
+    );
+  }
+
+  await tenantDb.batch(postPublishStmts);
 
   const reloaded = await getCatalogOfferingById(tenantDb, params.offeringId);
   if (!reloaded) {

@@ -49,6 +49,9 @@ import {
   getPublishedResource,
   unpublishResourceAtomically,
 } from "../publication/index.ts";
+import { buildAppendRevisionStatements } from "../revisions/append.ts";
+import { hasContentRevisionHistoryColumns } from "../revisions/migrations.ts";
+import { buildRevisionSummaryText } from "../revisions/validation.ts";
 
 export * from "./authors.ts";
 export * from "./migrations.ts";
@@ -1208,7 +1211,10 @@ export async function createPost(
     );
   }
 
-  const postId = await allocateNextSequenceId(tenantDb, "post");
+  const [postId, hasRevisionHistory] = await Promise.all([
+    allocateNextSequenceId(tenantDb, "post"),
+    hasContentRevisionHistoryColumns(tenantDb),
+  ]);
   const allTaxIds = [...verifiedTaxonomies.categoryIds, ...verifiedTaxonomies.tagIds];
 
   const buildCreateBatch = (slug: string, serialized: { readonly json: string; readonly data: PostSnapshot }) => {
@@ -1252,6 +1258,19 @@ export async function createPost(
         tenantDb
           .prepare(`INSERT INTO post_taxonomies (post_id, taxonomy_id) VALUES (?, ?)`)
           .bind(postId, taxId),
+      );
+    }
+    if (hasRevisionHistory) {
+      stmts.push(
+        ...buildAppendRevisionStatements(tenantDb, {
+          resourceType: "post",
+          resourceId: postId,
+          triggerKind: "save",
+          data: serialized.data as unknown as Record<string, unknown>,
+          actorUserId: authorScope?.actorUserId ?? null,
+          nowMs,
+          hasExtendedColumns: true,
+        }),
       );
     }
     return stmts;
@@ -1700,9 +1719,22 @@ export async function updatePost(
             input.expectedVersion,
           );
 
+  const hasRevisionHistory = await hasContentRevisionHistoryColumns(tenantDb);
   const batchStmts: D1PreparedStatement[] = [
     updateStmt,
     ...(slugTransition ? slugTransition.statements : []),
+    ...(hasRevisionHistory
+      ? buildAppendRevisionStatements(tenantDb, {
+          resourceType: "post",
+          resourceId: input.postId,
+          triggerKind: "save",
+          data: serialized.data as unknown as Record<string, unknown>,
+          actorUserId: options.actorUserId ?? null,
+          nowMs,
+          hasExtendedColumns: true,
+          guard: atomicGuard,
+        })
+      : []),
   ];
 
   // For draft posts, sync `post_taxonomies` inside the EXACT SAME atomic batch gated on `atomicGuard`
@@ -2068,22 +2100,49 @@ export async function publishPost(
           input.expectedVersion,
         );
 
+  const hasRevisionHistory = await hasContentRevisionHistoryColumns(tenantDb);
+  const pubSummary = buildRevisionSummaryText({
+    resourceType: "post",
+    triggerKind: "publish",
+    title: envelope.data.title,
+    slug: envelope.data.slug,
+  });
+
   const atomicBatchStmts: D1PreparedStatement[] = [
     updatePostStmt,
-    tenantDb
-      .prepare(
-        `INSERT INTO content_revisions (resource_type, resource_id, revision_number, snapshot_json, created_by, created_at)
-         SELECT 'post', ?, ?, ?, ?, ?
-         WHERE ${committedGuardSql}`,
-      )
-      .bind(
-        input.postId,
-        revisionNumber,
-        publishedJson,
-        input.actorUserId ?? null,
-        nowMs,
-        ...committedGuardBinds,
-      ),
+    hasRevisionHistory
+      ? tenantDb
+          .prepare(
+            `INSERT INTO content_revisions (
+               resource_type, resource_id, revision_number, snapshot_json,
+               created_by, created_at, trigger_kind, schema_version, summary
+             )
+             SELECT 'post', ?, ?, ?, ?, ?, 'publish', 1, ?
+             WHERE ${committedGuardSql}`,
+          )
+          .bind(
+            input.postId,
+            revisionNumber,
+            publishedJson,
+            input.actorUserId ?? null,
+            nowMs,
+            pubSummary,
+            ...committedGuardBinds,
+          )
+      : tenantDb
+          .prepare(
+            `INSERT INTO content_revisions (resource_type, resource_id, revision_number, snapshot_json, created_by, created_at)
+             SELECT 'post', ?, ?, ?, ?, ?
+             WHERE ${committedGuardSql}`,
+          )
+          .bind(
+            input.postId,
+            revisionNumber,
+            publishedJson,
+            input.actorUserId ?? null,
+            nowMs,
+            ...committedGuardBinds,
+          ),
     tenantDb
       .prepare(
         `DELETE FROM content_revisions

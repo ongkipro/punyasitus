@@ -43,6 +43,7 @@ import {
 } from "@/components/admin/editor";
 import type { CmsAdminPermissions } from "@/components/admin/editor/cms-server-context";
 import { MediaPickerSheet, type MediaLibraryItemDto } from "@/components/admin/media";
+import { RevisionHistoryPanel } from "@/components/admin/revisions";
 import { SeoOverrideDrawer } from "@/components/admin/seo";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -1487,6 +1488,79 @@ export function OfferingEditorClient({
         readOnly={readOnly}
         fieldErrors={fieldErrors}
       />
+
+      {offeringId !== null && (
+        <RevisionHistoryPanel
+          handle={handle}
+          resourceType="offering"
+          resourceId={offeringId}
+          currentVersion={version}
+          readOnly={readOnly}
+          onStaleConflict={(msg) => setConflictMessage(msg)}
+          onReloadLatest={handleReloadLatest}
+          onRestored={async (result) => {
+            const fresh = result.resource;
+            if (typeof fresh.title === "string") setTitle(fresh.title);
+            if (typeof fresh.slug === "string") setSlug(fresh.slug);
+            setSummary(typeof fresh.summary === "string" ? fresh.summary : "");
+            if (fresh.description !== undefined) {
+              setDescription(normalizeDescriptionInput(fresh.description));
+            }
+            if (fresh.coverMediaId !== undefined) {
+              setCoverMediaId(typeof fresh.coverMediaId === "number" ? fresh.coverMediaId : null);
+            }
+            if (Array.isArray(fresh.galleryMediaIds)) {
+              setGalleryMediaIds(fresh.galleryMediaIds as number[]);
+            }
+            setYoutubeVideoId(typeof fresh.youtubeVideoId === "string" ? fresh.youtubeVideoId : "");
+            if (typeof fresh.priceMode === "string") {
+              setPriceMode(fresh.priceMode as CatalogPriceMode);
+            }
+            setPriceStr(typeof fresh.price === "number" ? String(fresh.price) : "");
+            setPriceMaxStr(typeof fresh.priceMax === "number" ? String(fresh.priceMax) : "");
+            setOriginalAmountStr(
+              typeof fresh.originalAmount === "number" ? String(fresh.originalAmount) : "",
+            );
+            setNegotiable(Boolean(fresh.negotiable));
+            setBadge(typeof fresh.badge === "string" ? fresh.badge : "");
+            if (typeof fresh.ctaMode === "string") {
+              setCtaMode(fresh.ctaMode as CatalogCtaMode);
+            }
+            setCtaLabel(typeof fresh.ctaLabel === "string" ? fresh.ctaLabel : "");
+            setExternalUrl(typeof fresh.externalUrl === "string" ? fresh.externalUrl : "");
+            setWhatsappOverride(typeof fresh.whatsappOverride === "string" ? fresh.whatsappOverride : "");
+            setWhatsappTemplate(typeof fresh.whatsappTemplate === "string" ? fresh.whatsappTemplate : "");
+            if (
+              fresh.unitStatus === "available" ||
+              fresh.unitStatus === "booked" ||
+              fresh.unitStatus === "sold"
+            ) {
+              setUnitStatus(fresh.unitStatus);
+            }
+            if (fresh.attributes && typeof fresh.attributes === "object") {
+              setAttrs(fresh.attributes as Record<string, unknown>);
+            }
+            if (fresh.seo !== undefined) {
+              setSeo((fresh.seo as SeoEditorOverrideInput | null) ?? {});
+            }
+            setStatus(result.status);
+            setVersion(result.version);
+            setIsDirty(false);
+            setSeoDirty(false);
+            setConflictMessage(null);
+            setFieldErrors({});
+            const warnSuffix =
+              result.warnings.length > 0
+                ? ` Catatan: ${result.warnings.map((w) => w.message).join(" ")}`
+                : "";
+            setBanner({
+              tone: "success",
+              title: `Revisi #${result.restoredFromRevisionNumber} dipulihkan sebagai draf`,
+              message: `Draf penawaran diperbarui ke versi v${result.version}. Halaman publik tidak berubah sampai Anda klik Terbitkan.${warnSuffix}`,
+            });
+          }}
+        />
+      )}
 
       {offeringId !== null && status !== "trashed" && permissions.canWriteContent && (
         <div className="flex justify-end">
