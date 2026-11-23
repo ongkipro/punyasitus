@@ -21,8 +21,11 @@ import {
   CLOSED_SECTION_TYPES,
   PLATFORM_THEME_IDS,
   PLATFORM_THEME_SECTION_PROFILES,
+  ThemeNotFoundError,
+  ThemeNotGrantedError,
   type ClosedSectionType,
   type PlatformThemeId,
+  type ThemeCompatibilityCandidate,
   type ThemeConfigSnapshot,
   type ThemeTokens,
   type ThemeVariants,
@@ -562,6 +565,89 @@ export function listGrantedThemesForTenant(
   }
 
   return Object.freeze(granted);
+}
+
+/**
+ * Converts a registered theme manifest into a pure compatibility candidate input
+ * for `evaluateThemeCompatibility` (`REQ-046`, `TASK-042`).
+ */
+export function buildThemeCompatibilityCandidate(
+  entry: RegisteredThemeEntry,
+): ThemeCompatibilityCandidate {
+  return {
+    id: entry.id,
+    name: entry.name,
+    schemaVersion: entry.schemaVersion,
+    tier: entry.tier,
+    basePlatformThemeId: entry.basePlatformThemeId,
+    supportedSectionTypes: entry.supportedSectionTypes,
+    supportedRoutes: entry.supportedRoutes,
+    recommendedOfferingTypes: entry.recommendedOfferingTypes,
+  };
+}
+
+export interface GrantedActivationThemeResult {
+  readonly entry: RegisteredThemeEntry;
+  readonly grantSource: Exclude<ThemeGrantSource, "fallback">;
+}
+
+/**
+ * Strict non-fallback theme lookup + tenant entitlement guard used by the
+ * Theme Library preview and activation endpoints (`REQ-046`, `REQ-021`, `TASK-042`).
+ *
+ * Unlike public rendering (`resolveTenantTheme`), theme library preview/activation
+ * NEVER silently falls back:
+ * - Unknown or malformed `themeId` -> throws `ThemeNotFoundError` (`404 THEME_NOT_FOUND`).
+ * - Registered custom theme not granted to THIS tenant -> throws `ThemeNotGrantedError` (`403 THEME_NOT_GRANTED`).
+ */
+export function resolveGrantedThemeForActivation(
+  input: ResolveTenantThemeInput,
+  extraEntries: readonly RegisteredThemeEntry[] = [],
+): GrantedActivationThemeResult {
+  const rawRequested =
+    typeof input.requestedThemeId === "string" ? input.requestedThemeId.trim() : "";
+
+  if (!rawRequested || !ThemeIdSchema.safeParse(rawRequested).success) {
+    throw new ThemeNotFoundError(rawRequested || "(kosong)");
+  }
+
+  const entry =
+    getRegisteredTheme(rawRequested) ??
+    extraEntries.find((candidate) => candidate.id === rawRequested) ??
+    null;
+
+  if (!entry) {
+    throw new ThemeNotFoundError(rawRequested);
+  }
+
+  if (!entry.isCustom && isPlatformThemeId(entry.id)) {
+    return {
+      entry,
+      grantSource: "platform_included",
+    };
+  }
+
+  const tenantId = typeof input.tenantId === "string" ? input.tenantId.trim() : "";
+  if (!tenantId) {
+    throw new ThemeNotGrantedError(entry.id);
+  }
+
+  const directGranted = hasDirectTenantGrant(tenantId, entry.id, input.tenantGrants);
+  const agencyGranted = hasMatchingAgencyGrant(
+    input.agencyId,
+    input.agencySlug,
+    entry,
+    input.agencyGrants,
+  );
+
+  if (!directGranted && !agencyGranted) {
+    throw new ThemeNotGrantedError(entry.id);
+  }
+
+  return {
+    entry,
+    grantSource: directGranted ? "tenant_grant" : "agency_grant",
+  };
 }
 
 // ---------------------------------------------------------------------------
