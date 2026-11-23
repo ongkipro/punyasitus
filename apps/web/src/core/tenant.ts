@@ -114,6 +114,7 @@ export interface TenantMiddlewareContext {
 }
 
 const MARKETING_PATHS = [
+  "/bantuan",
   "/harga",
   "/pricing",
   "/fitur",

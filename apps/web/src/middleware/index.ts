@@ -32,7 +32,20 @@ export const onRequest = defineMiddleware((context, next) => {
 
   return executeTenantMiddleware(
     context,
-    () => executeAuthMiddleware(context, next, authEnv),
+    () => {
+      if (
+        context.locals.surface === "marketing" &&
+        context.locals.tenant === null &&
+        (context.url.pathname === "/bantuan" || context.url.pathname.startsWith("/bantuan/"))
+      ) {
+        const rewritten = new URL(
+          `/marketing${context.url.pathname}${context.url.search}`,
+          context.url,
+        );
+        return context.rewrite(rewritten);
+      }
+      return executeAuthMiddleware(context, next, authEnv);
+    },
     {
       APP_ENV: runtimeEnv.APP_ENV,
       PLATFORM_DOMAIN: runtimeEnv.PLATFORM_DOMAIN,

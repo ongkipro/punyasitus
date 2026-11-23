@@ -1,0 +1,59 @@
+---
+import {
+  resolveDashboardHelpLink,
+  type DashboardHelpScreenId,
+} from "@punyasitus/core/help/index";
+
+export interface Props {
+  screen: DashboardHelpScreenId;
+  helpBaseUrl?: string;
+  label?: string;
+  openInNewTab?: boolean;
+  class?: string;
+}
+
+const {
+  screen,
+  helpBaseUrl,
+  label,
+  openInNewTab = true,
+  class: className = "",
+} = Astro.props;
+
+const resolved = resolveDashboardHelpLink(screen, {
+  baseUrl: helpBaseUrl,
+  from: "dashboard",
+});
+---
+
+<a
+  href={resolved.href}
+  target={openInNewTab ? "_blank" : undefined}
+  rel={openInNewTab ? "noopener noreferrer" : undefined}
+  aria-label={label ? undefined : `Bantuan: ${resolved.screenLabel}`}
+  title={`${resolved.title} (${resolved.readingMinutes} menit baca)`}
+  data-help-screen={screen}
+  data-help-slug={resolved.helpSlug}
+  data-testid={`dashboard-help-link-${screen}`}
+  class:list={[
+    "inline-flex min-h-11 min-w-11 items-center justify-center gap-1.5 rounded-md border border-border bg-card px-2.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-8 md:min-w-8",
+    className,
+  ]}
+>
+  <svg
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    class="size-4 shrink-0 text-primary"
+    aria-hidden="true"
+  >
+    <circle cx="12" cy="12" r="10" />
+    <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+    <path d="M12 17h.01" />
+  </svg>
+  {label && <span>{label}</span>}
+</a>
