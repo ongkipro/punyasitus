@@ -21,6 +21,7 @@ import {
   sweepAllTenantsExpiredQuarantine,
 } from "./queues/media/index.ts";
 import { createRetentionJobRegistry } from "./queues/retention/index.ts";
+import { createSeoJobRegistry } from "./queues/seo/index.ts";
 
 // Durable Object class export (only handlers + DO classes may be exported by a Worker entrypoint)
 export { TenantStore } from "./tenant-store.ts";
@@ -33,6 +34,7 @@ const WORKER_JOB_REGISTRY: DurableJobRegistry = {
   ...createRetentionJobRegistry(),
   ...createMediaJobRegistry(),
   ...createDomainJobRegistry(),
+  ...createSeoJobRegistry(),
   [EMAIL_DELIVERY_TOPIC]: createEmailQueueHandler({
     onOwnerSuppressionNotice(event) {
       console.warn(

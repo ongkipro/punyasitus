@@ -23,6 +23,15 @@ export interface ScheduledCronJobDefinition {
   readonly buildPayload?: (scheduledTimeMs: number) => Record<string, unknown>;
 }
 
+export const SEO_INDEXNOW_CRON_JOB_DEFINITION: ScheduledCronJobDefinition = {
+  name: "hourly-seo-indexnow-flush",
+  cron: DEFAULT_CRON_EXPRESSION,
+  topic: "seo.indexnow_flush",
+  cadence: "hourly",
+  tenantId: null,
+  maxAttempts: DEFAULT_MAX_JOB_ATTEMPTS,
+};
+
 export const DEFAULT_CRON_JOB_DEFINITIONS: readonly ScheduledCronJobDefinition[] = [
   {
     name: "hourly-housekeeping",
@@ -40,6 +49,7 @@ export const DEFAULT_CRON_JOB_DEFINITIONS: readonly ScheduledCronJobDefinition[]
     tenantId: null,
     maxAttempts: DEFAULT_MAX_JOB_ATTEMPTS,
   },
+  SEO_INDEXNOW_CRON_JOB_DEFINITION,
 ];
 
 export interface DispatchScheduledCronOptions {
