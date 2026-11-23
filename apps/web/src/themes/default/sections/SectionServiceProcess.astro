@@ -1,0 +1,686 @@
+---
+import type { CatalogPriceMode, ServiceAttributes } from "@punyasitus/core/catalog/index";
+import {
+  buildSpecialistWhatsAppHref,
+  formatServicePriceLabel,
+  normalizeServiceDisplayModel,
+  SERVICE_INQUIRY_BADGE_LABEL,
+  type ServiceConsultationAttributes,
+} from "@punyasitus/core/catalog/service";
+
+/**
+ * Accessible HTML-First Professional Services Pricing & Consultation Process Section
+ * (`SectionServiceProcess.astro`; TASK-035, REQ-030, REQ-014, REQ-016).
+ *
+ * Pure server-rendered Astro markup + `--ps-*` theme tokens:
+ * - Zero JavaScript required, zero cart/checkout markup.
+ * - Displays transparent pricing tiers ("Mulai dari Rp...", fixed IDR, or inquiry-only).
+ * - Renders numbered "Cara Kerja" consultation steps (`<ol>`).
+ * - Renders ONE direct specialist WhatsApp CTA (`https://wa.me/...`) when configured,
+ *   cleanly falling back to the business main WhatsApp CTA when absent.
+ */
+
+export interface Props {
+  readonly id?: string;
+  readonly service: ServiceConsultationAttributes | ServiceAttributes | Record<string, unknown>;
+  readonly serviceTitle: string;
+  readonly fallbackPriceMode?: CatalogPriceMode | null;
+  readonly fallbackPrice?: number | null;
+  readonly fallbackWhatsAppPhone?: string | null;
+  readonly fallbackWhatsAppHref?: string | null;
+  readonly fallbackWhatsAppLabel?: string;
+  readonly inquiryHref?: string | null;
+  readonly inquiryLabel?: string;
+  readonly canonicalUrl?: string | null;
+  readonly embedded?: boolean;
+  readonly surfaceTone?: "surface" | "muted";
+}
+
+const {
+  id = "service-consultation",
+  service,
+  serviceTitle,
+  fallbackPriceMode = null,
+  fallbackPrice = null,
+  fallbackWhatsAppPhone = null,
+  fallbackWhatsAppHref = null,
+  fallbackWhatsAppLabel = "Konsultasi via WhatsApp",
+  inquiryHref = null,
+  inquiryLabel = "Hubungi Kami",
+  canonicalUrl = null,
+  embedded = false,
+  surfaceTone = "surface",
+} = Astro.props;
+
+const model = normalizeServiceDisplayModel(service, {
+  priceMode: fallbackPriceMode,
+  price: fallbackPrice,
+});
+
+function isWhatsAppUrl(raw: string): boolean {
+  return /^https:\/\/(?:wa\.me|api\.whatsapp\.com)\//i.test(raw);
+}
+
+function sanitizeSafeActionHref(raw: string | null | undefined): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) return trimmed;
+  if (trimmed.startsWith("#")) return trimmed;
+  if (isWhatsAppUrl(trimmed)) return trimmed;
+  if (/^https:\/\//i.test(trimmed)) return trimmed;
+  if (/^(?:tel|mailto):/i.test(trimmed)) return trimmed;
+  return null;
+}
+
+const specialistBuiltHref = model.specialistCta
+  ? buildSpecialistWhatsAppHref({
+      specialistCta: model.specialistCta,
+      serviceTitle,
+      canonicalUrl,
+    })
+  : null;
+
+const rawFallbackWaHref = sanitizeSafeActionHref(fallbackWhatsAppHref);
+const validFallbackWaHref =
+  rawFallbackWaHref && isWhatsAppUrl(rawFallbackWaHref)
+    ? rawFallbackWaHref
+    : buildSpecialistWhatsAppHref({
+        fallbackPhone: fallbackWhatsAppPhone,
+        serviceTitle,
+        canonicalUrl,
+      });
+
+const resolvedWaHref = specialistBuiltHref ?? validFallbackWaHref;
+const hasSpecialistOverride = Boolean(model.specialistCta && specialistBuiltHref);
+
+const resolvedWaLabel = hasSpecialistOverride
+  ? model.specialistCta?.ctaLabel ||
+    `Konsultasi dengan ${model.specialistCta?.specialistName}`
+  : fallbackWhatsAppLabel;
+
+const safeNonWaFallbackHref =
+  !resolvedWaHref
+    ? sanitizeSafeActionHref(inquiryHref) ??
+      (rawFallbackWaHref && !isWhatsAppUrl(rawFallbackWaHref) ? rawFallbackWaHref : null)
+    : null;
+const isExternalInquiry = Boolean(
+  safeNonWaFallbackHref && /^https:\/\//i.test(safeNonWaFallbackHref),
+);
+---
+
+<div
+  id={id}
+  class:list={[
+    "ps-service-module",
+    !embedded && "ps-section",
+    !embedded && surfaceTone === "muted" && "ps-section--muted",
+  ]}
+  data-testid="section-service-process"
+  data-pricing-mode={model.pricingMode}
+>
+  <div class:list={[!embedded && "ps-container", "ps-service-stack"]}>
+    {/* 1. Transparent Pricing Tiers (Zero Cart / Zero Checkout) */}
+    <section
+      class="ps-service-block"
+      aria-labelledby={`${id}-pricing-heading`}
+      data-testid="service-pricing-section"
+    >
+      <div class="ps-service-heading-row">
+        <h2 id={`${id}-pricing-heading`} class="ps-service-heading">
+          Transparansi Biaya &amp; Pilihan Paket
+        </h2>
+        <span
+          class:list={[
+            "ps-service-mode-pill",
+            model.pricingMode === "inquiry" && "ps-service-mode-pill--inquiry",
+          ]}
+          data-testid="service-pricing-mode-badge"
+        >
+          {model.pricingMode === "inquiry"
+            ? SERVICE_INQUIRY_BADGE_LABEL
+            : model.headlinePriceLabel}
+        </span>
+      </div>
+
+      {model.pricingTiers.length > 0 ? (
+        <div
+          class:list={[
+            "ps-service-tier-grid",
+            model.pricingTiers.length === 1 && "ps-service-tier-grid--single",
+            model.pricingTiers.length >= 3 && "ps-service-tier-grid--three",
+          ]}
+          data-testid="service-pricing-tiers"
+        >
+          {model.pricingTiers.map((tier, idx) => {
+            const tierPriceText = formatServicePriceLabel(tier.pricingMode, tier.priceIdr);
+            return (
+              <article
+                class:list={[
+                  "ps-service-tier-card",
+                  tier.highlighted && "ps-service-tier-card--highlighted",
+                ]}
+                data-testid={`service-tier-card-${idx}`}
+                data-tier-pricing-mode={tier.pricingMode}
+              >
+                <div class="ps-service-tier-top">
+                  <h3 class="ps-service-tier-name">{tier.name}</h3>
+                  {tier.highlighted && (
+                    <span class="ps-service-tier-highlight">Rekomendasi</span>
+                  )}
+                </div>
+
+                <div class="ps-service-tier-price-row">
+                  <p class="ps-service-tier-price" data-testid={`service-tier-price-${idx}`}>
+                    {tierPriceText}
+                  </p>
+                  {tier.billingUnit && (
+                    <span class="ps-service-tier-unit">{tier.billingUnit}</span>
+                  )}
+                </div>
+
+                {tier.turnaroundLabel && (
+                  <p class="ps-service-tier-turnaround">
+                    Estimasi: <strong>{tier.turnaroundLabel}</strong>
+                  </p>
+                )}
+
+                {tier.summary && <p class="ps-service-tier-summary">{tier.summary}</p>}
+
+                {tier.deliverables && tier.deliverables.length > 0 && (
+                  <ul class="ps-service-deliverables" data-testid={`service-tier-deliverables-${idx}`}>
+                    {tier.deliverables.map((item) => (
+                      <li>
+                        <svg
+                          class="ps-service-check-icon"
+                          width="16"
+                          height="16"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2.25"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          aria-hidden="true"
+                        >
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div class="ps-service-single-price-box" data-testid="service-headline-pricing-box">
+          <p class="ps-service-single-price-value">{model.headlinePriceLabel}</p>
+          <p class="ps-service-single-price-note">
+            {model.pricingMode === "inquiry"
+              ? "Ruang lingkup dan estimasi biaya disesuaikan setelah sesi konsultasi awal bersama tim kami."
+              : "Biaya dapat disesuaikan dengan ruang lingkup proyek. Konsultasikan kebutuhan Anda untuk penawaran resmi."}
+          </p>
+        </div>
+      )}
+    </section>
+
+    {/* 2. Numbered "Cara Kerja" Consultation Process Steps (<ol>, Zero JS) */}
+    {model.processSteps.length > 0 && (
+      <section
+        class="ps-service-block"
+        aria-labelledby={`${id}-process-heading`}
+        data-testid="service-process-section"
+      >
+        <h2 id={`${id}-process-heading`} class="ps-service-heading">
+          Cara Kerja
+        </h2>
+        <ol class="ps-service-steps" data-testid="service-process-steps">
+          {model.processSteps.map((step) => (
+            <li
+              class="ps-service-step-item"
+              data-testid={`service-process-step-${step.stepNumber}`}
+            >
+              <div class="ps-service-step-marker" aria-hidden="true">
+                {String(step.stepNumber).padStart(2, "0")}
+              </div>
+              <div class="ps-service-step-body">
+                <div class="ps-service-step-header">
+                  <h3 class="ps-service-step-title">{step.title}</h3>
+                  {step.estimatedDuration && (
+                    <span class="ps-service-step-duration">{step.estimatedDuration}</span>
+                  )}
+                </div>
+                <p class="ps-service-step-summary">{step.summary}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </section>
+    )}
+
+    {/* 3. ONE Direct Specialist Consultation WhatsApp CTA (Strictly Gated on Valid WA URL) */}
+    {(resolvedWaHref || safeNonWaFallbackHref) && (
+      <section
+        id={`${id}-specialist-cta`}
+        class="ps-service-cta-band"
+        aria-labelledby={`${id}-cta-heading`}
+        data-testid="service-consultation-cta-band"
+      >
+        <div class="ps-service-cta-copy">
+          {hasSpecialistOverride && model.specialistCta ? (
+            <>
+              <p class="ps-service-specialist-eyebrow">Konsultasi Langsung dengan Spesialis</p>
+              <h2 id={`${id}-cta-heading`} class="ps-service-cta-title">
+                {model.specialistCta.specialistName}
+              </h2>
+              <p class="ps-service-specialist-role" data-testid="service-specialist-role">
+                {model.specialistCta.specialistRole}
+              </p>
+              <p class="ps-service-cta-desc">
+                Diskusikan ruang lingkup kebutuhan, jadwal pengerjaan, dan estimasi penawaran
+                langsung melalui WhatsApp.
+              </p>
+            </>
+          ) : (
+            <>
+              <p class="ps-service-specialist-eyebrow">Konsultasi Layanan</p>
+              <h2 id={`${id}-cta-heading`} class="ps-service-cta-title">
+                Siap memulai konsultasi untuk layanan ini?
+              </h2>
+              <p class="ps-service-cta-desc">
+                Hubungi tim kami untuk membahas kebutuhan bisnis Anda dan mendapatkan rincian
+                penawaran yang transparan.
+              </p>
+            </>
+          )}
+        </div>
+
+        <div class="ps-service-cta-action">
+          {resolvedWaHref ? (
+            <a
+              href={resolvedWaHref}
+              class="ps-btn ps-btn--whatsapp ps-service-cta-btn"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid={
+                hasSpecialistOverride
+                  ? "service-specialist-whatsapp-cta"
+                  : "service-fallback-whatsapp-cta"
+              }
+              data-wa-event="wa_click"
+            >
+              {resolvedWaLabel}
+            </a>
+          ) : (
+            safeNonWaFallbackHref && (
+              <a
+                href={safeNonWaFallbackHref}
+                class="ps-btn ps-btn--secondary ps-service-cta-btn"
+                target={isExternalInquiry ? "_blank" : undefined}
+                rel={isExternalInquiry ? "noopener noreferrer" : undefined}
+                data-testid="service-non-wa-inquiry-cta"
+              >
+                {inquiryLabel}
+              </a>
+            )
+          )}
+        </div>
+      </section>
+    )}
+  </div>
+</div>
+
+<style>
+  .ps-service-stack {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(1.5rem, 3vw, 2.25rem);
+  }
+
+  .ps-service-block {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 0;
+  }
+
+  .ps-service-heading-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .ps-service-heading {
+    margin: 0;
+    font-size: clamp(1.2rem, 1.08rem + 0.5vw, 1.45rem);
+    line-height: 1.3;
+    color: var(--ps-ink);
+  }
+
+  .ps-service-mode-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.35rem 0.8rem;
+    border-radius: 999px;
+    border: 1px solid var(--ps-brand-primary);
+    background-color: var(--ps-surface-muted);
+    color: var(--ps-brand-primary);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+  }
+
+  .ps-service-mode-pill--inquiry {
+    border-color: var(--ps-border);
+    color: var(--ps-ink);
+  }
+
+  .ps-service-tier-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+
+  .ps-service-tier-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    padding: 1.125rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    background-color: var(--ps-surface);
+    min-width: 0;
+  }
+
+  .ps-service-tier-card--highlighted {
+    border-color: var(--ps-brand-primary);
+    box-shadow: inset 0 0 0 1px var(--ps-brand-primary);
+    background-color: var(--ps-surface-muted);
+  }
+
+  .ps-service-tier-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .ps-service-tier-name {
+    margin: 0;
+    font-size: 1.025rem;
+    font-weight: 700;
+    color: var(--ps-ink);
+    overflow-wrap: anywhere;
+  }
+
+  .ps-service-tier-highlight {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    background-color: var(--ps-brand-primary);
+    color: var(--ps-brand-on-primary);
+    font-size: 0.725rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .ps-service-tier-price-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.35rem 0.5rem;
+  }
+
+  .ps-service-tier-price {
+    margin: 0;
+    font-size: clamp(1.125rem, 1.04rem + 0.35vw, 1.3rem);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: var(--ps-brand-primary);
+    line-height: 1.3;
+  }
+
+  .ps-service-tier-unit {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-service-tier-turnaround {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-service-tier-turnaround strong {
+    color: var(--ps-ink);
+    font-weight: 600;
+  }
+
+  .ps-service-tier-summary {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.55;
+    color: var(--ps-ink-muted);
+    overflow-wrap: anywhere;
+  }
+
+  .ps-service-deliverables {
+    list-style: none;
+    margin: 0.25rem 0 0;
+    padding: 0.75rem 0 0;
+    border-top: 1px solid var(--ps-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .ps-service-deliverables li {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--ps-ink);
+  }
+
+  .ps-service-check-icon {
+    flex-shrink: 0;
+    margin-top: 0.15rem;
+    color: var(--ps-brand-primary);
+  }
+
+  .ps-service-single-price-box {
+    padding: 1.125rem 1.25rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    background-color: var(--ps-surface-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .ps-service-single-price-value {
+    margin: 0;
+    font-size: clamp(1.2rem, 1.1rem + 0.4vw, 1.4rem);
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    color: var(--ps-ink);
+  }
+
+  .ps-service-single-price-note {
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.55;
+    color: var(--ps-ink-muted);
+  }
+
+  /* Numbered "Cara Kerja" Process Steps (<ol>) */
+  .ps-service-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .ps-service-step-item {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    gap: 0.875rem;
+    padding: 1rem 1.125rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    background-color: var(--ps-surface);
+    align-items: start;
+  }
+
+  .ps-service-step-marker {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 999px;
+    background-color: var(--ps-brand-primary);
+    color: var(--ps-brand-on-primary);
+    font-size: 0.8125rem;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  .ps-service-step-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+
+  .ps-service-step-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.4rem 0.75rem;
+  }
+
+  .ps-service-step-title {
+    margin: 0;
+    font-size: 0.975rem;
+    font-weight: 700;
+    color: var(--ps-ink);
+    overflow-wrap: anywhere;
+  }
+
+  .ps-service-step-duration {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--ps-border);
+    background-color: var(--ps-surface-muted);
+    color: var(--ps-ink-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .ps-service-step-summary {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.6;
+    color: var(--ps-ink-muted);
+    overflow-wrap: anywhere;
+  }
+
+  /* Specialist Direct Consultation CTA Band */
+  .ps-service-cta-band {
+    padding: 1.25rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-lg);
+    background-color: var(--ps-surface-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .ps-service-cta-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 0;
+  }
+
+  .ps-service-specialist-eyebrow {
+    margin: 0;
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--ps-brand-primary);
+  }
+
+  .ps-service-cta-title {
+    margin: 0;
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--ps-ink);
+  }
+
+  .ps-service-specialist-role {
+    margin: 0;
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--ps-ink);
+  }
+
+  .ps-service-cta-desc {
+    margin: 0.125rem 0 0;
+    font-size: 0.875rem;
+    line-height: 1.55;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-service-cta-action {
+    display: flex;
+    flex-shrink: 0;
+  }
+
+  .ps-service-cta-btn {
+    min-height: 44px;
+    width: 100%;
+    justify-content: center;
+  }
+
+  @media (min-width: 768px) {
+    .ps-service-tier-grid:not(.ps-service-tier-grid--single) {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .ps-service-cta-band {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+      gap: 1.5rem;
+    }
+
+    .ps-service-cta-btn {
+      width: auto;
+    }
+  }
+
+  @media (min-width: 1120px) {
+    .ps-service-tier-grid--three {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+</style>

@@ -1,6 +1,11 @@
 ---
 import "../../themes/default/sections/sections.css";
 import "./_public-pages.css";
+import type { ServiceConsultationAttributes } from "@punyasitus/core/catalog/service";
+import {
+  buildSpecialistWhatsAppHref,
+  resolveServiceHeadlinePricing,
+} from "@punyasitus/core/catalog/service";
 import type {
   TravelPackageAttributes,
   TrustedTravelGateState,
@@ -14,9 +19,9 @@ import {
   formatDateOnlyIndonesian,
   type PublicOfferingDetailRenderResult,
 } from "../../core/public-routes.ts";
-import { formatIdrPlain } from "../../core/section-registry.ts";
 import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.astro";
 import Layout from "../../themes/default/Layout.astro";
+import SectionServiceProcess from "../../themes/default/sections/SectionServiceProcess.astro";
 import SectionTravelItinerary from "../../themes/default/sections/SectionTravelItinerary.astro";
 import PublicBreadcrumbs from "./_PublicBreadcrumbs.astro";
 
@@ -27,6 +32,7 @@ export interface Props {
   readonly sanitizedDescriptionHtml?: string | null;
   readonly travelPackage?: TravelPackageAttributes | null;
   readonly trustedTravelGateState?: TrustedTravelGateState;
+  readonly serviceConsultation?: ServiceConsultationAttributes | null;
 }
 
 const {
@@ -36,10 +42,45 @@ const {
   sanitizedDescriptionHtml = null,
   travelPackage = null,
   trustedTravelGateState,
+  serviceConsultation = null,
 } = Astro.props;
 const { descriptor, offering, relatedOfferings } = result;
 const effectiveDescriptionHtml = sanitizedDescriptionHtml ?? offering.descriptionHtml;
 const linkedCategoryNames = new Set(categoryLinks.map((c) => c.name));
+
+const serviceHeadlinePricing =
+  offering.offeringType === "service" && serviceConsultation
+    ? resolveServiceHeadlinePricing(serviceConsultation, {
+        priceMode: offering.priceMode,
+        price: null,
+      })
+    : null;
+
+const serviceSpecialistWaHref =
+  offering.offeringType === "service" && serviceConsultation?.specialistCta
+    ? buildSpecialistWhatsAppHref({
+        specialistCta: serviceConsultation.specialistCta,
+        serviceTitle: offering.title,
+        canonicalUrl: result.seoMetadata.canonical ?? null,
+      })
+    : null;
+
+const sidebarPriceText = serviceHeadlinePricing?.formattedLabel ?? offering.priceText;
+// Keep ONE authoritative specialist WhatsApp CTA inside `SectionServiceProcess` when configured;
+// sidebar jumps directly to `#service-consultation-specialist-cta` instead of duplicating the WA link.
+const hasEmbeddedSpecialistCta = Boolean(serviceSpecialistWaHref);
+const sidebarCtaHref = hasEmbeddedSpecialistCta
+  ? "#service-consultation-specialist-cta"
+  : offering.cta.href;
+const sidebarCtaIsWhatsApp = hasEmbeddedSpecialistCta ? false : offering.cta.isWhatsApp;
+const sidebarCtaIsExternal = hasEmbeddedSpecialistCta ? false : offering.cta.isExternal;
+const sidebarCtaLabel = hasEmbeddedSpecialistCta
+  ? "Lihat Kontak Spesialis"
+  : offering.cta.label;
+const sidebarSpecialistNote =
+  hasEmbeddedSpecialistCta && serviceConsultation?.specialistCta
+    ? `Spesialis: ${serviceConsultation.specialistCta.specialistName} (${serviceConsultation.specialistCta.specialistRole})`
+    : null;
 
 const serviceModeLabels: Readonly<Record<string, string>> = {
   onsite: "Di lokasi klien",
@@ -287,45 +328,49 @@ const creditTenors = offering.vehicleCreditRows[0]?.installments.map((i) => i.te
           </section>
         )}
 
-        {/* Service: Deliverables, Consultation Steps & Pricing Tiers */}
-        {offering.serviceAttributes?.deliverables && offering.serviceAttributes.deliverables.length > 0 && (
-          <section class="ps-detail-block" aria-labelledby="deliverables-heading">
-            <h2 id="deliverables-heading">Yang Anda Dapatkan</h2>
-            <ul class="ps-check-list">
-              {offering.serviceAttributes.deliverables.map((item) => (
-                <li>{item}</li>
-              ))}
-            </ul>
-          </section>
-        )}
+        {/* Service: Transparent Pricing Tiers, Numbered "Cara Kerja" & Specialist WA CTA (TASK-035) */}
+        {offering.offeringType === "service" &&
+          (serviceConsultation ||
+            (offering.serviceAttributes?.serviceSteps &&
+              offering.serviceAttributes.serviceSteps.length > 0) ||
+            (offering.serviceAttributes?.tiers &&
+              offering.serviceAttributes.tiers.length > 0)) && (
+            <SectionServiceProcess
+              id="service-consultation"
+              service={serviceConsultation ?? offering.serviceAttributes!}
+              serviceTitle={offering.title}
+              fallbackPriceMode={offering.priceMode}
+              fallbackWhatsAppPhone={result.shell.business.whatsappE164}
+              fallbackWhatsAppHref={offering.cta.isWhatsApp ? offering.cta.href : null}
+              fallbackWhatsAppLabel={offering.cta.isWhatsApp ? offering.cta.label : undefined}
+              inquiryHref={
+                offering.cta.isWhatsApp
+                  ? offering.fallbackContactHref
+                  : offering.cta.href || offering.fallbackContactHref
+              }
+              inquiryLabel={
+                offering.cta.isWhatsApp
+                  ? "Kontak Langsung"
+                  : offering.cta.label || "Kontak Langsung"
+              }
+              canonicalUrl={result.seoMetadata.canonical ?? null}
+              embedded={true}
+            />
+          )}
 
-        {offering.serviceAttributes?.serviceSteps && offering.serviceAttributes.serviceSteps.length > 0 && (
-          <section class="ps-detail-block" aria-labelledby="steps-heading">
-            <h2 id="steps-heading">Cara Kerja</h2>
-            <ol class="ps-check-list">
-              {offering.serviceAttributes.serviceSteps.map((step) => (
-                <li>{step}</li>
-              ))}
-            </ol>
-          </section>
-        )}
-
-        {offering.serviceAttributes?.tiers && offering.serviceAttributes.tiers.length > 0 && (
-          <section class="ps-detail-block" aria-labelledby="tiers-heading">
-            <h2 id="tiers-heading">Pilihan Paket Layanan</h2>
-            <div class="ps-card-grid">
-              {offering.serviceAttributes.tiers.map((tier) => (
-                <div class="ps-card">
-                  <h3 class="ps-card-title">{tier.name}</h3>
-                  {tier.summary && <p class="ps-card-desc">{tier.summary}</p>}
-                  {typeof tier.price === "number" && (
-                    <p class="ps-offering-price">{formatIdrPlain(tier.price)}</p>
-                  )}
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+        {offering.offeringType === "service" &&
+          !serviceConsultation &&
+          offering.serviceAttributes?.deliverables &&
+          offering.serviceAttributes.deliverables.length > 0 && (
+            <section class="ps-detail-block" aria-labelledby="deliverables-heading">
+              <h2 id="deliverables-heading">Yang Anda Dapatkan</h2>
+              <ul class="ps-check-list">
+                {offering.serviceAttributes.deliverables.map((item) => (
+                  <li>{item}</li>
+                ))}
+              </ul>
+            </section>
+          )}
 
         {/* Product: Variants */}
         {offering.productAttributes?.variants && offering.productAttributes.variants.length > 0 && (
@@ -409,7 +454,7 @@ const creditTenors = offering.vehicleCreditRows[0]?.installments.map((i) => i.te
         <div>
           <p class="ps-eyebrow">{descriptor.singularLabel}</p>
           <p class="ps-detail-price" data-testid="offering-detail-price">
-            {offering.priceText}
+            {sidebarPriceText}
           </p>
           {offering.originalPriceText && (
             <p class="ps-detail-note">
@@ -420,17 +465,17 @@ const creditTenors = offering.vehicleCreditRows[0]?.installments.map((i) => i.te
 
         <div class="ps-detail-cta-stack">
           <a
-            href={offering.cta.href}
+            href={sidebarCtaHref}
             class:list={[
               "ps-btn",
-              offering.cta.isWhatsApp ? "ps-btn--whatsapp" : "ps-btn--primary",
+              sidebarCtaIsWhatsApp ? "ps-btn--whatsapp" : "ps-btn--primary",
             ]}
-            target={offering.cta.isExternal ? "_blank" : undefined}
-            rel={offering.cta.isExternal ? "noopener noreferrer" : undefined}
+            target={sidebarCtaIsExternal ? "_blank" : undefined}
+            rel={sidebarCtaIsExternal ? "noopener noreferrer" : undefined}
             data-testid="offering-detail-primary-cta"
-            data-wa-event={offering.cta.isWhatsApp ? "wa_click" : undefined}
+            data-wa-event={sidebarCtaIsWhatsApp ? "wa_click" : undefined}
           >
-            {offering.cta.label}
+            {sidebarCtaLabel}
           </a>
 
           {offering.fallbackContactHref && (
@@ -444,6 +489,11 @@ const creditTenors = offering.vehicleCreditRows[0]?.installments.map((i) => i.te
           </a>
         </div>
 
+        {sidebarSpecialistNote && (
+          <p class="ps-detail-note" data-testid="offering-sidebar-specialist-note">
+            {sidebarSpecialistNote}
+          </p>
+        )}
         {offering.cta.helperNote && <p class="ps-detail-note">{offering.cta.helperNote}</p>}
 
         {(result.shell.business.weekdayHours || result.shell.business.address) && (

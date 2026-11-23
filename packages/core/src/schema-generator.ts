@@ -15,6 +15,7 @@ import type {
   TourAttributes,
   VehicleAttributes,
 } from "./catalog/index.ts";
+import type { ServiceConsultationAttributes } from "./catalog/service.ts";
 import type { TravelPackageAttributes } from "./catalog/travel.ts";
 import type {
   BusinessProfileSnapshot,
@@ -344,6 +345,7 @@ export type SchemaTourDepartureItemInput = {
 
 export type SchemaOfferingAttributesInput = Partial<
   ServiceAttributes &
+    ServiceConsultationAttributes &
     ProductAttributes &
     Omit<TourAttributes, "itinerary" | "departures"> &
     Omit<TravelPackageAttributes, "itinerary" | "departures"> &
@@ -1793,6 +1795,145 @@ function collectOfferingImageUrls(
   return Array.from(unique);
 }
 
+/**
+ * Builds an honest Schema.org `Offer` or `AggregateOffer` for a `Service` node ONLY when
+ * concrete numeric pricing is visible (`fixed` or `from` / `range`) and the service is NOT
+ * `inquiry` or `on_request`.
+ *
+ * Hard Invariants (TASK-035, REQ-022, REQ-030, REQ-054):
+ * - NEVER emits `offers`, `Offer`, `price`, or `availability` when `pricingMode === "inquiry"`,
+ *   `priceMode === "on_request"`, or `ctaMode === "inquiry"`.
+ * - NEVER invents `availability`, `aggregateRating`, or `review` on `Service` offers.
+ */
+function buildHonestServiceOffer(params: {
+  readonly offering: SchemaOfferingInput;
+  readonly attrs: SchemaOfferingAttributesInput;
+  readonly canonicalUrl: string;
+}): Record<string, unknown> | null {
+  const { offering, attrs, canonicalUrl } = params;
+  if (offering.ctaMode === "inquiry") {
+    return null;
+  }
+  if (attrs.pricingMode === "inquiry" || offering.priceMode === "on_request") {
+    return null;
+  }
+
+  const tierPrices: number[] = [];
+  if (Array.isArray(attrs.pricingTiers)) {
+    for (const tier of attrs.pricingTiers) {
+      if (
+        tier &&
+        tier.pricingMode !== "inquiry" &&
+        isValidIdrInteger(tier.priceIdr) &&
+        tier.priceIdr > 0
+      ) {
+        tierPrices.push(tier.priceIdr);
+      }
+    }
+  }
+
+  const basePrice =
+    isValidIdrInteger(attrs.basePriceIdr) && attrs.basePriceIdr > 0 ? attrs.basePriceIdr : null;
+  const offeringPrice =
+    isValidIdrInteger(offering.price) && offering.price > 0 ? offering.price : null;
+
+  const effectiveMode: CatalogPriceMode | null =
+    attrs.pricingMode === "fixed" || attrs.pricingMode === "from"
+      ? attrs.pricingMode
+      : offering.priceMode === "fixed" ||
+          offering.priceMode === "from" ||
+          offering.priceMode === "range"
+        ? offering.priceMode
+        : null;
+
+  if (!effectiveMode) {
+    return null;
+  }
+
+  if (effectiveMode === "fixed") {
+    const visibleFixed =
+      basePrice ?? (tierPrices.length > 0 ? Math.min(...tierPrices) : null) ?? offeringPrice;
+    if (visibleFixed === null) {
+      return null;
+    }
+    return {
+      "@type": "Offer",
+      priceCurrency: SCHEMA_CURRENCY_IDR,
+      price: visibleFixed,
+      url: canonicalUrl,
+    };
+  }
+
+  if (effectiveMode === "from") {
+    const candidates: number[] = [...tierPrices];
+    if (basePrice !== null) candidates.push(basePrice);
+    const visibleLow = candidates.length > 0 ? Math.min(...candidates) : offeringPrice;
+    if (visibleLow === null) {
+      return null;
+    }
+    return {
+      "@type": "AggregateOffer",
+      priceCurrency: SCHEMA_CURRENCY_IDR,
+      lowPrice: visibleLow,
+      url: canonicalUrl,
+    };
+  }
+
+  if (effectiveMode === "range") {
+    const low = offeringPrice;
+    const high = isValidIdrInteger(offering.priceMax) ? offering.priceMax : null;
+    if (low === null || high === null || high < low) {
+      return null;
+    }
+    return {
+      "@type": "AggregateOffer",
+      priceCurrency: SCHEMA_CURRENCY_IDR,
+      lowPrice: low,
+      highPrice: high,
+      url: canonicalUrl,
+    };
+  }
+
+  return null;
+}
+
+function buildServiceNode(params: {
+  readonly offering: SchemaOfferingInput;
+  readonly attrs: SchemaOfferingAttributesInput;
+  readonly name: string;
+  readonly description: string;
+  readonly category: string;
+  readonly imageUrls: readonly string[];
+  readonly verifiedOrigin: string;
+  readonly canonicalUrl: string;
+}): SchemaNode {
+  const serviceArea =
+    typeof params.attrs.serviceArea === "string"
+      ? sanitizeSeoText(params.attrs.serviceArea, { maxLength: 160 })
+      : "";
+  const offers =
+    params.offering.offeringType === "service"
+      ? buildHonestServiceOffer({
+          offering: params.offering,
+          attrs: params.attrs,
+          canonicalUrl: params.canonicalUrl,
+        })
+      : null;
+
+  return {
+    "@type": "Service",
+    "@id": `${params.canonicalUrl}${SCHEMA_ENTITY_FRAGMENTS.service}`,
+    name: params.name,
+    url: params.canonicalUrl,
+    ...(params.description ? { description: params.description } : {}),
+    provider: { "@id": `${params.verifiedOrigin}/${SCHEMA_ENTITY_FRAGMENTS.organization}` },
+    ...(params.imageUrls.length > 0 ? { image: params.imageUrls } : {}),
+    ...(params.category ? { serviceType: params.category } : {}),
+    ...(serviceArea ? { areaServed: serviceArea } : {}),
+    ...(offers ? { offers } : {}),
+  };
+}
+
 function buildOfferingNode(params: {
   readonly offering: SchemaOfferingInput;
   readonly requestedSchemaType?: string | null;
@@ -1838,21 +1979,16 @@ function buildOfferingNode(params: {
       hasVisibleItinerary,
     });
     if (safeResolution.schemaType === "Service") {
-      const serviceArea =
-        typeof attrs.serviceArea === "string"
-          ? sanitizeSeoText(attrs.serviceArea, { maxLength: 160 })
-          : "";
-      return {
-        "@type": "Service",
-        "@id": `${params.canonicalUrl}${SCHEMA_ENTITY_FRAGMENTS.service}`,
+      return buildServiceNode({
+        offering,
+        attrs,
         name,
-        url: params.canonicalUrl,
-        ...(description ? { description } : {}),
-        provider: { "@id": `${params.verifiedOrigin}/${SCHEMA_ENTITY_FRAGMENTS.organization}` },
-        ...(imageUrls.length > 0 ? { image: imageUrls } : {}),
-        ...(category ? { serviceType: category } : {}),
-        ...(serviceArea ? { areaServed: serviceArea } : {}),
-      };
+        description,
+        category,
+        imageUrls,
+        verifiedOrigin: params.verifiedOrigin,
+        canonicalUrl: params.canonicalUrl,
+      });
     }
   }
 
@@ -1907,22 +2043,19 @@ function buildOfferingNode(params: {
     }
 
     case "service": {
-      // Service / inquiry items ALWAYS emit `Service` — NEVER `Product`, NEVER invented `Offer`!
-      const serviceArea =
-        typeof attrs.serviceArea === "string"
-          ? sanitizeSeoText(attrs.serviceArea, { maxLength: 160 })
-          : "";
-      return {
-        "@type": "Service",
-        "@id": `${params.canonicalUrl}${SCHEMA_ENTITY_FRAGMENTS.service}`,
+      // Service items ALWAYS emit `Service` — NEVER `Product`, NEVER invented `Offer`/`availability`!
+      // Visible numeric `fixed`/`from` pricing emits honest `Offer`/`AggregateOffer` with `priceCurrency: "IDR"`;
+      // `inquiry` / `on_request` omits `offers` completely.
+      return buildServiceNode({
+        offering,
+        attrs,
         name,
-        url: params.canonicalUrl,
-        ...(description ? { description } : {}),
-        provider: { "@id": `${params.verifiedOrigin}/${SCHEMA_ENTITY_FRAGMENTS.organization}` },
-        ...(imageUrls.length > 0 ? { image: imageUrls } : {}),
-        ...(category ? { serviceType: category } : {}),
-        ...(serviceArea ? { areaServed: serviceArea } : {}),
-      };
+        description,
+        category,
+        imageUrls,
+        verifiedOrigin: params.verifiedOrigin,
+        canonicalUrl: params.canonicalUrl,
+      });
     }
 
     case "tour": {
