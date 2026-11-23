@@ -1,0 +1,249 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  getHelpCategoryMeta,
+  guardMarketingHelpHost,
+  HELP_CANONICAL_BASE_PATH,
+  recordHelpArticleOpen,
+} from "@punyasitus/core/help/index";
+import { MARKETING_URLS, safeJsonLdStringify } from "@punyasitus/core/marketing/index";
+import { loadLiveMarketingPricing } from "@punyasitus/db/marketing/index";
+import MarketingLayout from "../../../components/marketing/MarketingLayout.astro";
+import "./_bantuan.css";
+import {
+  formatIndonesianDate,
+  getHelpArticleBySlug,
+  getRelatedHelpArticles,
+  VALID_HELP_SLUGS,
+} from "./_loader.ts";
+
+// 1. Strict marketing-host gating (308 www -> apex, neutral 404 on tenant/app/console hosts).
+const hostGuardResponse = guardMarketingHelpHost(Astro.request, {
+  appEnv: env.APP_ENV,
+  platformDomain: env.PLATFORM_DOMAIN,
+  localsSurface: Astro.locals.surface,
+  hasTenantContext: Boolean(Astro.locals.tenant),
+});
+if (hostGuardResponse) {
+  return hostGuardResponse;
+}
+
+const rawSlug = Astro.params.slug ?? "";
+const article = getHelpArticleBySlug(rawSlug);
+
+if (!article) {
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>Artikel Bantuan Tidak Ditemukan — PunyaSitus</title></head><body><main><h1>Artikel Bantuan Tidak Ditemukan</h1><p>Panduan yang Anda cari tidak tersedia atau telah dipindahkan. Silakan buka <a href="${HELP_CANONICAL_BASE_PATH}">Pusat Bantuan PunyaSitus</a>.</p></main></body></html>`,
+    {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+        "Content-Security-Policy": "default-src 'none'",
+        "X-PunyaSitus-Surface": "marketing",
+      },
+    },
+  );
+}
+
+// 2. Record privacy-preserving open count server-side on GET (zero cookies, zero PII, zero IP/UA,
+//    works identically even when visitor disables JavaScript!).
+if (Astro.request.method.toUpperCase() === "GET") {
+  try {
+    await recordHelpArticleOpen(env.PLATFORM_DB, {
+      slug: article.slug,
+      validSlugs: VALID_HELP_SLUGS,
+      source: Astro.url.searchParams.get("from"),
+    });
+  } catch {
+    // Non-blocking: article rendering must never fail if analytics counter write is unavailable.
+  }
+}
+
+Astro.response.headers.set("X-PunyaSitus-Surface", "marketing");
+Astro.response.headers.set("Cache-Control", "public, max-age=60");
+
+const pricing = await loadLiveMarketingPricing(env.PLATFORM_DB);
+const categoryMeta = getHelpCategoryMeta(article.category);
+const relatedArticles = getRelatedHelpArticles(article);
+const canonicalArticlePath = `${HELP_CANONICAL_BASE_PATH}/${article.slug}`;
+const canonicalArticleUrl = `${MARKETING_URLS.apexOrigin}${canonicalArticlePath}`;
+
+const waSupportHref = `https://wa.me/${encodeURIComponent(pricing.salesWhatsapp)}?text=${encodeURIComponent(
+  `Halo tim dukungan PunyaSitus, saya membaca panduan "${article.title}" dan butuh bantuan lanjutan.`,
+)}`;
+
+const articleJsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "Article",
+      "@id": `${canonicalArticleUrl}#article`,
+      headline: article.title,
+      description: article.summary,
+      inLanguage: "id-ID",
+      datePublished: article.updatedAt,
+      dateModified: article.updatedAt,
+      mainEntityOfPage: {
+        "@type": "WebPage",
+        "@id": canonicalArticleUrl,
+      },
+      author: {
+        "@type": "Organization",
+        name: "PunyaSitus",
+        url: MARKETING_URLS.apexOrigin,
+      },
+      publisher: {
+        "@type": "Organization",
+        name: "PunyaSitus",
+        url: MARKETING_URLS.apexOrigin,
+      },
+      articleSection: categoryMeta.label,
+      keywords: article.keywords.join(", "),
+    },
+    {
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: "Beranda",
+          item: MARKETING_URLS.apexOrigin,
+        },
+        {
+          "@type": "ListItem",
+          position: 2,
+          name: "Pusat Bantuan",
+          item: `${MARKETING_URLS.apexOrigin}${HELP_CANONICAL_BASE_PATH}`,
+        },
+        {
+          "@type": "ListItem",
+          position: 3,
+          name: categoryMeta.label,
+          item: `${MARKETING_URLS.apexOrigin}${HELP_CANONICAL_BASE_PATH}?kategori=${encodeURIComponent(article.category)}`,
+        },
+        {
+          "@type": "ListItem",
+          position: 4,
+          name: article.title,
+          item: canonicalArticleUrl,
+        },
+      ],
+    },
+  ],
+};
+---
+
+<MarketingLayout
+  title={`${article.title} — Pusat Bantuan`}
+  description={article.summary}
+  canonicalPath={canonicalArticlePath}
+  currentNav="home"
+  salesWhatsapp={pricing.salesWhatsapp}
+  supportEmail={pricing.supportEmail}
+  supportHours={pricing.supportHours}
+>
+  <script type="application/ld+json" set:html={safeJsonLdStringify(articleJsonLd)} />
+
+  <section class="mk-section" data-testid="help-article-page" data-article-slug={article.slug}>
+    <div class="mk-container">
+      <nav class="bh-breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="/marketing">Beranda</a></li>
+          <li><a href={HELP_CANONICAL_BASE_PATH}>Pusat Bantuan</a></li>
+          <li>
+            <a href={`${HELP_CANONICAL_BASE_PATH}?kategori=${encodeURIComponent(article.category)}`}>
+              {categoryMeta.label}
+            </a>
+          </li>
+          <li aria-current="page">{article.title}</li>
+        </ol>
+      </nav>
+
+      <div class="bh-article-layout">
+        <article class="bh-article-main">
+          <header class="bh-article-header">
+            <span class="mk-tag">{categoryMeta.label}</span>
+            <h1 data-testid="help-article-title">{article.title}</h1>
+            <p class="bh-hero-lead">{article.summary}</p>
+            <div class="bh-article-meta-bar">
+              <span class="mk-tabular">Waktu baca: {article.readingMinutes} menit</span>
+              <span>·</span>
+              <span>
+                Diperbarui:{" "}
+                <time datetime={article.updatedAt}>{formatIndonesianDate(article.updatedAt)}</time>
+              </span>
+            </div>
+          </header>
+
+          <div class="bh-prose" data-testid="help-article-body" set:html={article.bodyHtml} />
+
+          {relatedArticles.length > 0 && (
+            <section
+              class="bh-related-section"
+              aria-labelledby="heading-terkait"
+              data-testid="help-related-section"
+            >
+              <h2 id="heading-terkait" style="font-size:1.25rem;margin-bottom:1rem;">
+                Panduan Terkait
+              </h2>
+              <div class="mk-grid-2">
+                {relatedArticles.map((rel) => (
+                  <article class="bh-article-card" data-testid={`help-related-${rel.slug}`}>
+                    <span class="mk-tag">{getHelpCategoryMeta(rel.category).shortLabel}</span>
+                    <h3>
+                      <a
+                        href={`${HELP_CANONICAL_BASE_PATH}/${rel.slug}?from=marketing`}
+                        class="bh-article-card-link"
+                      >
+                        {rel.title}
+                      </a>
+                    </h3>
+                    <p class="bh-article-summary">{rel.summary}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+        </article>
+
+        {article.headings.length > 0 && (
+          <aside class="bh-toc-card" aria-label="Daftar isi panduan" data-testid="help-article-toc">
+            <p class="bh-toc-title">Daftar Isi</p>
+            <ol class="bh-toc-list">
+              {article.headings.map((h) => (
+                <li class={h.level === 3 ? "bh-toc-sub" : undefined}>
+                  <a href={`#${h.id}`}>{h.text}</a>
+                </li>
+              ))}
+            </ol>
+          </aside>
+        )}
+      </div>
+
+      <div class="mk-cta-band" style="margin-top:2.5rem;">
+        <div style="display:flex;flex-direction:column;gap:0.35rem;">
+          <h2 style="font-size:1.25rem;">Perlu bantuan lebih lanjut?</h2>
+          <p style="color:var(--mk-ink-muted);max-width:56ch;">
+            Kembali ke daftar panduan lengkap atau hubungi tim dukungan kami pada jam kerja{" "}
+            <strong>{pricing.supportHours}</strong>.
+          </p>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.75rem;">
+          <a href={HELP_CANONICAL_BASE_PATH} class="mk-btn mk-btn-secondary">
+            &larr; Semua Artikel Bantuan
+          </a>
+          <a
+            href={waSupportHref}
+            class="mk-btn mk-btn-wa"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Tanya via WhatsApp
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+</MarketingLayout>

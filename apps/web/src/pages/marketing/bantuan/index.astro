@@ -1,0 +1,324 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  filterHelpArticles,
+  getHelpCategoryMeta,
+  guardMarketingHelpHost,
+  HELP_CANONICAL_BASE_PATH,
+  HELP_CATEGORIES,
+  isHelpCategoryId,
+  type HelpCategoryId,
+} from "@punyasitus/core/help/index";
+import { MARKETING_URLS, safeJsonLdStringify } from "@punyasitus/core/marketing/index";
+import { loadLiveMarketingPricing } from "@punyasitus/db/marketing/index";
+import MarketingLayout from "../../../components/marketing/MarketingLayout.astro";
+import "./_bantuan.css";
+import {
+  formatIndonesianDate,
+  getAllHelpArticles,
+  getFeaturedHelpArticles,
+  groupHelpArticlesByCategory,
+} from "./_loader.ts";
+
+// 1. Strict marketing-host gating (308 www -> apex, neutral 404 on tenant/app/console hosts).
+const hostGuardResponse = guardMarketingHelpHost(Astro.request, {
+  appEnv: env.APP_ENV,
+  platformDomain: env.PLATFORM_DOMAIN,
+  localsSurface: Astro.locals.surface,
+  hasTenantContext: Boolean(Astro.locals.tenant),
+});
+if (hostGuardResponse) {
+  return hostGuardResponse;
+}
+
+Astro.response.headers.set("X-PunyaSitus-Surface", "marketing");
+Astro.response.headers.set("Cache-Control", "public, max-age=60");
+
+const pricing = await loadLiveMarketingPricing(env.PLATFORM_DB);
+
+// 2. Pure server-side search & category filter (100% functional with JavaScript disabled).
+const rawQuery = (Astro.url.searchParams.get("q") ?? "").trim().slice(0, 100);
+const rawCategory = (Astro.url.searchParams.get("kategori") ?? "").trim().toLowerCase();
+const activeCategory: HelpCategoryId | null = isHelpCategoryId(rawCategory) ? rawCategory : null;
+
+const allArticles = getAllHelpArticles();
+const featuredArticles = getFeaturedHelpArticles();
+const filteredArticles = filterHelpArticles(allArticles, {
+  query: rawQuery,
+  category: activeCategory,
+});
+const groupedArticles = groupHelpArticlesByCategory(filteredArticles);
+const hasActiveFilter = Boolean(rawQuery || activeCategory);
+
+const waSupportHref = `https://wa.me/${encodeURIComponent(pricing.salesWhatsapp)}?text=${encodeURIComponent(
+  "Halo tim dukungan PunyaSitus, saya membutuhkan bantuan terkait penggunaan situs PunyaSitus.",
+)}`;
+
+const collectionJsonLd = {
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "CollectionPage",
+      "@id": `${MARKETING_URLS.apexOrigin}${HELP_CANONICAL_BASE_PATH}#webpage`,
+      url: `${MARKETING_URLS.apexOrigin}${HELP_CANONICAL_BASE_PATH}`,
+      name: "Pusat Bantuan PunyaSitus",
+      description:
+        "Panduan lengkap Bahasa Indonesia untuk memulai uji coba, menghubungkan domain, menyusun penawaran, mengatur WhatsApp, pembayaran QRIS/VA, kuitansi PDF, dan pesan masuk.",
+      inLanguage: "id-ID",
+      numberOfItems: allArticles.length,
+    },
+    {
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: "Beranda",
+          item: MARKETING_URLS.apexOrigin,
+        },
+        {
+          "@type": "ListItem",
+          position: 2,
+          name: "Pusat Bantuan",
+          item: `${MARKETING_URLS.apexOrigin}${HELP_CANONICAL_BASE_PATH}`,
+        },
+      ],
+    },
+  ],
+};
+---
+
+<MarketingLayout
+  title="Pusat Bantuan & Panduan Penggunaan"
+  description="Panduan praktis Bahasa Indonesia untuk mengelola situs PunyaSitus: uji coba 7 hari, domain & DNS, katalog penawaran, WhatsApp, pembayaran QRIS/VA, kuitansi PDF, dan pesan masuk."
+  canonicalPath={HELP_CANONICAL_BASE_PATH}
+  currentNav="home"
+  salesWhatsapp={pricing.salesWhatsapp}
+  supportEmail={pricing.supportEmail}
+  supportHours={pricing.supportHours}
+>
+  <script type="application/ld+json" set:html={safeJsonLdStringify(collectionJsonLd)} />
+
+  <!-- Hero & Zero-JS Search -->
+  <section class="bh-hero" data-testid="help-center-hero">
+    <div class="mk-container">
+      <div class="bh-hero-inner">
+        <span class="mk-tag">Pusat Bantuan PunyaSitus · {allArticles.length} Panduan</span>
+        <h1>Panduan praktis mengelola website bisnis Anda di PunyaSitus</h1>
+        <p class="bh-hero-lead">
+          Temukan langkah cepat mulai dari uji coba gratis {pricing.trialDays} hari, menghubungkan
+          domain <code>.id</code>/<code>.co.id</code>/<code>.com</code>, membuat penawaran pertama,
+          hingga mengunduh kuitansi PDF dan mengekspor pesan masuk.
+        </p>
+
+        <form
+          method="get"
+          action={HELP_CANONICAL_BASE_PATH}
+          class="bh-search-form"
+          role="search"
+          aria-label="Cari artikel bantuan"
+          data-testid="help-search-form"
+        >
+          <label for="help-search-q" class="mk-skip-link">Kata kunci pencarian bantuan</label>
+          <input
+            id="help-search-q"
+            name="q"
+            type="search"
+            value={rawQuery}
+            placeholder="Cari topik, misal: domain, QRIS, kuitansi, WhatsApp, CSV..."
+            class="bh-search-input"
+            data-testid="help-search-input"
+          />
+          {activeCategory && <input type="hidden" name="kategori" value={activeCategory} />}
+          <button type="submit" class="mk-btn mk-btn-primary" data-testid="help-search-submit">
+            Cari Panduan
+          </button>
+          {hasActiveFilter && (
+            <a
+              href={HELP_CANONICAL_BASE_PATH}
+              class="mk-btn mk-btn-secondary"
+              data-testid="help-filter-reset"
+            >
+              Reset Filter
+            </a>
+          )}
+        </form>
+
+        <nav class="bh-category-pills" aria-label="Filter kategori bantuan" data-testid="help-category-nav">
+          <a
+            href={HELP_CANONICAL_BASE_PATH}
+            class="bh-pill"
+            aria-current={activeCategory === null ? "true" : undefined}
+          >
+            Semua Topik ({allArticles.length})
+          </a>
+          {HELP_CATEGORIES.map((cat) => (
+            <a
+              href={`${HELP_CANONICAL_BASE_PATH}?kategori=${encodeURIComponent(cat.id)}`}
+              class="bh-pill"
+              aria-current={activeCategory === cat.id ? "true" : undefined}
+              data-testid={`help-cat-pill-${cat.id}`}
+            >
+              {cat.shortLabel}
+            </a>
+          ))}
+        </nav>
+      </div>
+    </div>
+  </section>
+
+  <!-- Featured Quick-Start Guides (shown when no search/category filter active) -->
+  {!hasActiveFilter && featuredArticles.length > 0 && (
+    <section class="mk-section" aria-labelledby="heading-populer" data-testid="help-featured-section">
+      <div class="mk-container">
+        <div class="mk-section-head">
+          <h2 id="heading-populer">Panduan Paling Sering Dicari</h2>
+          <p>
+            Langkah inti yang paling sering dibutuhkan pemilik usaha saat memulai dan mengaktifkan
+            website bisnis.
+          </p>
+        </div>
+
+        <div class="bh-featured-grid">
+          {featuredArticles.map((article) => {
+            const catMeta = getHelpCategoryMeta(article.category);
+            return (
+              <article class="bh-article-card" data-testid={`help-featured-${article.slug}`}>
+                <span class="mk-tag">{catMeta.shortLabel}</span>
+                <h3>
+                  <a
+                    href={`${HELP_CANONICAL_BASE_PATH}/${article.slug}?from=marketing`}
+                    class="bh-article-card-link"
+                  >
+                    {article.title}
+                  </a>
+                </h3>
+                <p class="bh-article-summary">{article.summary}</p>
+                <div class="bh-article-meta">
+                  <span class="mk-tabular">{article.readingMinutes} menit baca</span>
+                  <a
+                    href={`${HELP_CANONICAL_BASE_PATH}/${article.slug}?from=marketing`}
+                    class="bh-read-link"
+                  >
+                    Baca panduan &rarr;
+                  </a>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+  )}
+
+  <!-- Categorized Article Directory -->
+  <section
+    class={hasActiveFilter ? "mk-section" : "mk-section mk-section-tinted"}
+    aria-labelledby="heading-semua-panduan"
+    data-testid="help-directory-section"
+  >
+    <div class="mk-container">
+      <div class="mk-section-head">
+        <h2 id="heading-semua-panduan">
+          {hasActiveFilter
+            ? `Hasil Pencarian (${filteredArticles.length} artikel)`
+            : "Semua Panduan Berdasarkan Topik"}
+        </h2>
+        {hasActiveFilter && (
+          <p>
+            {rawQuery ? `Menampilkan artikel yang cocok dengan "${rawQuery}"` : "Difilter berdasarkan kategori pilihan"}
+            {activeCategory ? ` di kategori ${getHelpCategoryMeta(activeCategory).label}` : ""}.
+          </p>
+        )}
+      </div>
+
+      {groupedArticles.length === 0 ? (
+        <div class="bh-empty-state" data-testid="help-empty-search">
+          <h3>Belum ditemukan panduan yang cocok</h3>
+          <p style="color:var(--mk-ink-muted);">
+            Coba gunakan kata kunci lebih singkat seperti <strong>domain</strong>,{" "}
+            <strong>QRIS</strong>, <strong>kuitansi</strong>, <strong>WhatsApp</strong>, atau{" "}
+            <strong>CSV</strong>.
+          </p>
+          <div>
+            <a href={HELP_CANONICAL_BASE_PATH} class="mk-btn mk-btn-primary">
+              Tampilkan Semua {allArticles.length} Panduan
+            </a>
+          </div>
+        </div>
+      ) : (
+        groupedArticles.map((group) => (
+          <div
+            class="bh-category-block"
+            id={`kategori-${group.category.id}`}
+            data-testid={`help-group-${group.category.id}`}
+          >
+            <div class="bh-category-head">
+              <div>
+                <h3>{group.category.label}</h3>
+                <p>{group.category.description}</p>
+              </div>
+              <span class="mk-meta-label mk-tabular">{group.articles.length} artikel</span>
+            </div>
+
+            <div class="bh-article-grid">
+              {group.articles.map((article) => (
+                <article class="bh-article-card" data-testid={`help-card-${article.slug}`}>
+                  <h4>
+                    <a
+                      href={`${HELP_CANONICAL_BASE_PATH}/${article.slug}?from=marketing`}
+                      class="bh-article-card-link"
+                    >
+                      {article.title}
+                    </a>
+                  </h4>
+                  <p class="bh-article-summary">{article.summary}</p>
+                  <div class="bh-article-meta">
+                    <span class="mk-tabular">
+                      {article.readingMinutes} menit · Diperbarui{" "}
+                      {formatIndonesianDate(article.updatedAt)}
+                    </span>
+                    <a
+                      href={`${HELP_CANONICAL_BASE_PATH}/${article.slug}?from=marketing`}
+                      class="bh-read-link"
+                    >
+                      Buka &rarr;
+                    </a>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  </section>
+
+  <!-- Support CTA Band -->
+  <section class="mk-section">
+    <div class="mk-container">
+      <div class="mk-cta-band">
+        <div style="display:flex;flex-direction:column;gap:0.4rem;">
+          <h2>Masih butuh bantuan langsung untuk situs Anda?</h2>
+          <p style="color:var(--mk-ink-muted);max-width:58ch;">
+            Tim dukungan PunyaSitus siap membantu pada jam operasional{" "}
+            <strong>{pricing.supportHours}</strong> (target respons {pricing.supportResponseTarget}).
+          </p>
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:0.75rem;">
+          <a
+            href={waSupportHref}
+            class="mk-btn mk-btn-wa"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Hubungi Dukungan WhatsApp
+          </a>
+          <a href={MARKETING_URLS.appLogin} class="mk-btn mk-btn-secondary">
+            Masuk ke Dashboard
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+</MarketingLayout>
