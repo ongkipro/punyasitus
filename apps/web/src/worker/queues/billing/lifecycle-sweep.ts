@@ -30,6 +30,10 @@ import {
   createBillingAdviceReconciliationHandler,
   type RunBillingAdviceSweepOptions,
 } from "./advice-reconciliation.ts";
+import {
+  BILLING_RECEIPT_DELIVERY_TOPIC,
+  createBillingReceiptDeliveryHandler,
+} from "./receipt-delivery.ts";
 import type { DurableJobHandler, DurableQueueEnv, JobExecutionContext } from "../consumer.ts";
 import { BILLING_LIFECYCLE_SWEEP_TOPIC } from "../dispatch/billing.ts";
 
@@ -443,6 +447,11 @@ export function createBillingJobRegistry(
 ): Readonly<Record<string, DurableJobHandler>> {
   const registry: Record<string, DurableJobHandler> = {
     [BILLING_LIFECYCLE_SWEEP_TOPIC]: createBillingLifecycleSweepHandler(options),
+    [BILLING_RECEIPT_DELIVERY_TOPIC]: createBillingReceiptDeliveryHandler({
+      emailPort: options.emailPort,
+      suppressionSalt: options.suppressionSalt,
+      now: options.now,
+    }),
   };
   if (options.adviceReconciliation) {
     registry[BILLING_ADVICE_RECONCILE_TOPIC] = createBillingAdviceReconciliationHandler({

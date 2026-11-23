@@ -6,9 +6,16 @@ import {
   createConsoleRequestId,
   parseStrictConsoleJsonBody,
 } from "@punyasitus/auth/platform/index";
-import { BillingValidationError } from "@punyasitus/core/billing/index";
+import {
+  BillingValidationError,
+  redactBillingLogRecord,
+} from "@punyasitus/core/billing/index";
 import { recordAuditedBillingRefund } from "@punyasitus/db/billing/index";
 import type { APIRoute } from "astro";
+import {
+  enqueueBillingReceiptDelivery,
+  issueAndDeliverRefundCreditNote,
+} from "../../../../worker/queues/billing/receipt-delivery.ts";
 import {
   mapConsoleBillingErrorToResponse,
   resolveConsoleBillingRuntimeEnv,
@@ -124,9 +131,109 @@ export async function handleConsoleBillingRefundRequest(
       nowMs: authz.ctx.nowMs,
     });
 
+    let creditNoteSummary: Record<string, unknown> | null = null;
+    let creditNoteDeferred = false;
+    if (runtimeEnv.MEDIA_BUCKET || runtimeEnv.JOBS_QUEUE) {
+      if (runtimeEnv.MEDIA_BUCKET) {
+        try {
+          const issued = await issueAndDeliverRefundCreditNote({
+            db: authz.ctx.platformDb,
+            mediaBucket: runtimeEnv.MEDIA_BUCKET,
+            refundId: recorded.refund.id,
+            emailPort: options.emailPort,
+            cloudflareEmailBinding: runtimeEnv.EMAIL,
+            platformDomain: runtimeEnv.PLATFORM_DOMAIN,
+            nowMs: authz.ctx.nowMs,
+            logger: options.logger,
+          });
+          creditNoteSummary = {
+            id: issued.receipt.id,
+            receiptNumber: issued.receipt.receiptNumber,
+            documentKind: issued.receipt.documentKind,
+            linkedReceiptId: issued.linkedReceiptId,
+            linkedReceiptNumber: issued.linkedReceiptNumber,
+            totalAmountIdr: issued.receipt.totalAmountIdr,
+            r2ObjectKey: issued.receipt.r2ObjectKey,
+            pdfSha256: issued.receipt.pdfSha256,
+            issuedAt: issued.receipt.issuedAtIso,
+            emailedAt: issued.receipt.emailedAtIso,
+            emailOutcome: issued.emailOutcome,
+          };
+          // If email failed transiently and queue is available, enqueue durable retry
+          if (
+            (issued.emailOutcome === "failed" || issued.emailOutcome === "unknown") &&
+            issued.emailRetryable !== false &&
+            runtimeEnv.JOBS_QUEUE
+          ) {
+            try {
+              await enqueueBillingReceiptDelivery(
+                { PLATFORM_DB: authz.ctx.platformDb, JOBS_QUEUE: runtimeEnv.JOBS_QUEUE },
+                {
+                  refundId: recorded.refund.id,
+                  tenantId: recorded.refund.tenantId,
+                  correlationId: authz.ctx.requestId,
+                  nowMs: authz.ctx.nowMs,
+                },
+              );
+            } catch {
+              // Best-effort durable email retry enqueue
+            }
+          }
+        } catch {
+          creditNoteSummary = null;
+          creditNoteDeferred = true;
+          options.logger?.(
+            redactBillingLogRecord({
+              event: "console.billing.credit_note_deferred",
+              refundId: recorded.refund.id,
+              obligationId: recorded.refund.obligationId,
+              tenantId: recorded.refund.tenantId,
+              requestId: authz.ctx.requestId,
+              timestamp: authz.ctx.nowMs,
+            }),
+          );
+          if (runtimeEnv.JOBS_QUEUE) {
+            try {
+              await enqueueBillingReceiptDelivery(
+                { PLATFORM_DB: authz.ctx.platformDb, JOBS_QUEUE: runtimeEnv.JOBS_QUEUE },
+                {
+                  refundId: recorded.refund.id,
+                  tenantId: recorded.refund.tenantId,
+                  correlationId: authz.ctx.requestId,
+                  nowMs: authz.ctx.nowMs,
+                },
+              );
+            } catch {
+              // Best-effort durable recovery enqueue; refund is already durably committed
+            }
+          }
+        }
+      } else if (runtimeEnv.JOBS_QUEUE) {
+        creditNoteDeferred = true;
+        try {
+          await enqueueBillingReceiptDelivery(
+            { PLATFORM_DB: authz.ctx.platformDb, JOBS_QUEUE: runtimeEnv.JOBS_QUEUE },
+            {
+              refundId: recorded.refund.id,
+              tenantId: recorded.refund.tenantId,
+              correlationId: authz.ctx.requestId,
+              nowMs: authz.ctx.nowMs,
+            },
+          );
+        } catch {
+          // Best-effort durable enqueue; refund is already durably committed
+        }
+      }
+    }
+
     return consoleJsonResponse(201, {
       success: true,
       refund: recorded.refund,
+      ...(creditNoteSummary !== null
+        ? { creditNote: creditNoteSummary }
+        : creditNoteDeferred
+          ? { creditNote: null, creditNoteDeferred: true }
+          : {}),
       auditId: recorded.auditId,
       requestId: authz.ctx.requestId,
     });
