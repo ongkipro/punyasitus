@@ -1,0 +1,90 @@
+---
+import {
+  buildAnalyticsHeadBootstrapPayload,
+  safeSerializeAnalyticsBootstrap,
+  type DirectAnalyticsConfig,
+  type ProviderScriptOverrides,
+} from "@punyasitus/core/analytics/config";
+import { CONSENT_COOKIE_NAME, CONSENT_POLICY_VERSION } from "../core/privacy.ts";
+
+/**
+ * Consent-Aware Direct Analytics Head Component (`apps/web/src/components/AnalyticsHead.astro`;
+ * TASK-022, REQ-027, REQ-017, REQ-033, REQ-039).
+ *
+ * Security & privacy invariants:
+ * - Emits ZERO third-party `<script src="...">` tags in SSR HTML (strict zero-tags-before-consent).
+ * - Emits NOTHING on non-tenant surfaces (`app`, `console`, `marketing`, `preview`, `error`),
+ *   preview mode, or when no valid direct GA4 / Meta Pixel / TikTok Pixel ID is configured.
+ * - Direct GA4 (`G-*`), Meta Pixel (`10-20` digits), and TikTok Pixel (`10-32` uppercase alphanumeric) ONLY;
+ *   tenant Google Tag Manager (`GTM-*`) is owned by `TASK-076`.
+ * - `vendorScriptOverrides` is stripped completely unless `APP_ENV` is strictly `"local"` or `"test"`.
+ * - Embeds only an inert `<script type="application/json">` bootstrap payload escaped against
+ *   `</script>` breakout, paired with the first-party consent-gated dispatcher (`../scripts/analytics.ts`).
+ */
+
+export interface Props {
+  readonly config?: Partial<DirectAnalyticsConfig> | null;
+  readonly surface?: "tenant" | "app" | "console" | "marketing" | "preview" | "error";
+  readonly isPreview?: boolean;
+  readonly policyVersion?: number;
+  readonly cookieName?: string;
+  readonly autoPageView?: boolean;
+  /** Explicit runtime environment string (`"local" | "test" | "staging" | "production"`). */
+  readonly appEnv?: string;
+  /**
+   * Explicit programmatic test-harness override for mock vendor script URLs.
+   * Stripped completely outside `"local"` / `"test"` environments; NEVER read from URL query params.
+   */
+  readonly vendorScriptOverrides?: ProviderScriptOverrides;
+}
+
+const {
+  config = null,
+  surface = "tenant",
+  isPreview = false,
+  policyVersion = CONSENT_POLICY_VERSION,
+  cookieName = CONSENT_COOKIE_NAME,
+  autoPageView = true,
+  appEnv,
+  vendorScriptOverrides,
+} = Astro.props;
+
+const resolvedAppEnv = (
+  appEnv ??
+  (import.meta.env.APP_ENV as string | undefined) ??
+  (typeof process !== "undefined" ? process.env?.APP_ENV : undefined) ??
+  ""
+)
+  .trim()
+  .toLowerCase();
+const allowTestOverrides = resolvedAppEnv === "local" || resolvedAppEnv === "test";
+
+const bootstrapPayload = buildAnalyticsHeadBootstrapPayload({
+  config,
+  surface,
+  isPreview,
+  policyVersion,
+  cookieName,
+  autoPageView,
+  allowTestOverrides,
+  testScriptOverrides: allowTestOverrides ? vendorScriptOverrides : undefined,
+});
+
+const serializedBootstrap = bootstrapPayload
+  ? safeSerializeAnalyticsBootstrap(bootstrapPayload)
+  : null;
+---
+
+{serializedBootstrap && (
+  <>
+    <script
+      type="application/json"
+      id="ps-analytics-config"
+      data-ps-analytics-config="true"
+      set:html={serializedBootstrap}
+    />
+    <script>
+      import "../scripts/analytics.ts";
+    </script>
+  </>
+)}

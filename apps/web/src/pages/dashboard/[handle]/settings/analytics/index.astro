@@ -1,0 +1,171 @@
+---
+import { env } from "cloudflare:workers";
+import { canPerform } from "@punyasitus/auth";
+import { getTenantAnalyticsSettings } from "@punyasitus/db/analytics-settings/index";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import type { TenantVertical } from "@punyasitus/db/platform";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import { bindTenantDatabase } from "@/core/tenant";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { AnalyticsSettingsForm } from "./_AnalyticsSettingsForm";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+function neutralNotFoundResponse(): Response {
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Halaman tidak ditemukan</title></head><body><main><h1>Halaman tidak ditemukan</h1></main></body></html>`,
+    {
+      status: 404,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+        "Content-Security-Policy": "default-src 'none'",
+      },
+    },
+  );
+}
+
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return neutralNotFoundResponse();
+}
+
+const authorized = Astro.locals.authorizedTenantMember;
+const authUser = Astro.locals.authUser;
+if (!authorized || !authUser || !env.PLATFORM_DB) {
+  return neutralNotFoundResponse();
+}
+
+function mapLifecycle(status: string): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+function offeringLabelForVertical(vertical?: TenantVertical): string {
+  switch (vertical) {
+    case "catalog":
+    case "resto":
+      return "Produk";
+    case "travel":
+      return "Paket Tur";
+    case "dealer":
+      return "Kendaraan";
+    default:
+      return "Layanan";
+  }
+}
+
+const saasZone = env.SAAS_ZONE || "situsku.click";
+
+const tenantMeta = await env.PLATFORM_DB.prepare(
+  `SELECT
+     t.name AS name,
+     t.vertical AS vertical,
+     t.operator_hold_reason AS operator_hold_reason,
+     t.trial_ends_at AS trial_ends_at,
+     ph.host AS primary_host
+   FROM tenants t
+   LEFT JOIN tenant_hosts ph
+     ON ph.tenant_id = t.id
+     AND ph.is_primary = 1
+     AND ph.status = 'active'
+     AND ph.ssl_status = 'active'
+   WHERE t.id = ?
+   LIMIT 1`,
+)
+  .bind(authorized.tenantId)
+  .first<{
+    readonly name: string;
+    readonly vertical: TenantVertical;
+    readonly operator_hold_reason: string | null;
+    readonly trial_ends_at: number | null;
+    readonly primary_host: string | null;
+  }>();
+
+const tenantName = tenantMeta?.name || authorized.handle;
+const primaryHost = tenantMeta?.primary_host ?? `${authorized.handle}.${saasZone}`;
+const lifecycleStatus = mapLifecycle(authorized.tenantStatus);
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof tenantMeta?.trial_ends_at === "number"
+    ? Math.max(0, Math.ceil((tenantMeta.trial_ends_at - Date.now()) / 86_400_000))
+    : undefined;
+
+const canWriteSettings =
+  canPerform(authorized.role, "settings:write") &&
+  lifecycleStatus !== "locked" &&
+  lifecycleStatus !== "suspended";
+
+let initialSettings = {
+  ga4MeasurementId: null as string | null,
+  metaPixelId: null as string | null,
+  tiktokPixelId: null as string | null,
+  version: 0,
+  updatedAt: null as string | null,
+};
+let initialLoadError: string | null = null;
+
+if (lifecycleStatus !== "suspended") {
+  const tenantDb = bindTenantDatabase(
+    env.TENANT_STORE as unknown as TenantStoreNamespaceLike,
+    authorized.tenantId,
+  );
+  if (tenantDb) {
+    try {
+      initialSettings = await getTenantAnalyticsSettings(tenantDb);
+    } catch {
+      initialLoadError =
+        "Gagal memuat konfigurasi analitik terbaru dari penyimpanan situs. Coba muat ulang halaman.";
+    }
+  } else {
+    initialLoadError = "Penyimpanan data situs sementara tidak tersedia.";
+  }
+}
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+Astro.response.headers.set("Vary", "Cookie");
+---
+
+<DashboardLayout
+  title={`Analitik & Piksel — ${tenantName}`}
+  surface="dashboard"
+  workspaceName={tenantName}
+  workspaceSubtitle={primaryHost}
+  activeNavId="settings"
+  basePath={`/dashboard/${authorized.handle}`}
+  offeringLabel={offeringLabelForVertical(tenantMeta?.vertical)}
+  lifecycleStatus={lifecycleStatus}
+  lifecycleDaysRemaining={lifecycleDaysRemaining}
+  lifecycleReason={tenantMeta?.operator_hold_reason ?? undefined}
+  publicSiteHref={`https://${primaryHost}`}
+  userDisplayName={authUser.name}
+  userRoleLabel={
+    authorized.role === "owner"
+      ? "Pemilik Situs"
+      : authorized.role === "admin"
+        ? "Admin"
+        : "Editor"
+  }
+>
+  <AnalyticsSettingsForm
+    client:load
+    handle={authorized.handle}
+    tenantName={tenantName}
+    tenantStatus={authorized.tenantStatus}
+    currentRole={authorized.role}
+    canEdit={canWriteSettings}
+    initialSettings={initialSettings}
+    initialLoadError={initialLoadError}
+  />
+</DashboardLayout>
