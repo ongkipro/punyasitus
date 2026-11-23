@@ -1,0 +1,90 @@
+---
+import "./styles/theme.css";
+import SEOHead from "../../../components/SEOHead.astro";
+import type { PublicThemeRouteShellContract } from "../../../core/theme-registry.ts";
+import DefaultLayout from "../../default/Layout.astro";
+import { SAMPLE_AGENCY_THEME_ID } from "./theme.ts";
+
+/**
+ * Sample Agency Custom Theme Frame (`apps/web/src/themes/custom/sample-agency/Layout.astro`).
+ *
+ * Strictly wrapped inside the shared platform shell (`DefaultLayout` + `<SEOHead>` +
+ * Schema.org JSON-LD + `<Consent>`). Custom themes NEVER emit competing canonical,
+ * robots, JSON-LD, or third-party tracker tags and CANNOT bypass fallback isolation.
+ */
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly pageTitle?: string;
+  readonly pageDescription?: string;
+}
+
+const { contract, pageTitle, pageDescription } = Astro.props;
+const isCustomActive =
+  !contract.resolution.fallbackUsed &&
+  contract.resolution.resolvedTheme.id === SAMPLE_AGENCY_THEME_ID;
+---
+
+<DefaultLayout
+  shell={contract.shell}
+  pageTitle={pageTitle}
+  pageDescription={pageDescription}
+  currentPath={contract.pathname}
+  privacyPolicyUrl={contract.consent.privacyPolicyUrl}
+  showConsent={contract.consent.required}
+  vendorScripts={contract.consent.vendorScripts}
+  mapEmbed={contract.consent.mapEmbed}
+  initialCookieHeader={contract.consent.initialCookieHeader}
+  headerCtaLabel={contract.headerCtaLabel}
+  headerCtaHref={contract.headerCtaHref}
+>
+  <SEOHead
+    slot="head"
+    metadata={contract.seoMetadata}
+    jsonLd={contract.schemaGraph ?? undefined}
+    omitTitle={true}
+    omitDescription={true}
+  />
+
+  {isCustomActive ? (
+    <div
+      class="sa-theme-frame"
+      data-ps-custom-theme={SAMPLE_AGENCY_THEME_ID}
+      data-ps-route-kind={contract.routeKind}
+      data-ps-grant-source={contract.resolution.grantSource}
+      data-testid="custom-theme-frame"
+    >
+      {contract.shell.layoutMode !== "focused" && (
+        <div class="sa-editorial-ribbon" data-testid="sample-agency-ribbon">
+          <div class="ps-container sa-editorial-ribbon-inner">
+            <span class="sa-ribbon-kicker">
+              <span class="sa-ribbon-dot" aria-hidden="true"></span>
+              {contract.shell.business.name}
+            </span>
+            {contract.shell.business.city && (
+              <p class="sa-ribbon-meta">
+                {contract.shell.business.city}
+                {contract.shell.business.weekdayHours
+                  ? ` · ${contract.shell.business.weekdayHours}`
+                  : ""}
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      <slot />
+    </div>
+  ) : (
+    <div
+      data-ps-fallback-theme={contract.resolution.resolvedTheme.id}
+      data-ps-fallback-reason={contract.resolution.fallbackReason ?? "platform_default"}
+      data-ps-route-kind={contract.routeKind}
+      data-testid="fallback-theme-frame"
+    >
+      <slot />
+    </div>
+  )}
+
+  <slot name="floating" slot="floating" />
+</DefaultLayout>

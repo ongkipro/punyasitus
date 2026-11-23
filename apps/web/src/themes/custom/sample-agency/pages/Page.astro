@@ -1,0 +1,50 @@
+---
+import type { PublicThemeRouteShellContract } from "../../../../core/theme-registry.ts";
+import SectionRenderer from "../sections/SectionRenderer.astro";
+import type { SampleAgencyPageRouteData } from "./types.ts";
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly data: SampleAgencyPageRouteData;
+}
+
+const { contract, data } = Astro.props;
+const hasSections = Array.isArray(data.sections) && data.sections.length > 0;
+---
+
+<div data-testid="route-page">
+  <nav class="sa-breadcrumb-bar" aria-label="Breadcrumb">
+    <div class="ps-container">
+      <ol class="sa-breadcrumb-list">
+        <li><a href="/" class="sa-breadcrumb-link">Beranda</a></li>
+        <li aria-hidden="true" class="sa-breadcrumb-sep">/</li>
+        <li aria-current="page">{data.title}</li>
+      </ol>
+    </div>
+  </nav>
+
+  {hasSections ? (
+    <SectionRenderer
+      sections={data.sections}
+      themeId={contract.resolution.resolvedTheme.id}
+      routePath={contract.pathname}
+      pageSlug={data.slug}
+      isHomepage={false}
+      mode={contract.shell.isPreview ? "preview" : "published"}
+      businessCategory={contract.shell.business.category}
+      heroVariant={contract.themeStyle.variants.heroVariant}
+      primaryOrigin={data.primaryOrigin ?? contract.seoMetadata.verifiedOrigin ?? "https://situsku.click"}
+      fallbackBusiness={contract.shell.business}
+    />
+  ) : (
+    <section class="sa-band">
+      <div class="ps-container">
+        <div class="sa-empty-card">
+          <p class="sa-eyebrow">Halaman</p>
+          <h1 class="sa-route-title">{data.title}</h1>
+          {data.description && <p class="sa-route-lead">{data.description}</p>}
+        </div>
+      </div>
+    </section>
+  )}
+</div>

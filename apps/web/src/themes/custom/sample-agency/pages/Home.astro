@@ -1,0 +1,26 @@
+---
+import type { PublicThemeRouteShellContract } from "../../../../core/theme-registry.ts";
+import SectionRenderer from "../sections/SectionRenderer.astro";
+import type { SampleAgencyHomeRouteData } from "./types.ts";
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly data: SampleAgencyHomeRouteData;
+}
+
+const { contract, data } = Astro.props;
+---
+
+<div data-testid="route-home">
+  <SectionRenderer
+    sections={data.sections}
+    themeId={contract.resolution.resolvedTheme.id}
+    routePath={contract.pathname}
+    isHomepage={true}
+    mode={contract.shell.isPreview ? "preview" : "published"}
+    businessCategory={contract.shell.business.category}
+    heroVariant={contract.themeStyle.variants.heroVariant}
+    primaryOrigin={data.primaryOrigin ?? contract.seoMetadata.verifiedOrigin ?? "https://situsku.click"}
+    fallbackBusiness={contract.shell.business}
+  />
+</div>

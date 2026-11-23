@@ -1,0 +1,152 @@
+---
+import { sanitizeNavigationHref } from "@punyasitus/core/content/index";
+import type { OfferingType } from "@punyasitus/core/schemas/common";
+import {
+  buildSectionOfferingDetailHref,
+  formatSectionOfferingPriceText,
+  getOfferingTypeLabelId,
+  getVehicleUnitStatusLabelId,
+  resolveSectionOfferingCta,
+} from "../../../../core/section-registry.ts";
+import type { PublicThemeRouteShellContract } from "../../../../core/theme-registry.ts";
+import type { SampleAgencyCatalogIndexRouteData } from "./types.ts";
+
+export interface Props {
+  readonly contract: PublicThemeRouteShellContract;
+  readonly data: SampleAgencyCatalogIndexRouteData;
+}
+
+const { contract, data } = Astro.props;
+
+const OFFERING_INDEX_PATH: Readonly<Record<OfferingType, string>> = {
+  service: "/layanan",
+  product: "/produk",
+  tour: "/tour",
+  vehicle: "/kendaraan",
+};
+
+const typeLabel = getOfferingTypeLabelId(data.offeringType);
+const indexPath = OFFERING_INDEX_PATH[data.offeringType];
+const heading = data.heading?.trim() || `Daftar ${typeLabel}`;
+const intro =
+  data.intro?.trim() ||
+  `Pilihan ${typeLabel.toLowerCase()} resmi dengan informasi harga terbuka dan konsultasi langsung via WhatsApp.`;
+const primaryOrigin =
+  data.primaryOrigin ?? contract.seoMetadata.verifiedOrigin ?? "https://situsku.click";
+
+function safePaginationHref(href: string | null | undefined): string | null {
+  if (!href) return null;
+  try {
+    return sanitizeNavigationHref(href);
+  } catch {
+    return null;
+  }
+}
+
+const prevHref = safePaginationHref(data.pagination?.prevHref);
+const nextHref = safePaginationHref(data.pagination?.nextHref);
+---
+
+<div data-testid="route-catalog-index" data-offering-type={data.offeringType}>
+  <nav class="sa-breadcrumb-bar" aria-label="Breadcrumb">
+    <div class="ps-container">
+      <ol class="sa-breadcrumb-list">
+        <li><a href="/" class="sa-breadcrumb-link">Beranda</a></li>
+        <li aria-hidden="true" class="sa-breadcrumb-sep">/</li>
+        <li aria-current="page">{typeLabel}</li>
+      </ol>
+    </div>
+  </nav>
+
+  <header class="sa-route-hero">
+    <div class="ps-container">
+      <p class="sa-eyebrow">Katalog {typeLabel}</p>
+      <h1 class="sa-route-title">{heading}</h1>
+      <p class="sa-route-lead">{intro}</p>
+    </div>
+  </header>
+
+  <section class="sa-band">
+    <div class="ps-container">
+      {data.items.length > 0 ? (
+        <div class="sa-grid" data-testid="catalog-items-grid">
+          {data.items.map((item) => {
+            const detailHref = buildSectionOfferingDetailHref(item);
+            const priceText = formatSectionOfferingPriceText(item);
+            const unitStatusLabel = getVehicleUnitStatusLabelId(item.unitStatus);
+            const cta = resolveSectionOfferingCta(item, {
+              fallbackWhatsappPhone: contract.shell.business.whatsappE164,
+              primaryOrigin,
+            });
+            return (
+              <article class="sa-card">
+                <div>
+                  <div class="sa-card-meta">
+                    {item.categoryName && <span class="sa-badge">{item.categoryName}</span>}
+                    {item.badge && <span class="sa-badge">{item.badge}</span>}
+                    {unitStatusLabel && <span class="sa-badge">{unitStatusLabel}</span>}
+                  </div>
+                  <h2 class="sa-card-title">{item.title}</h2>
+                  {item.summary && <p class="sa-card-summary">{item.summary}</p>}
+                  {item.metaLine && <p class="sa-card-meta">{item.metaLine}</p>}
+                </div>
+                <div>
+                  <p class="sa-price">{priceText}</p>
+                  <div class="sa-actions">
+                    <a
+                      href={cta.href}
+                      class={cta.isWhatsApp ? "sa-btn sa-btn-whatsapp" : "sa-btn sa-btn-primary"}
+                      target={cta.isExternal ? "_blank" : undefined}
+                      rel={cta.isExternal ? "noopener noreferrer" : undefined}
+                    >
+                      {cta.label}
+                    </a>
+                    <a href={detailHref} class="sa-btn sa-btn-secondary">
+                      Lihat Detail
+                    </a>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div class="sa-empty-card" data-testid="catalog-empty-state">
+          <h2>Belum Ada {typeLabel} Tersedia</h2>
+          <p class="sa-card-summary">
+            Daftar {typeLabel.toLowerCase()} akan tampil di sini segera setelah dipublikasikan oleh
+            pemilik usaha.
+          </p>
+          <div class="sa-actions">
+            <a href="/" class="sa-btn sa-btn-secondary">
+              Kembali ke Beranda
+            </a>
+          </div>
+        </div>
+      )}
+
+      {data.pagination && data.pagination.totalPages > 1 && (
+        <nav class="sa-pagination" aria-label={`Navigasi halaman ${typeLabel}`}>
+          <span>
+            Halaman {data.pagination.currentPage} dari {data.pagination.totalPages}
+          </span>
+          <div class="sa-actions">
+            {prevHref && (
+              <a href={prevHref} class="sa-btn sa-btn-secondary">
+                Sebelumnya
+              </a>
+            )}
+            {nextHref && (
+              <a href={nextHref} class="sa-btn sa-btn-primary">
+                Berikutnya
+              </a>
+            )}
+            <a href={indexPath} class="sa-btn sa-btn-secondary">
+              Halaman Pertama
+            </a>
+          </div>
+        </nav>
+      )}
+    </div>
+  </section>
+</div>

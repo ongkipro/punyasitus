@@ -1,0 +1,107 @@
+---
+import { sanitizeNavigationHref } from "@punyasitus/core/content/index";
+import { formatIndonesianPublishedDate } from "../../../../core/section-registry.ts";
+import type { SampleAgencyBlogIndexRouteData } from "./types.ts";
+
+export interface Props {
+  readonly data: SampleAgencyBlogIndexRouteData;
+}
+
+const { data } = Astro.props;
+const heading = data.heading?.trim() || "Artikel & Panduan";
+const intro =
+  data.intro?.trim() ||
+  "Wawasan praktis, pembaruan layanan, dan dokumentasi terbuka dari tim kami.";
+
+function safePaginationHref(href: string | null | undefined): string | null {
+  if (!href) return null;
+  try {
+    return sanitizeNavigationHref(href);
+  } catch {
+    return null;
+  }
+}
+
+const prevHref = safePaginationHref(data.pagination?.prevHref);
+const nextHref = safePaginationHref(data.pagination?.nextHref);
+---
+
+<div data-testid="route-blog-index">
+  <nav class="sa-breadcrumb-bar" aria-label="Breadcrumb">
+    <div class="ps-container">
+      <ol class="sa-breadcrumb-list">
+        <li><a href="/" class="sa-breadcrumb-link">Beranda</a></li>
+        <li aria-hidden="true" class="sa-breadcrumb-sep">/</li>
+        <li aria-current="page">Blog</li>
+      </ol>
+    </div>
+  </nav>
+
+  <header class="sa-route-hero">
+    <div class="ps-container">
+      <p class="sa-eyebrow">Publikasi Editorial</p>
+      <h1 class="sa-route-title">{heading}</h1>
+      <p class="sa-route-lead">{intro}</p>
+    </div>
+  </header>
+
+  <section class="sa-band">
+    <div class="ps-container">
+      {data.posts.length > 0 ? (
+        <div class="sa-grid" data-testid="blog-post-grid">
+          {data.posts.map((post) => {
+            const formattedDate = formatIndonesianPublishedDate(post.publishedAt);
+            const postHref = `/blog/${post.slug}`;
+            return (
+              <article class="sa-card">
+                <div>
+                  <div class="sa-card-meta">
+                    {post.categoryName && <span class="sa-badge">{post.categoryName}</span>}
+                    {formattedDate && <span>{formattedDate}</span>}
+                    {post.readingTimeMinutes && (
+                      <span>{post.readingTimeMinutes} menit baca</span>
+                    )}
+                  </div>
+                  <h2 class="sa-card-title">{post.title}</h2>
+                  {post.excerpt && <p class="sa-card-summary">{post.excerpt}</p>}
+                </div>
+                <div class="sa-actions">
+                  <a href={postHref} class="sa-btn sa-btn-secondary">
+                    Baca Artikel
+                  </a>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      ) : (
+        <div class="sa-empty-card" data-testid="blog-empty-state">
+          <h2>Belum Ada Artikel Terbit</h2>
+          <p class="sa-card-summary">
+            Artikel dan panduan terbaru akan ditampilkan di sini segera setelah diterbitkan.
+          </p>
+        </div>
+      )}
+
+      {data.pagination && data.pagination.totalPages > 1 && (
+        <nav class="sa-pagination" aria-label="Navigasi halaman artikel">
+          <span>
+            Halaman {data.pagination.currentPage} dari {data.pagination.totalPages}
+          </span>
+          <div class="sa-actions">
+            {prevHref && (
+              <a href={prevHref} class="sa-btn sa-btn-secondary">
+                Sebelumnya
+              </a>
+            )}
+            {nextHref && (
+              <a href={nextHref} class="sa-btn sa-btn-primary">
+                Berikutnya
+              </a>
+            )}
+          </div>
+        </nav>
+      )}
+    </div>
+  </section>
+</div>

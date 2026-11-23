@@ -1,0 +1,48 @@
+---
+import type {
+  BlogLatestSectionConfig,
+  HeroVariant,
+  SectionOfferingItem,
+} from "@punyasitus/core/theme/index";
+import type { PageAssemblyMode } from "../../../../core/section-registry.ts";
+import DefaultSectionRenderer from "../../../default/sections/SectionRenderer.astro";
+
+/**
+ * Sample Agency Section Renderer (`apps/web/src/themes/custom/sample-agency/sections/SectionRenderer.astro`).
+ *
+ * Re-exports and delegates every closed section type (`REQ-019`) to the shared
+ * platform `SectionRenderer.astro` so switching between any of the 6 built-in
+ * platform themes and `custom-sample-agency` never loses section content.
+ * Visual styling is layered cleanly through `styles/theme.css` under
+ * `[data-ps-custom-theme="custom-sample-agency"]`.
+ */
+
+export interface Props {
+  readonly sections: unknown;
+  readonly themeId: string;
+  readonly routePath?: string;
+  readonly pageSlug?: string | null;
+  readonly isHomepage?: boolean;
+  readonly mode?: PageAssemblyMode;
+  readonly businessCategory?: string | null;
+  readonly heroVariant?: HeroVariant;
+  readonly primaryOrigin?: string;
+  readonly fallbackOfferings?: readonly SectionOfferingItem[];
+  readonly fallbackPosts?: BlogLatestSectionConfig["posts"];
+  readonly fallbackBusiness?: {
+    readonly address?: string | null;
+    readonly weekdayHours?: string | null;
+    readonly holidayHours?: string | null;
+    readonly phone?: string | null;
+    readonly whatsappE164?: string | null;
+    readonly email?: string | null;
+    readonly mapsUrl?: string | null;
+  };
+}
+
+const props = Astro.props;
+---
+
+<div class="sa-sections-wrapper" data-testid="sample-agency-sections">
+  <DefaultSectionRenderer {...props} />
+</div>
