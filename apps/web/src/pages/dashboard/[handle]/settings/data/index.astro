@@ -1,0 +1,223 @@
+---
+import { env } from "cloudflare:workers";
+import "../../../../../styles/admin/globals.css";
+import { getJakartaDayKey } from "@punyasitus/core/exports/index";
+import {
+  getTenantDeletionStatus,
+  listTenantExportJobs,
+} from "@punyasitus/db/exports/index";
+import { AdminShell } from "@/components/admin/AdminShell";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import {
+  inspectOwnerAuthCapabilities,
+  serializeDeletionStatusDto,
+  serializeExportJobDto,
+} from "@/pages/api/tenants/[tenantId]/exports/_shared";
+import { resolveExportSigningSecret } from "@/worker/queues/exports/handler";
+import {
+  DataSettingsClient,
+  type DataSettingsDeletionState,
+  type DataSettingsExportItem,
+} from "./_DataSettingsClient";
+import {
+  DATA_SETTINGS_SSR_SECURITY_HEADERS,
+  evaluateDataSettingsSsrGate,
+  serviceUnavailableDataSsrResponse,
+} from "./_ssr-gate";
+
+const gate = evaluateDataSettingsSsrGate({
+  rawHandle: Astro.params.handle,
+  surface: Astro.locals.surface,
+  isLocalLoopback: Astro.locals.isLocalLoopback,
+  isLocalEnv: env.APP_ENV === "local",
+  authUser: Astro.locals.authUser,
+  authorized: Astro.locals.authorizedTenantMember,
+});
+
+if (!gate.ok) {
+  return gate.response;
+}
+
+if (!env.PLATFORM_DB) {
+  return serviceUnavailableDataSsrResponse();
+}
+
+const authorized = Astro.locals.authorizedTenantMember!;
+const authUser = Astro.locals.authUser!;
+const nowMs = Date.now();
+const todayKey = getJakartaDayKey(nowMs);
+const signingSecret = resolveExportSigningSecret(
+  env as { readonly AUTH_SECRET?: string; readonly APP_ENV?: string },
+);
+
+const [exportJobs, deletionView, authCapabilities, metaRow] = await Promise.all([
+  listTenantExportJobs(env.PLATFORM_DB, authorized.tenantId, { nowMs, limit: 20 }).catch(() => []),
+  getTenantDeletionStatus(env.PLATFORM_DB, authorized.tenantId, nowMs).catch(() => null),
+  inspectOwnerAuthCapabilities(
+    env.PLATFORM_DB,
+    authUser.id,
+    Astro.locals.authSession?.id ?? null,
+    nowMs,
+  ),
+  env.PLATFORM_DB.prepare(
+    `SELECT t.vertical, t.status, t.operator_hold_reason, t.trial_ends_at,
+            ph.host AS primary_host
+     FROM tenants t
+     LEFT JOIN tenant_hosts ph
+       ON ph.tenant_id = t.id
+      AND ph.is_primary = 1
+      AND ph.status = 'active'
+      AND ph.ssl_status = 'active'
+     WHERE t.id = ?
+     LIMIT 1`,
+  )
+    .bind(authorized.tenantId)
+    .first<{
+      readonly vertical: string;
+      readonly status: string;
+      readonly operator_hold_reason: string | null;
+      readonly trial_ends_at: number | null;
+      readonly primary_host: string | null;
+    }>()
+    .catch(() => null),
+]);
+
+if (!deletionView) {
+  return serviceUnavailableDataSsrResponse();
+}
+
+Astro.response.headers.set("Cache-Control", DATA_SETTINGS_SSR_SECURITY_HEADERS["Cache-Control"]);
+Astro.response.headers.set("X-Robots-Tag", DATA_SETTINGS_SSR_SECURITY_HEADERS["X-Robots-Tag"]);
+
+const initialExports: DataSettingsExportItem[] = signingSecret
+  ? ((await Promise.all(
+      exportJobs.map((job) => serializeExportJobDto(job, { signingSecret, nowMs })),
+    )) as unknown as DataSettingsExportItem[])
+  : [];
+
+const initialHasExportToday = exportJobs.some(
+  (j) => j.requestDay === todayKey && j.status !== "failed",
+);
+
+const initialDeletion = serializeDeletionStatusDto(
+  deletionView,
+) as unknown as DataSettingsDeletionState;
+
+const saasZone = env.SAAS_ZONE || "situsku.click";
+const workspaceSubtitle = metaRow?.primary_host ?? `${authorized.handle}.${saasZone}`;
+const basePath = `/dashboard/${authorized.handle}`;
+const publicSiteHref = `https://${workspaceSubtitle}`;
+const offeringLabel =
+  metaRow?.vertical === "catalog" || metaRow?.vertical === "resto"
+    ? "Produk"
+    : metaRow?.vertical === "travel"
+      ? "Paket Tur"
+      : metaRow?.vertical === "dealer"
+        ? "Kendaraan"
+        : "Layanan";
+
+const effectiveStatus =
+  Astro.locals.tenantEntitlement?.evaluation.effectiveStatus ?? authorized.tenantStatus;
+const lifecycleStatus: LifecycleStatus =
+  effectiveStatus === "trial" ||
+  effectiveStatus === "active" ||
+  effectiveStatus === "grace" ||
+  effectiveStatus === "locked" ||
+  effectiveStatus === "suspended"
+    ? effectiveStatus
+    : "suspended";
+
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof metaRow?.trial_ends_at === "number"
+    ? Math.max(0, Math.ceil((metaRow.trial_ends_at - nowMs) / 86_400_000))
+    : undefined;
+
+const userDisplayName = authUser.name || authUser.email || "Pemilik Situs";
+const renderBypassingSuspendedRecoveryShell =
+  lifecycleStatus === "suspended" &&
+  (deletionView.activeRequest?.status === "scheduled" || !deletionView.operatorHold);
+---
+
+{
+  renderBypassingSuspendedRecoveryShell ? (
+    <html lang="id">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="robots" content="noindex, nofollow" />
+        <link
+          rel="icon"
+          type="image/svg+xml"
+          href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23176b51'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='700' fill='%23ffffff'%3EPS%3C/text%3E%3C/svg%3E"
+        />
+        <title>{`Data & Penghapusan Situs — ${authorized.tenantName} — PunyaSitus`}</title>
+      </head>
+      <body>
+        <AdminShell
+          client:load
+          surface="dashboard"
+          workspaceName={authorized.tenantName}
+          workspaceSubtitle={workspaceSubtitle}
+          activeNavId="settings"
+          basePath={basePath}
+          offeringLabel={offeringLabel}
+          lifecycleStatus="active"
+          publicSiteHref={publicSiteHref}
+          userDisplayName={userDisplayName}
+          userRoleLabel="Pemilik Situs"
+        >
+          <DataSettingsClient
+            client:load
+            tenantId={authorized.tenantId}
+            handle={authorized.handle}
+            workspaceName={authorized.tenantName}
+            basePath={basePath}
+            todayKey={todayKey}
+            initialExports={initialExports}
+            initialHasExportToday={initialHasExportToday}
+            initialDeletion={initialDeletion}
+            authCapabilities={{
+              hasPasswordAccount: authCapabilities.hasPasswordAccount,
+              twoFactorEnabled: authCapabilities.twoFactorEnabled,
+              recentTwoFactorVerified: authCapabilities.recentTwoFactorVerified,
+            }}
+          />
+        </AdminShell>
+      </body>
+    </html>
+  ) : (
+    <DashboardLayout
+      title={`Data & Penghapusan Situs — ${authorized.tenantName}`}
+      surface="dashboard"
+      workspaceName={authorized.tenantName}
+      workspaceSubtitle={workspaceSubtitle}
+      activeNavId="settings"
+      basePath={basePath}
+      offeringLabel={offeringLabel}
+      lifecycleStatus={lifecycleStatus}
+      lifecycleDaysRemaining={lifecycleDaysRemaining}
+      lifecycleReason={metaRow?.operator_hold_reason ?? undefined}
+      publicSiteHref={publicSiteHref}
+      userDisplayName={userDisplayName}
+      userRoleLabel="Pemilik Situs"
+    >
+      <DataSettingsClient
+        client:load
+        tenantId={authorized.tenantId}
+        handle={authorized.handle}
+        workspaceName={authorized.tenantName}
+        basePath={basePath}
+        todayKey={todayKey}
+        initialExports={initialExports}
+        initialHasExportToday={initialHasExportToday}
+        initialDeletion={initialDeletion}
+        authCapabilities={{
+          hasPasswordAccount: authCapabilities.hasPasswordAccount,
+          twoFactorEnabled: authCapabilities.twoFactorEnabled,
+          recentTwoFactorVerified: authCapabilities.recentTwoFactorVerified,
+        }}
+      />
+    </DashboardLayout>
+  )
+}

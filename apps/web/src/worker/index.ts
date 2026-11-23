@@ -19,6 +19,10 @@ import {
   createDomainJobRegistry,
 } from "./queues/domains/index.ts";
 import { EMAIL_DELIVERY_TOPIC, createEmailQueueHandler } from "./queues/email/handler.ts";
+import {
+  EXPORT_CRON_JOB_DEFINITIONS,
+  createExportJobRegistry,
+} from "./queues/exports/index.ts";
 import { processDurableQueueBatch, type DurableJobRegistry } from "./queues/index.ts";
 import {
   createMediaJobRegistry,
@@ -44,6 +48,7 @@ const WORKER_JOB_REGISTRY: DurableJobRegistry = {
   ...createRetentionJobRegistry(),
   ...createContentPurgeJobRegistry(),
   ...createOffboardingJobRegistry(),
+  ...createExportJobRegistry(),
   ...createMediaJobRegistry(),
   ...createVideoJobRegistry(),
   ...createDomainJobRegistry(),
@@ -97,6 +102,7 @@ export default {
       ...DOMAIN_CRON_JOB_DEFINITIONS,
       ...CONTENT_PURGE_CRON_JOB_DEFINITIONS,
       ...OFFBOARDING_CRON_JOB_DEFINITIONS,
+      ...EXPORT_CRON_JOB_DEFINITIONS,
     ]);
     await sweepAllTenantsExpiredQuarantine(env, { nowMs: controller.scheduledTime });
   },
