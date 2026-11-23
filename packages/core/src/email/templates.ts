@@ -12,6 +12,7 @@ export const EMAIL_TEMPLATE_NAMES = [
   "suppression-owner-notice",
   "renewal-reminder",
   "lifecycle-notice",
+  "deletion-warning",
 ] as const;
 
 export type EmailTemplateName = (typeof EMAIL_TEMPLATE_NAMES)[number];
@@ -251,6 +252,25 @@ export const LifecycleNoticeTemplateDataSchema = z.strictObject({
   operatorHold: z.boolean().optional(),
 });
 
+export const DeletionWarningStageSchema = z.enum([
+  "unpaid_minus_7d",
+  "unpaid_minus_3d",
+  "unpaid_minus_1d",
+  "paid_h38",
+  "paid_h42",
+  "paid_h44",
+]);
+
+export const DeletionWarningTemplateDataSchema = z.strictObject({
+  recipientName: z.string().trim().max(120).optional(),
+  tenantName: z.string().trim().min(1).max(160),
+  stage: DeletionWarningStageSchema,
+  daysRemaining: z.number().int().min(1).max(7),
+  deletionDueAtLabel: z.string().trim().min(1).max(100),
+  billingUrl: z.string().trim().min(1).max(2048),
+  leadsExportUrl: z.string().trim().min(1).max(2048).optional(),
+});
+
 export interface EmailTemplateDataMap {
   readonly "verify-email": z.input<typeof VerifyEmailTemplateDataSchema>;
   readonly "reset-password": z.input<typeof ResetPasswordTemplateDataSchema>;
@@ -260,6 +280,7 @@ export interface EmailTemplateDataMap {
   readonly "suppression-owner-notice": z.input<typeof SuppressionOwnerNoticeTemplateDataSchema>;
   readonly "renewal-reminder": z.input<typeof RenewalReminderTemplateDataSchema>;
   readonly "lifecycle-notice": z.input<typeof LifecycleNoticeTemplateDataSchema>;
+  readonly "deletion-warning": z.input<typeof DeletionWarningTemplateDataSchema>;
 }
 
 export interface RenderedEmailTemplate {
@@ -708,6 +729,70 @@ export function renderEmailTemplate<T extends EmailTemplateName>(
           bodyHtml,
         }),
         text,
+      };
+    }
+
+    case "deletion-warning": {
+      const data = DeletionWarningTemplateDataSchema.parse(rawData);
+      const greet = greeting(data.recipientName);
+      const tenant = sanitizePlainText(data.tenantName);
+      const deletionDue = sanitizePlainText(data.deletionDueAtLabel);
+      const billingUrl = sanitizeActionUrl(data.billingUrl);
+      const leadsExportUrl = data.leadsExportUrl ? sanitizeActionUrl(data.leadsExportUrl) : null;
+      const isPaidTrack = data.stage.startsWith("paid_");
+      const milestoneTag =
+        data.stage === "paid_h38"
+          ? "H+38"
+          : data.stage === "paid_h42"
+            ? "H+42"
+            : data.stage === "paid_h44"
+              ? "H+44"
+              : `H-${data.daysRemaining}`;
+
+      const subject = sanitizeHeaderValue(
+        `Peringatan penghapusan data (${milestoneTag}, ${data.daysRemaining} hari lagi) untuk ${tenant} — PunyaSitus`,
+      );
+
+      const trackCopy = isPaidTrack
+        ? `Website <strong>${escapeHtml(tenant)}</strong> mendekati batas retensi H+45 pasca berakhirnya masa langganan.`
+        : `Website <strong>${escapeHtml(tenant)}</strong> mendekati batas retensi 30 hari tanpa pembayaran aktif.`;
+
+      const htmlParts: string[] = [
+        `<p style="margin:0 0 12px;">${greet.html}</p>`,
+        `<p style="margin:0 0 16px;">${trackCopy} Seluruh konten, media, pesan masuk, dan pengaturan domain kustom akan dihapus permanen dalam <strong>${data.daysRemaining} hari</strong> pada <strong>${escapeHtml(deletionDue)}</strong> apabila pembayaran belum terverifikasi.</p>`,
+        '<p style="margin:0 0 16px;">Anda masih dapat mengaktifkan kembali situs sekarang tanpa kehilangan data yang tersimpan, atau mengekspor data pesan masuk (CSV) sebelum batas waktu penghapusan. Catatan tagihan dan kwitansi tetap disimpan sesuai kewajiban administrasi.</p>',
+        renderPrimaryButtonHtml("Perpanjang & Simpan Data Situs", billingUrl),
+      ];
+
+      const textParts: string[] = [
+        greet.text,
+        "",
+        `Peringatan penghapusan data (${milestoneTag}) untuk website ${tenant}.`,
+        `Seluruh konten, media, pesan masuk, dan domain kustom akan dihapus permanen dalam ${data.daysRemaining} hari pada ${deletionDue} apabila pembayaran belum terverifikasi.`,
+        "",
+        `Perpanjang langganan sekarang: ${billingUrl}`,
+      ];
+
+      if (leadsExportUrl) {
+        htmlParts.push(
+          `<p style="margin:0 0 12px;font-size:13px;color:#475569;">Ekspor pesan masuk (CSV, khusus pemilik): <a href="${escapeHtml(leadsExportUrl)}" style="color:#0f172a;">${escapeHtml(leadsExportUrl)}</a></p>`,
+        );
+        textParts.push(`Ekspor pesan masuk (CSV, khusus pemilik): ${leadsExportUrl}`);
+      }
+
+      htmlParts.push(
+        `<p style="margin:0 0 12px;font-size:13px;color:#475569;word-break:break-all;">Tautan tagihan: ${escapeHtml(billingUrl)}</p>`,
+      );
+
+      return {
+        template,
+        subject,
+        html: wrapIndonesianHtmlEmail({
+          title: subject,
+          preheader: `Batas penghapusan data ${tenant}: ${deletionDue} (${data.daysRemaining} hari lagi).`,
+          bodyHtml: htmlParts.join(""),
+        }),
+        text: textParts.join("\n"),
       };
     }
   }

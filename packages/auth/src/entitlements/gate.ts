@@ -42,6 +42,8 @@ interface LiveTenantEntitlementSqlRow {
   readonly paid_through: number | null;
   readonly deletion_due_at: number | null;
   readonly retention_paused_at: number | null;
+  readonly offboarding_started_at: number | null;
+  readonly created_at: number;
   readonly version: number;
 }
 
@@ -69,7 +71,8 @@ export async function loadLiveTenantEntitlement(
       .prepare(
         `SELECT id, organization_id, agency_id, handle, name, status,
                 operator_hold, operator_hold_reason, trial_ends_at,
-                paid_through, deletion_due_at, retention_paused_at, version
+                paid_through, deletion_due_at, retention_paused_at,
+                offboarding_started_at, created_at, version
          FROM tenants
          WHERE id = ?
          LIMIT 1`,
@@ -81,7 +84,8 @@ export async function loadLiveTenantEntitlement(
       .prepare(
         `SELECT id, organization_id, agency_id, handle, name, status,
                 operator_hold, operator_hold_reason, trial_ends_at,
-                paid_through, deletion_due_at, retention_paused_at, version
+                paid_through, deletion_due_at, retention_paused_at,
+                offboarding_started_at, created_at, version
          FROM tenants
          WHERE handle = ?
          LIMIT 1`,
@@ -99,9 +103,12 @@ export async function loadLiveTenantEntitlement(
     operatorHoldReason: row.operator_hold_reason,
     trialEndsAtMs: typeof row.trial_ends_at === "number" ? row.trial_ends_at : null,
     paidThroughMs: typeof row.paid_through === "number" ? row.paid_through : null,
+    createdAtMs: typeof row.created_at === "number" ? row.created_at : null,
     deletionDueAtMs: typeof row.deletion_due_at === "number" ? row.deletion_due_at : null,
     retentionPausedAtMs:
       typeof row.retention_paused_at === "number" ? row.retention_paused_at : null,
+    offboardingStartedAtMs:
+      typeof row.offboarding_started_at === "number" ? row.offboarding_started_at : null,
     agencyId: row.agency_id,
     nowMs,
   });
@@ -142,7 +149,8 @@ export async function loadMemberTenantEntitlement(
     .prepare(
       `SELECT t.id, t.organization_id, t.agency_id, t.handle, t.name, t.status,
               t.operator_hold, t.operator_hold_reason, t.trial_ends_at,
-              t.paid_through, t.deletion_due_at, t.retention_paused_at, t.version,
+              t.paid_through, t.deletion_due_at, t.retention_paused_at,
+              t.offboarding_started_at, t.created_at, t.version,
               m.id AS member_id, m.role AS member_role
        FROM tenants t
        INNER JOIN members m
@@ -163,9 +171,12 @@ export async function loadMemberTenantEntitlement(
     operatorHoldReason: row.operator_hold_reason,
     trialEndsAtMs: typeof row.trial_ends_at === "number" ? row.trial_ends_at : null,
     paidThroughMs: typeof row.paid_through === "number" ? row.paid_through : null,
+    createdAtMs: typeof row.created_at === "number" ? row.created_at : null,
     deletionDueAtMs: typeof row.deletion_due_at === "number" ? row.deletion_due_at : null,
     retentionPausedAtMs:
       typeof row.retention_paused_at === "number" ? row.retention_paused_at : null,
+    offboardingStartedAtMs:
+      typeof row.offboarding_started_at === "number" ? row.offboarding_started_at : null,
     agencyId: row.agency_id,
     nowMs,
   });
@@ -341,9 +352,14 @@ export function evaluateTenantApiEntitlement(input: {
 
   // Additional payer-only check for billing & leads export when role is supplied
   if (input.role && (category === "billing" || category === "leads_export")) {
-    const isPayerRole = evaluation.agencyManaged
-      ? input.role === "agency_admin"
-      : input.role === "owner" || input.role === "agency_admin";
+    const isPayerRole =
+      category === "leads_export"
+        ? evaluation.agencyManaged
+          ? input.role === "agency_admin"
+          : input.role === "owner"
+        : evaluation.agencyManaged
+          ? input.role === "agency_admin"
+          : input.role === "owner" || input.role === "agency_admin";
     if (!isPayerRole) {
       return {
         allowed: false,
@@ -399,6 +415,7 @@ export interface ServiceAccessViewModel {
   readonly graceEndsAtLabel: string | null;
   readonly lockedEndsAtLabel: string | null;
   readonly deletionDueAtLabel: string | null;
+  readonly retentionPaused: boolean;
   readonly billingHref: string;
   readonly leadsExportHref: string;
   readonly signOutHref: string;
@@ -428,6 +445,10 @@ export function buildServiceAccessViewModel(params: {
     ? params.role === "agency_admin"
     : params.role === "owner" || params.role === "agency_admin";
 
+  const isLeadsExportRole = evaluation.agencyManaged
+    ? params.role === "agency_admin"
+    : params.role === "owner";
+
   return {
     status: uiStatus,
     operatorHold: evaluation.operatorHold,
@@ -435,15 +456,16 @@ export function buildServiceAccessViewModel(params: {
     suspensionReason: evaluation.suspensionReason,
     agencyManaged: evaluation.agencyManaged,
     isPayer,
-    canExportLeadsCsv: isPayer && evaluation.adminAccess.canExportLeadsCsv,
+    canExportLeadsCsv: isLeadsExportRole && evaluation.adminAccess.canExportLeadsCsv,
     daysRemaining: evaluation.deadlines.daysRemaining,
     trialEndsAtLabel: formatWibDateTimeLabel(evaluation.deadlines.trialEndsAtMs),
     paidThroughLabel: formatWibDateTimeLabel(evaluation.deadlines.paidThroughMs),
     graceEndsAtLabel: formatWibDateTimeLabel(evaluation.deadlines.graceEndsAtMs),
     lockedEndsAtLabel: formatWibDateTimeLabel(evaluation.deadlines.lockedEndsAtMs),
     deletionDueAtLabel: formatWibDateTimeLabel(evaluation.deadlines.deletionDueAtMs),
+    retentionPaused: evaluation.retentionPaused,
     billingHref: `${basePath}/billing`,
-    leadsExportHref: `/api/tenants/${params.entitlement.tenantId}/leads/export.csv`,
+    leadsExportHref: `/api/tenants/${params.entitlement.tenantId}/leads/export`,
     signOutHref: "/auth/login?signOut=1",
   };
 }

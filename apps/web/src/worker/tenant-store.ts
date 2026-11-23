@@ -69,6 +69,17 @@ export class TenantStore extends DurableObject<PunyasitusEnv> {
     return { runs, lastRunAt };
   }
 
+  /**
+   * Irreversible DEC-022 tenant purge RPC: cancels any pending DO alarm and wipes all
+   * SQLite and KV storage belonging to this tenant's Durable Object.
+   */
+  async purgeAll(protocol: number): Promise<{ readonly purged: true }> {
+    this.#store.checkProtocol(protocol);
+    await this.ctx.storage.deleteAlarm();
+    await this.ctx.storage.deleteAll();
+    return { purged: true };
+  }
+
   override async alarm(): Promise<void> {
     const runs = ((await this.ctx.storage.get<number>(ALARM_RUNS_KEY)) ?? 0) + 1;
     await this.ctx.storage.put(ALARM_RUNS_KEY, runs);

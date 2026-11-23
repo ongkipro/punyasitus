@@ -52,6 +52,7 @@ export function SuspendedRecoveryShell({
     isPayer,
     canExportLeadsCsv = isPayer,
     deletionDueAtLabel,
+    retentionPaused = operatorHold,
     billingHref = "#langganan",
     leadsExportHref = "#ekspor-prospek",
     signOutHref = "/auth/login?signOut=1",
@@ -150,34 +151,60 @@ export function SuspendedRecoveryShell({
 
           <CardContent className="space-y-4">
             {operatorHold ? (
-              <Alert variant="destructive" role="alert" data-testid="operator-hold-notice">
-                <ShieldAlertIcon className="size-4" aria-hidden="true" />
-                <AlertTitle>Penahanan operator tidak dicabut oleh pembayaran</AlertTitle>
-                <AlertDescription>
-                  {operatorHoldReason
-                    ? `Alasan penahanan: ${operatorHoldReason}. `
-                    : ""}
-                  Menyelesaikan pembayaran langganan tetap mencatat masa aktif Anda,
-                  namun akses situs publik dan CMS hanya dibuka kembali setelah
-                  peninjauan operator selesai.
-                </AlertDescription>
-              </Alert>
+              <div className="space-y-3">
+                <Alert variant="destructive" role="alert" data-testid="operator-hold-notice">
+                  <ShieldAlertIcon className="size-4" aria-hidden="true" />
+                  <AlertTitle>Penahanan operator tidak dicabut oleh pembayaran</AlertTitle>
+                  <AlertDescription>
+                    {operatorHoldReason
+                      ? `Alasan penahanan: ${operatorHoldReason}. `
+                      : ""}
+                    Menyelesaikan pembayaran langganan tetap mencatat masa aktif Anda,
+                    namun akses situs publik dan CMS hanya dibuka kembali setelah
+                    peninjauan operator selesai.
+                  </AlertDescription>
+                </Alert>
+                {retentionPaused && (
+                  <div
+                    data-testid="deletion-clock-paused"
+                    className="rounded-lg border border-border bg-muted/40 p-3.5 text-xs text-muted-foreground"
+                  >
+                    <p className="font-medium text-foreground">
+                      Jadwal penghapusan otomatis dijeda
+                    </p>
+                    <p className="mt-1">
+                      Penghitung waktu penghapusan data dihentikan sementara selama penahanan
+                      operator aktif. Jika penahanan dilepas pada status belum dibayar, sisa
+                      waktu penyimpanan akan diberikan minimal 14 hari.
+                    </p>
+                  </div>
+                )}
+              </div>
             ) : (
               <div
                 data-testid="retention-summary"
                 className="rounded-lg border border-border bg-muted/40 p-4 text-sm"
               >
-                <p className="font-medium text-foreground">Status retensi data situs</p>
+                <p className="font-medium text-foreground">Status retensi &amp; jadwal penghapusan data</p>
                 <p className="mt-1 text-muted-foreground">
-                  Konten, media, dan draf Anda tidak dihapus selama masa penangguhan.
-                  Draf yang belum dipublikasikan tidak akan terbit otomatis saat situs
-                  diaktifkan kembali.
+                  Konten, media, dan draf Anda tetap disimpan selama masa penangguhan.
+                  Pembayaran sebelum batas waktu akan memulihkan seluruh data yang masih
+                  tersimpan tanpa menerbitkan draf secara otomatis.
                 </p>
                 {deletionDueAtLabel ? (
-                  <p className="mt-2 text-xs font-medium text-foreground tabular-nums">
-                    Batas penyimpanan data ({isTrialExpired ? "Trial + 30 hari" : "H+45"}):{" "}
-                    {deletionDueAtLabel}
-                  </p>
+                  <div
+                    data-testid="deletion-due-date"
+                    className="mt-3 rounded-md border border-destructive-border bg-destructive-soft/60 px-3 py-2 text-xs text-foreground"
+                  >
+                    <span className="font-semibold">
+                      Jadwal penghapusan permanen ({isTrialExpired ? "Trial + 30 hari" : "H+45"}):
+                    </span>{" "}
+                    <span className="font-semibold tabular-nums">{deletionDueAtLabel}</span>
+                    <p className="mt-0.5 text-muted-foreground">
+                      Setelah tanggal ini, konten, media, pesan masuk, dan domain kustom dihapus
+                      permanen; catatan tagihan &amp; kwitansi tetap disimpan sesuai aturan audit.
+                    </p>
+                  </div>
                 ) : null}
               </div>
             )}
@@ -204,8 +231,9 @@ export function SuspendedRecoveryShell({
                   <Button
                     variant="outline"
                     size="default"
+                    data-testid="recovery-leads-export-btn"
                     className="min-h-11 w-full sm:w-auto"
-                    render={<a href={leadsExportHref} />}
+                    render={<a href={leadsExportHref} download />}
                   >
                     <DownloadIcon className="size-4" aria-hidden="true" />
                     <span>Ekspor Prospek (CSV)</span>

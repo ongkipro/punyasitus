@@ -955,6 +955,18 @@ export async function beginDurablePaymentAttemptWithCoupon(
     throw new BillingValidationError("TENANT_NOT_FOUND", "Tenant tidak ditemukan.");
   }
 
+  if (
+    tenantCtx.status === "purged" ||
+    tenantCtx.offboardingStartedAtMs !== null ||
+    input.effectiveTenantStatus === "purged"
+  ) {
+    throw new BillingConflictError(
+      "CONFLICT",
+      "TENANT_OFFBOARDING_IN_PROGRESS",
+      "Situs sedang atau telah melalui proses penghapusan; percobaan pembayaran baru tidak diizinkan.",
+    );
+  }
+
   const baseAmountIdr = assertExactIdrInteger(
     input.plan === "yearly" ? pricing.yearlyPriceIdr : pricing.monthlyPriceIdr,
     "baseAmountIdr",
@@ -1044,7 +1056,7 @@ export async function beginDurablePaymentAttemptWithCoupon(
     const retryReffId = generateAutoLarisReffId(nowMs);
     const provisionalTotal = existingDetail.obligation.netAmountIdr + estimatedFeeIdr;
     try {
-      await db
+      const retryInsertRes = await db
         .prepare(
           `INSERT INTO payment_attempts (
              id, obligation_id, tenant_id, channel, provider, provider_account_id,
@@ -1052,7 +1064,14 @@ export async function beginDurablePaymentAttemptWithCoupon(
              amount_idr, state, lifecycle_state, base_amount_idr, discount_amount_idr,
              channel_fee_idr, total_payable_idr, bank_name, safe_failure_code, expires_at,
              provider_payload_json, provider_submitted_at, version, created_at, updated_at
-           ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'initiated', 'creating', ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, 1, ?, ?)`,
+           )
+           SELECT ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, 'initiated', 'creating', ?, ?, ?, ?, NULL, NULL, NULL, NULL, ?, 1, ?, ?
+           WHERE EXISTS (
+             SELECT 1 FROM tenants
+             WHERE id = ?
+               AND status != 'purged'
+               AND offboarding_started_at IS NULL
+           )`,
         )
         .bind(
           retryAttemptId,
@@ -1073,9 +1092,19 @@ export async function beginDurablePaymentAttemptWithCoupon(
           nowMs,
           nowMs,
           nowMs,
+          input.tenantId,
         )
         .run();
+
+      if ((retryInsertRes.meta?.changes ?? 0) === 0) {
+        throw new BillingConflictError(
+          "CONFLICT",
+          "TENANT_OFFBOARDING_IN_PROGRESS",
+          "Situs sedang atau telah melalui proses penghapusan; percobaan pembayaran baru tidak diizinkan.",
+        );
+      }
     } catch (err) {
+      if (err instanceof BillingConflictError) throw err;
       if (!isUniqueConstraintError(err)) throw err;
 
       const racedByKey = await db
@@ -1200,9 +1229,15 @@ export async function beginDurablePaymentAttemptWithCoupon(
          AND active = 1
          AND starts_at <= ?
          AND ends_at >= ?
-         AND (max_redemptions IS NULL OR redeemed_count < max_redemptions)`,
+         AND (max_redemptions IS NULL OR redeemed_count < max_redemptions)
+         AND EXISTS (
+           SELECT 1 FROM tenants
+           WHERE id = ?
+             AND status != 'purged'
+             AND offboarding_started_at IS NULL
+         )`,
     )
-    .bind(nowMs, precheck.coupon.id, nowMs, nowMs);
+    .bind(nowMs, precheck.coupon.id, nowMs, nowMs, input.tenantId);
 
   const stmtInsertRedemption = db
     .prepare(
@@ -1395,6 +1430,19 @@ export async function beginDurablePaymentAttemptWithCoupon(
     obligationChanges !== 1 ||
     attemptChanges !== 1
   ) {
+    const latestTenant = await loadTenantBillingContext(db, input.tenantId);
+    if (
+      latestTenant &&
+      (latestTenant.status === "purging" ||
+        latestTenant.status === "purged" ||
+        latestTenant.offboardingStartedAtMs !== null)
+    ) {
+      throw new BillingConflictError(
+        "CONFLICT",
+        "TENANT_OFFBOARDING_IN_PROGRESS",
+        "Situs sedang atau telah melalui proses penghapusan; percobaan pembayaran baru tidak diizinkan.",
+      );
+    }
     await diagnoseAtomicReservationMiss(
       db,
       precheck.coupon.id,

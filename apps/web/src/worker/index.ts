@@ -20,6 +20,10 @@ import {
   createMediaJobRegistry,
   sweepAllTenantsExpiredQuarantine,
 } from "./queues/media/index.ts";
+import {
+  OFFBOARDING_CRON_JOB_DEFINITIONS,
+  createOffboardingJobRegistry,
+} from "./queues/offboarding/index.ts";
 import { createRetentionJobRegistry } from "./queues/retention/index.ts";
 import { createSeoJobRegistry } from "./queues/seo/index.ts";
 
@@ -32,6 +36,7 @@ type AstroCtx = Parameters<typeof handle>[2];
 
 const WORKER_JOB_REGISTRY: DurableJobRegistry = {
   ...createRetentionJobRegistry(),
+  ...createOffboardingJobRegistry(),
   ...createMediaJobRegistry(),
   ...createDomainJobRegistry(),
   ...createSeoJobRegistry(),
@@ -81,6 +86,7 @@ export default {
     await dispatchScheduledCron(controller, env, [
       ...DEFAULT_CRON_JOB_DEFINITIONS,
       ...DOMAIN_CRON_JOB_DEFINITIONS,
+      ...OFFBOARDING_CRON_JOB_DEFINITIONS,
     ]);
     await sweepAllTenantsExpiredQuarantine(env, { nowMs: controller.scheduledTime });
   },
