@@ -1,0 +1,586 @@
+---
+import "./sections.css";
+
+/**
+ * Accessible Zero-JS Native Lead Capture Contact Form Section
+ * (`apps/web/src/themes/default/sections/SectionContactForm.astro`;
+ * TASK-021, REQ-031, REQ-038, REQ-039).
+ *
+ * - 100% functional WITHOUT JavaScript via native `<form method="POST" action="/api/leads">`
+ *   with PRG `303 See Other` redirect rendering a durable status banner from query params.
+ * - Progressively enhanced when JS is available (submits JSON with `Idempotency-Key` header
+ *   while preserving exact server validation and error states).
+ * - Consumes ONLY `--ps-*` public theme tokens; zero React/admin imports; >= 44px touch targets;
+ *   zero horizontal overflow at 360px..2560px.
+ */
+
+export interface Props {
+  readonly id?: string;
+  readonly eyebrow?: string;
+  readonly heading?: string;
+  readonly subheading?: string;
+  readonly submitLabel?: string;
+  readonly businessName?: string;
+  readonly privacyPolicyHref?: string;
+  readonly actionUrl?: string;
+  readonly sourcePath?: string;
+  readonly returnTo?: string;
+  readonly turnstileSiteKey?: string;
+  readonly surfaceTone?: "surface" | "muted";
+  readonly isPreview?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id = "formulir-kontak",
+  eyebrow = "Hubungi Kami",
+  heading = "Kirim Pesan atau Pertanyaan",
+  subheading = "Isi formulir di bawah ini. Tim kami akan menindaklanjuti melalui WhatsApp atau email secepatnya.",
+  submitLabel = "Kirim Pesan",
+  businessName = "kami",
+  privacyPolicyHref = "/kebijakan-privasi",
+  actionUrl = "/api/leads",
+  sourcePath,
+  returnTo,
+  turnstileSiteKey,
+  surfaceTone = "surface",
+  isPreview = false,
+  isFirstSection = false,
+} = Astro.props;
+
+const headingId = `section-${id}-heading`;
+const resolvedPath = sourcePath ?? (Astro.url.pathname || "/");
+const resolvedReturnTo = returnTo ?? resolvedPath;
+
+// Read PRG status query parameters (zero visitor PII in URL)
+const leadStatus = Astro.url.searchParams.get("leadStatus");
+const leadNumber = Astro.url.searchParams.get("leadNumber");
+const leadErrorCode = Astro.url.searchParams.get("code");
+
+// Carry forward sanitized UTM params if present on the landing URL
+const utmSource = Astro.url.searchParams.get("utm_source")?.slice(0, 100) ?? "";
+const utmMedium = Astro.url.searchParams.get("utm_medium")?.slice(0, 100) ?? "";
+const utmCampaign = Astro.url.searchParams.get("utm_campaign")?.slice(0, 100) ?? "";
+
+function errorMessageForCode(code: string | null): string {
+  switch (code) {
+    case "RATE_LIMITED":
+      return "Terlalu banyak percobaan pengiriman dalam waktu singkat. Silakan tunggu sebentar lalu coba lagi.";
+    case "TURNSTILE_REQUIRED":
+    case "TURNSTILE_INVALID":
+      return "Verifikasi keamanan belum selesai atau kedaluwarsa. Muat ulang halaman lalu coba kembali.";
+    case "SERVICE_UNAVAILABLE":
+    case "TURNSTILE_NOT_CONFIGURED":
+      return "Layanan pengiriman pesan sedang mengalami gangguan sementara. Silakan coba lagi nanti.";
+    case "IDEMPOTENCY_CONFLICT":
+      return "Permintaan sebelumnya berbeda dengan formulir ini. Muat ulang halaman untuk mengirim pesan baru.";
+    case "VALIDATION_ERROR":
+    default:
+      return "Mohon lengkapi nama, nomor WhatsApp yang valid (contoh: 081234567890), pesan, dan persetujuan privasi.";
+  }
+}
+
+const isAccepted = leadStatus === "accepted";
+const isError = leadStatus === "error";
+const cleanLeadNumber = leadNumber && /^\d+$/.test(leadNumber) ? leadNumber : null;
+const cleanTurnstileSiteKey = turnstileSiteKey?.trim() || "";
+---
+
+<section
+  id={id}
+  class:list={["ps-section", surfaceTone === "muted" && "ps-section--muted"]}
+  data-section-id={id}
+  data-section-type="contact_form"
+  data-testid="section-contact-form"
+  aria-labelledby={headingId}
+>
+  <div class="ps-container">
+    <header class="ps-section-header">
+      {eyebrow && <p class="ps-eyebrow">{eyebrow}</p>}
+      {isFirstSection ? (
+        <h1 id={headingId} class="ps-section-title">
+          {heading}
+        </h1>
+      ) : (
+        <h2 id={headingId} class="ps-section-title">
+          {heading}
+        </h2>
+      )}
+      {subheading && <p class="ps-section-subtitle">{subheading}</p>}
+    </header>
+
+    <div class="ps-lead-form-card">
+      {isAccepted && (
+        <div
+          class="ps-lead-banner ps-lead-banner--success"
+          role="status"
+          aria-live="polite"
+          data-testid="lead-form-status"
+          data-status="accepted"
+        >
+          <p class="ps-lead-banner-title">Pesan Anda berhasil dikirim</p>
+          <p class="ps-lead-banner-body">
+            Terima kasih!{" "}
+            {cleanLeadNumber
+              ? `Pesan Anda telah tercatat dengan nomor referensi #${cleanLeadNumber}.`
+              : "Pesan Anda telah tercatat."}{" "}
+            Tim {businessName} akan segera menghubungi Anda.
+          </p>
+        </div>
+      )}
+
+      {isError && (
+        <div
+          class="ps-lead-banner ps-lead-banner--error"
+          role="alert"
+          aria-live="assertive"
+          data-testid="lead-form-status"
+          data-status="error"
+          data-error-code={leadErrorCode ?? "VALIDATION_ERROR"}
+        >
+          <p class="ps-lead-banner-title">Pesan belum dapat dikirim</p>
+          <p class="ps-lead-banner-body">{errorMessageForCode(leadErrorCode)}</p>
+        </div>
+      )}
+
+      <div
+        class="ps-lead-banner ps-lead-banner--hidden"
+        role="status"
+        aria-live="polite"
+        data-testid="lead-form-live-status"
+        hidden
+      ></div>
+
+      <form
+        method="POST"
+        action={isPreview ? undefined : actionUrl}
+        enctype="application/x-www-form-urlencoded"
+        class="ps-lead-form"
+        data-lead-form="true"
+        data-testid="public-lead-form"
+        data-preview={isPreview ? "true" : "false"}
+      >
+        {/* Intentionally empty in cacheable SSR HTML so edge-cached visitors never share an idempotency key */}
+        <input type="hidden" name="idempotencyKey" value="" />
+        <input type="hidden" name="sourcePath" value={resolvedPath} />
+        <input type="hidden" name="returnTo" value={resolvedReturnTo} />
+        {utmSource && <input type="hidden" name="utm_source" value={utmSource} />}
+        {utmMedium && <input type="hidden" name="utm_medium" value={utmMedium} />}
+        {utmCampaign && <input type="hidden" name="utm_campaign" value={utmCampaign} />}
+
+        {/* Accessible off-screen honeypot trap — invisible to human users & screen readers */}
+        <div class="ps-lead-hp" aria-hidden="true">
+          <label for={`${id}-hp-website`}>Situs Web</label>
+          <input
+            id={`${id}-hp-website`}
+            name="hp_website"
+            type="text"
+            tabindex="-1"
+            autocomplete="off"
+            value=""
+          />
+        </div>
+
+        <div class="ps-lead-grid">
+          <div class="ps-lead-field">
+            <label for={`${id}-name`} class="ps-lead-label">
+              Nama Lengkap <span class="ps-lead-required" aria-hidden="true">*</span>
+            </label>
+            <input
+              id={`${id}-name`}
+              name="name"
+              type="text"
+              required
+              maxlength="100"
+              autocomplete="name"
+              placeholder="Contoh: Budi Santoso"
+              class="ps-lead-input"
+              disabled={isPreview}
+            />
+          </div>
+
+          <div class="ps-lead-field">
+            <label for={`${id}-phone`} class="ps-lead-label">
+              Nomor WhatsApp / Telepon <span class="ps-lead-required" aria-hidden="true">*</span>
+            </label>
+            <input
+              id={`${id}-phone`}
+              name="phone"
+              type="tel"
+              inputmode="tel"
+              required
+              maxlength="24"
+              autocomplete="tel"
+              placeholder="0812-3456-7890"
+              aria-describedby={`${id}-phone-hint`}
+              class="ps-lead-input"
+              disabled={isPreview}
+            />
+            <p id={`${id}-phone-hint`} class="ps-lead-hint">
+              Gunakan nomor WhatsApp aktif Indonesia (08... atau +628...).
+            </p>
+          </div>
+        </div>
+
+        <div class="ps-lead-field">
+          <label for={`${id}-email`} class="ps-lead-label">
+            Alamat Email <span class="ps-lead-optional">(Opsional)</span>
+          </label>
+          <input
+            id={`${id}-email`}
+            name="email"
+            type="email"
+            maxlength="254"
+            autocomplete="email"
+            placeholder="nama@perusahaan.co.id"
+            class="ps-lead-input"
+            disabled={isPreview}
+          />
+        </div>
+
+        <div class="ps-lead-field">
+          <label for={`${id}-message`} class="ps-lead-label">
+            Pesan atau Kebutuhan Anda <span class="ps-lead-required" aria-hidden="true">*</span>
+          </label>
+          <textarea
+            id={`${id}-message`}
+            name="message"
+            rows="4"
+            required
+            maxlength="2000"
+            placeholder="Ceritakan kebutuhan, jadwal, atau pertanyaan Anda secara singkat..."
+            class="ps-lead-textarea"
+            disabled={isPreview}
+          ></textarea>
+        </div>
+
+        {cleanTurnstileSiteKey && !isPreview && (
+          <div class="ps-lead-field" data-testid="lead-turnstile-slot">
+            <div
+              class="cf-turnstile"
+              data-sitekey={cleanTurnstileSiteKey}
+              data-action="lead_submit"
+              data-theme="light"
+            ></div>
+            <script
+              is:inline
+              src="https://challenges.cloudflare.com/turnstile/v0/api.js"
+              async
+              defer
+            ></script>
+          </div>
+        )}
+
+        <div class="ps-lead-consent">
+          <label class="ps-lead-consent-label" for={`${id}-consent`}>
+            <input
+              id={`${id}-consent`}
+              name="privacyConsent"
+              type="checkbox"
+              value="true"
+              required
+              class="ps-lead-checkbox"
+              disabled={isPreview}
+            />
+            <span>
+              Saya menyetujui data kontak di atas diproses oleh {businessName} untuk menindaklanjuti
+              pesan ini sesuai{" "}
+              <a href={isPreview ? undefined : privacyPolicyHref} class="ps-lead-policy-link">
+                Kebijakan Privasi
+              </a>
+              .
+            </span>
+          </label>
+        </div>
+
+        <div class="ps-lead-submit-row">
+          <button
+            type="submit"
+            class:list={["ps-btn ps-btn--primary ps-lead-submit", isPreview && "ps-btn--inert"]}
+            disabled={isPreview}
+            data-testid="lead-form-submit"
+          >
+            {submitLabel}
+          </button>
+          <p class="ps-lead-privacy-note">
+            Data Anda hanya digunakan untuk membalas pertanyaan ini dan tidak dibagikan ke pihak lain.
+          </p>
+        </div>
+      </form>
+    </div>
+  </div>
+</section>
+
+<style>
+  .ps-lead-form-card {
+    max-width: 44rem;
+    background-color: var(--ps-surface);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-lg, 12px);
+    padding: clamp(1.25rem, 3vw, 2rem);
+  }
+
+  .ps-lead-banner {
+    border-radius: var(--ps-radius, 8px);
+    padding: 0.875rem 1rem;
+    margin-bottom: 1.25rem;
+    border: 1px solid var(--ps-border);
+  }
+
+  .ps-lead-banner--hidden {
+    display: none;
+  }
+
+  .ps-lead-banner--success {
+    background-color: #ecfdf5;
+    border-color: #10b981;
+    color: #065f46;
+  }
+
+  .ps-lead-banner--error {
+    background-color: #fef2f2;
+    border-color: #ef4444;
+    color: #991b1b;
+  }
+
+  .ps-lead-banner-title {
+    margin: 0 0 0.25rem;
+    font-size: 0.9375rem;
+    font-weight: 700;
+  }
+
+  .ps-lead-banner-body {
+    margin: 0;
+    font-size: 0.875rem;
+    line-height: 1.5;
+  }
+
+  .ps-lead-form {
+    display: flex;
+    flex-direction: column;
+    gap: 1.125rem;
+  }
+
+  .ps-lead-hp {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .ps-lead-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.125rem;
+  }
+
+  @media (min-width: 640px) {
+    .ps-lead-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  .ps-lead-field {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    min-width: 0;
+  }
+
+  .ps-lead-label {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--ps-ink);
+  }
+
+  .ps-lead-required {
+    color: #b91c1c;
+  }
+
+  .ps-lead-optional {
+    font-weight: 400;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-lead-input,
+  .ps-lead-textarea {
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius, 8px);
+    background-color: var(--ps-surface);
+    color: var(--ps-ink);
+    font-family: var(--ps-font-sans);
+    font-size: 1rem;
+    line-height: 1.45;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .ps-lead-textarea {
+    min-height: 7.5rem;
+    resize: vertical;
+  }
+
+  .ps-lead-input:focus-visible,
+  .ps-lead-textarea:focus-visible,
+  .ps-lead-checkbox:focus-visible {
+    outline: 2px solid var(--ps-brand-primary);
+    outline-offset: 2px;
+    border-color: var(--ps-brand-primary);
+  }
+
+  .ps-lead-hint {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--ps-ink-muted);
+    line-height: 1.4;
+  }
+
+  .ps-lead-consent {
+    padding-top: 0.25rem;
+  }
+
+  .ps-lead-consent-label {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.625rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--ps-ink);
+    cursor: pointer;
+    min-height: 44px;
+    padding-block: 0.25rem;
+  }
+
+  .ps-lead-checkbox {
+    width: 1.25rem;
+    height: 1.25rem;
+    margin-top: 0.125rem;
+    flex-shrink: 0;
+    accent-color: var(--ps-brand-primary);
+    cursor: pointer;
+  }
+
+  .ps-lead-policy-link {
+    color: var(--ps-brand-primary);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+  }
+
+  .ps-lead-submit-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+    align-items: flex-start;
+  }
+
+  .ps-lead-submit {
+    width: 100%;
+    min-height: 48px;
+  }
+
+  @media (min-width: 640px) {
+    .ps-lead-submit {
+      width: auto;
+      min-width: 12rem;
+    }
+  }
+
+  .ps-lead-privacy-note {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--ps-ink-muted);
+    line-height: 1.45;
+  }
+</style>
+
+{!isPreview && (
+  <script is:inline>
+    (() => {
+      const forms = document.querySelectorAll('form[data-lead-form="true"]');
+      for (const form of forms) {
+        if (form.dataset.psEnhanced === "1") continue;
+        form.dataset.psEnhanced = "1";
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const submitBtn = form.querySelector('button[type="submit"]');
+          const card = form.closest(".ps-lead-form-card");
+          const liveBanner = card ? card.querySelector('[data-testid="lead-form-live-status"]') : null;
+          if (submitBtn) submitBtn.disabled = true;
+
+          const fd = new FormData(form);
+          const payload = {};
+          for (const [k, v] of fd.entries()) {
+            if (typeof v === "string") payload[k] = v;
+          }
+          payload.privacyConsent = fd.get("privacyConsent") === "true";
+          const idemInput = form.querySelector('input[name="idempotencyKey"]');
+          let idemKey =
+            typeof payload.idempotencyKey === "string" && payload.idempotencyKey.trim().length > 0
+              ? payload.idempotencyKey.trim()
+              : "";
+          if (!idemKey && typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+            idemKey = crypto.randomUUID();
+            if (idemInput) idemInput.value = idemKey;
+          }
+          delete payload.idempotencyKey;
+          delete payload.returnTo;
+
+          try {
+            const res = await fetch(form.getAttribute("action") || "/api/leads", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                ...(idemKey ? { "Idempotency-Key": idemKey } : {}),
+              },
+              body: JSON.stringify(payload),
+            });
+            const data = await res.json().catch(() => null);
+            if (liveBanner) {
+              liveBanner.hidden = false;
+              liveBanner.classList.remove("ps-lead-banner--hidden", "ps-lead-banner--success", "ps-lead-banner--error");
+              if (res.ok) {
+                liveBanner.classList.add("ps-lead-banner--success");
+                liveBanner.setAttribute("role", "status");
+                liveBanner.dataset.status = "accepted";
+                const ref = data && typeof data.leadNumber === "number" && data.leadNumber > 0
+                  ? ` (#${data.leadNumber})`
+                  : "";
+                liveBanner.textContent = (data && data.confirmationMessage ? data.confirmationMessage : "Terima kasih! Pesan Anda telah kami terima.") + ref;
+                form.reset();
+                if (idemInput) idemInput.value = "";
+              } else {
+                liveBanner.classList.add("ps-lead-banner--error");
+                liveBanner.setAttribute("role", "alert");
+                liveBanner.dataset.status = "error";
+                liveBanner.textContent =
+                  (data && data.error && data.error.message) ||
+                  "Pesan belum dapat dikirim. Silakan periksa isian Anda dan coba lagi.";
+              }
+            }
+          } catch {
+            if (liveBanner) {
+              liveBanner.hidden = false;
+              liveBanner.classList.remove("ps-lead-banner--hidden", "ps-lead-banner--success");
+              liveBanner.classList.add("ps-lead-banner--error");
+              liveBanner.setAttribute("role", "alert");
+              liveBanner.dataset.status = "error";
+              liveBanner.textContent =
+                "Koneksi terputus sebelum pesan tersimpan. Silakan coba lagi.";
+            }
+          } finally {
+            if (submitBtn) submitBtn.disabled = false;
+          }
+        });
+      }
+    })();
+  </script>
+)}
