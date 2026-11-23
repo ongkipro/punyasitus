@@ -33,3 +33,9 @@ export {
   useDirtyNavigationGuard,
   type CmsApiErrorField,
 } from "./cms-client-helpers";
+export {
+  AiWritingInspector,
+  type AiWritingInspectorProps,
+  type AiWritingQuotaApiPayload,
+  type AiWritingSuggestApiPayload,
+} from "./AiWritingInspector";
