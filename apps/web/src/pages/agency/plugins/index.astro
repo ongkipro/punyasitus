@@ -1,0 +1,125 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  agencyGatePageErrorResponse,
+  agencyNeutralNotFoundResponse,
+  authorizeAgencyRequest,
+} from "@punyasitus/auth/agency/index";
+import { getAgencyBillingOverview } from "@punyasitus/db/agencies/index";
+import { listAgencyPluginStoreOverview } from "@punyasitus/db/plugins/store/index";
+import AgencyLayout from "@/layouts/AgencyLayout.astro";
+import {
+  formatAgencyClientDto,
+  resolveAgencyRuntimeEnv,
+} from "../../api/agency/_shared";
+import { AgencyPluginsPanel } from "./_AgencyPluginsPanel";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const agencyEnv = resolveAgencyRuntimeEnv(env as unknown as Record<string, unknown>);
+const authz = await authorizeAgencyRequest(
+  Astro.request,
+  agencyEnv,
+  {
+    action: "agency.page.plugins",
+    requireAgencyMembership: true,
+    requiredPermission: "agency:billing:read",
+    enforceCsrf: false,
+  },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email, name: Astro.locals.authUser.name }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  if (authz.response.status === 404) {
+    return agencyNeutralNotFoundResponse();
+  }
+  return agencyGatePageErrorResponse(
+    authz.response.status === 401 ? 401 : 403,
+    authz.code,
+    "Akses penagihan add-on plugin agensi memerlukan keanggotaan agensi aktif dan 2FA terverifikasi.",
+  );
+}
+
+const { actor, platformDb, nowMs } = authz.ctx;
+const activeAgency = actor.activeAgency!;
+const [billingOverview, pluginOverview] = await Promise.all([
+  getAgencyBillingOverview(platformDb, activeAgency.id, { nowMs }),
+  listAgencyPluginStoreOverview(platformDb, activeAgency.id, { nowMs }),
+]);
+
+if (!billingOverview) {
+  return agencyNeutralNotFoundResponse();
+}
+
+const navLinks = [
+  { href: "/agency", label: "Ringkasan", current: false },
+  { href: "/agency/clients", label: "Daftar Klien", current: false },
+  { href: "/agency/billing", label: "Tagihan & Kuitansi", current: false },
+  { href: "/agency/plugins", label: "Add-on Plugin", current: true },
+];
+---
+
+<AgencyLayout
+  title={`Add-on Plugin Agensi — ${activeAgency.name}`}
+  workspaceName={activeAgency.name}
+  workspaceSubtitle={`Diskon ${pluginOverview.effectiveDiscountPercent}%`}
+  activeNavId="billing"
+  basePath="/agency"
+  userDisplayName={actor.userName}
+  userRoleLabel="Admin Agensi (2FA Aktif)"
+>
+  <div class="space-y-5" data-testid="agency-plugins-page">
+    <nav
+      aria-label="Navigasi Portal Agensi"
+      class="flex flex-wrap items-center gap-2 border-b border-border pb-3"
+    >
+      {navLinks.map((link) => (
+        <a
+          href={link.href}
+          aria-current={link.current ? "page" : undefined}
+          class:list={[
+            "inline-flex min-h-11 items-center rounded-md border px-3.5 text-sm font-medium transition-colors md:min-h-9",
+            link.current
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border bg-card text-foreground hover:bg-muted",
+          ]}
+        >
+          {link.label}
+        </a>
+      ))}
+    </nav>
+
+    <header class="space-y-1">
+      <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+        Toko &amp; Tagihan Add-on Plugin Agensi
+      </h1>
+      <p class="text-sm text-muted-foreground">
+        Kelola pembelian add-on plugin berbayar untuk situs klien dengan diskon agensi, pantau izin
+        khusus klien, dan unduh kuitansi PDF resmi.
+      </p>
+    </header>
+
+    <AgencyPluginsPanel
+      client:load
+      agencyId={activeAgency.id}
+      agencyName={activeAgency.name}
+      effectiveDiscountPercent={pluginOverview.effectiveDiscountPercent}
+      clients={billingOverview.clients.map(formatAgencyClientDto)}
+      paidPlugins={pluginOverview.paidPlugins.filter(
+        (p): p is typeof p & { readonly billingModel: "paid_once" | "paid_monthly" | "paid_yearly" } =>
+          p.billingModel !== "free",
+      )}
+      privateGrants={pluginOverview.privateGrants}
+      entitlements={pluginOverview.entitlements}
+      receipts={pluginOverview.receipts}
+    />
+  </div>
+</AgencyLayout>

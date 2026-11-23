@@ -1,7 +1,7 @@
 ---
-import { listTenantPluginsForAdmin } from "@/core/plugin-runtime";
+import { getTenantPluginStoreSnapshot } from "@punyasitus/db/plugins/store/index";
 import DashboardLayout from "@/layouts/DashboardLayout.astro";
-import { PluginStorefrontClient } from "./_PluginStorefrontClient";
+import { PluginStoreClient } from "./_PluginStoreClient";
 import { resolvePluginAdminServerContext } from "./_server-context";
 
 const resolved = await resolvePluginAdminServerContext(Astro);
@@ -10,23 +10,13 @@ if (!resolved.ok) {
 }
 const ctx = resolved.ctx;
 
-const items = await listTenantPluginsForAdmin(
-  {
-    platformDb: ctx.platformDb,
-    tenantStore: ctx.tenantStore,
-    resolveTenantDb: () => ctx.tenantDb,
-  },
-  {
-    id: ctx.tenantId,
-    handle: ctx.handle,
-    name: ctx.workspaceName,
-    status: ctx.permissions.tenantStatus,
-  },
-);
+const snapshot = await getTenantPluginStoreSnapshot(ctx.platformDb, {
+  tenantId: ctx.tenantId,
+});
 ---
 
 <DashboardLayout
-  title={`Plugin — ${ctx.workspaceName}`}
+  title={`Toko Plugin — ${ctx.workspaceName}`}
   surface="dashboard"
   workspaceName={ctx.workspaceName}
   workspaceSubtitle={ctx.workspaceSubtitle}
@@ -40,12 +30,17 @@ const items = await listTenantPluginsForAdmin(
   userDisplayName={ctx.userDisplayName}
   userRoleLabel={ctx.permissions.roleLabel}
 >
-  <PluginStorefrontClient
+  <PluginStoreClient
     client:load
     handle={ctx.handle}
     basePath={ctx.basePath}
     apiBaseUrl={`/api/tenants/${encodeURIComponent(ctx.handle)}/plugins`}
-    initialItems={items}
+    billingPayer={snapshot.billingPayer}
+    initialItems={snapshot.items}
+    initialOrders={snapshot.orders}
+    initialReceipts={snapshot.receipts}
+    initialCustomDevRequests={snapshot.customDevRequests}
+    initialQuota={snapshot.customDevQuota}
     permissions={{
       role: ctx.permissions.role,
       roleLabel: ctx.permissions.roleLabel,
