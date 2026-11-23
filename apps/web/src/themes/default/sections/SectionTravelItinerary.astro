@@ -1,0 +1,807 @@
+---
+import {
+  formatTravelDateOnlyIndonesian,
+  normalizeTravelDisplayModel,
+  type TravelPackageAttributes,
+  type TrustedTravelGateState,
+} from "@punyasitus/core/catalog/travel";
+import type { TourAttributes } from "@punyasitus/core/catalog/index";
+
+/**
+ * Accessible HTML-First Travel & Umrah Itinerary & Departure Section
+ * (`SectionTravelItinerary.astro`; TASK-020, REQ-028, DEC-038, DEC-042).
+ *
+ * Pure server-rendered Astro markup + `--ps-*` theme tokens:
+ * - Zero JavaScript required: native `<details>` / `<summary>` day-by-day accordions.
+ * - Timezone-invariant date-only departures (zero seat counters, zero OTA checkout).
+ * - Permenpar 6/2025 & Kemenag 5 Pasti Umrah trust lines; verified license badge
+ *   renders ONLY when server-trusted operator verification & DEC-042 publish gate pass.
+ */
+
+export interface Props {
+  readonly id?: string;
+  readonly travel: TravelPackageAttributes | TourAttributes | Record<string, unknown>;
+  readonly trustedGateState?: TrustedTravelGateState;
+  readonly heading?: string;
+  readonly whatsappHref?: string | null;
+  readonly whatsappLabel?: string;
+  readonly inquiryHref?: string | null;
+  readonly inquiryLabel?: string;
+  readonly embedded?: boolean;
+  readonly surfaceTone?: "surface" | "muted";
+}
+
+const {
+  id = "travel-itinerary",
+  travel,
+  trustedGateState,
+  heading = "Rincian Paket Perjalanan",
+  whatsappHref = null,
+  whatsappLabel = "Tanya Jadwal via WhatsApp",
+  inquiryHref = null,
+  inquiryLabel = "Kirim Pertanyaan",
+  embedded = false,
+  surfaceTone = "surface",
+} = Astro.props;
+
+const model = normalizeTravelDisplayModel(travel, trustedGateState);
+
+function isWhatsAppUrl(raw: string): boolean {
+  return /^https:\/\/(?:wa\.me|api\.whatsapp\.com)\//i.test(raw);
+}
+
+function sanitizeSafeActionHref(raw: string | null | undefined): string | null {
+  if (!raw || typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("#")) return trimmed;
+  if (isWhatsAppUrl(trimmed)) return trimmed;
+  if (/^https:\/\//i.test(trimmed)) return trimmed;
+  if (/^(?:tel|mailto):/i.test(trimmed)) return trimmed;
+  return null;
+}
+
+const rawSafePrimaryHref = sanitizeSafeActionHref(whatsappHref);
+const safeWhatsappHref =
+  rawSafePrimaryHref && isWhatsAppUrl(rawSafePrimaryHref) ? rawSafePrimaryHref : null;
+const safeNonWhatsappPrimaryHref =
+  rawSafePrimaryHref && !isWhatsAppUrl(rawSafePrimaryHref) ? rawSafePrimaryHref : null;
+const safeInquiryHref = sanitizeSafeActionHref(inquiryHref) ?? safeNonWhatsappPrimaryHref;
+const resolvedInquiryLabel =
+  sanitizeSafeActionHref(inquiryHref)
+    ? inquiryLabel
+    : safeNonWhatsappPrimaryHref
+      ? inquiryLabel
+      : inquiryLabel;
+const isExternalInquiry = Boolean(safeInquiryHref && /^https:\/\//i.test(safeInquiryHref));
+
+const factRows: Array<{ readonly label: string; readonly value: string }> = [];
+if (model.durationLabel) {
+  factRows.push({ label: "Durasi Perjalanan", value: model.durationLabel });
+}
+if (model.destination) {
+  factRows.push({ label: "Destinasi", value: model.destination });
+}
+if (model.departureCity) {
+  factRows.push({ label: "Kota Keberangkatan", value: model.departureCity });
+}
+if (model.airline) {
+  factRows.push({ label: "Maskapai", value: model.airline });
+}
+if (model.transport) {
+  factRows.push({ label: "Transportasi Darat", value: model.transport });
+}
+if (model.accommodation && model.hotels.length === 0) {
+  factRows.push({ label: "Akomodasi / Hotel", value: model.accommodation });
+}
+if (model.minPax !== null) {
+  factRows.push({ label: "Minimal Peserta", value: `${model.minPax} orang` });
+}
+
+const hasTrustLines = Boolean(
+  model.travelInsurance ||
+    model.officialVisa ||
+    (model.showVerifiedBadge && model.verifiedLicenseNumber),
+);
+const hasReturnDateColumn = model.departures.some((d) => Boolean(d.returnDate));
+const hasDepartureCityColumn = model.departures.some((d) => Boolean(d.departureCity));
+const hasDepartureLabelColumn = model.departures.some((d) => Boolean(d.label));
+
+function renderStars(starClass: number | undefined): string {
+  if (!starClass || starClass < 1 || starClass > 5) return "";
+  return `Bintang ${starClass}`;
+}
+---
+
+<div
+  id={id}
+  class:list={[
+    "ps-travel-module",
+    !embedded && "ps-section",
+    !embedded && surfaceTone === "muted" && "ps-section--muted",
+  ]}
+  data-testid="section-travel-itinerary"
+  data-package-kind={model.packageKind}
+>
+  <div class:list={[!embedded && "ps-container", "ps-travel-stack"]}>
+    {/* 1. Structured Key Facts & Verified License Strip */}
+    {(factRows.length > 0 || model.hotels.length > 0 || hasTrustLines) && (
+      <section class="ps-travel-block" aria-labelledby={`${id}-facts-heading`}>
+        <div class="ps-travel-heading-row">
+          <h2 id={`${id}-facts-heading`} class="ps-travel-heading">
+            {heading}
+          </h2>
+          {model.showVerifiedBadge && model.verifiedLicenseKind && model.verifiedLicenseNumber && (
+            <span
+              class="ps-travel-verified-badge"
+              data-testid="travel-verified-license-badge"
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                <path d="m9 12 2 2 4-4" />
+              </svg>
+              <span>
+                {model.verifiedLicenseKind} Terverifikasi: {model.verifiedLicenseNumber}
+              </span>
+            </span>
+          )}
+        </div>
+
+        {factRows.length > 0 && (
+          <dl class="ps-travel-facts" data-testid="travel-facts-list">
+            {factRows.map((row) => (
+              <div class="ps-travel-fact-row">
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {model.hotels.length > 0 && (
+          <div class="ps-travel-subsection" data-testid="travel-hotels-list">
+            <h3 class="ps-travel-subheading">Akomodasi &amp; Hotel</h3>
+            <ul class="ps-travel-hotel-grid">
+              {model.hotels.map((hotel) => (
+                <li class="ps-travel-hotel-card">
+                  <div class="ps-travel-hotel-top">
+                    <strong class="ps-travel-hotel-name">{hotel.name}</strong>
+                    {hotel.starClass && (
+                      <span class="ps-travel-hotel-star">{renderStars(hotel.starClass)}</span>
+                    )}
+                  </div>
+                  {(hotel.city || hotel.distanceNote) && (
+                    <p class="ps-travel-hotel-meta">
+                      {[hotel.city, hotel.distanceNote].filter(Boolean).join(" • ")}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {hasTrustLines && (
+          <div class="ps-travel-trust-box" data-testid="travel-trust-compliance">
+            <h3 class="ps-travel-subheading">Jaminan &amp; Kelengkapan Resmi</h3>
+            <dl class="ps-travel-trust-dl">
+              {model.showVerifiedBadge &&
+                model.verifiedLicenseKind &&
+                model.verifiedLicenseNumber && (
+                  <div class="ps-travel-trust-item">
+                    <dt>Izin Resmi Kemenag ({model.verifiedLicenseKind})</dt>
+                    <dd>{model.verifiedLicenseNumber} (Terverifikasi)</dd>
+                  </div>
+                )}
+              {model.travelInsurance && (
+                <div class="ps-travel-trust-item">
+                  <dt>Asuransi Perjalanan</dt>
+                  <dd>{model.travelInsurance}</dd>
+                </div>
+              )}
+              {model.officialVisa && (
+                <div class="ps-travel-trust-item">
+                  <dt>Visa Resmi</dt>
+                  <dd>{model.officialVisa}</dd>
+                </div>
+              )}
+            </dl>
+          </div>
+        )}
+      </section>
+    )}
+
+    {/* 2. Fasilitas Termasuk & Tidak Termasuk */}
+    {(model.inclusions.length > 0 || model.exclusions.length > 0) && (
+      <section
+        class="ps-travel-block"
+        aria-labelledby={`${id}-inc-exc-heading`}
+        data-testid="travel-inclusions-exclusions"
+      >
+        <h2 id={`${id}-inc-exc-heading`} class="ps-travel-heading">
+          Fasilitas Termasuk &amp; Tidak Termasuk
+        </h2>
+        <div class="ps-travel-two-col">
+          {model.inclusions.length > 0 && (
+            <div class="ps-travel-card">
+              <h3 class="ps-travel-subheading">Termasuk dalam Paket</h3>
+              <ul class="ps-travel-list ps-travel-list--inc" data-testid="travel-inclusions-list">
+                {model.inclusions.map((item) => (
+                  <li>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {model.exclusions.length > 0 && (
+            <div class="ps-travel-card">
+              <h3 class="ps-travel-subheading">Tidak Termasuk</h3>
+              <ul class="ps-travel-list ps-travel-list--exc" data-testid="travel-exclusions-list">
+                {model.exclusions.map((item) => (
+                  <li>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </section>
+    )}
+
+    {/* 3. Rencana Perjalanan Harian (Accessible Native <details>/<summary>, Zero JS) */}
+    {model.itinerary.length > 0 && (
+      <section
+        class="ps-travel-block"
+        aria-labelledby={`${id}-itinerary-heading`}
+        data-testid="travel-itinerary-section"
+      >
+        <h2 id={`${id}-itinerary-heading`} class="ps-travel-heading">
+          Rencana Perjalanan Harian
+        </h2>
+        <div class="ps-travel-accordion-list">
+          {model.itinerary.map((day, idx) => (
+            <details
+              class="ps-travel-accordion-item"
+              open={idx === 0 ? true : undefined}
+              data-testid={`travel-itinerary-day-${day.dayNumber}`}
+            >
+              <summary class="ps-travel-accordion-summary">
+                <span class="ps-travel-day-heading">
+                  <span class="ps-travel-day-pill">Hari {day.dayNumber}</span>
+                  <span class="ps-travel-day-title">{day.title}</span>
+                  {day.city && <span class="ps-travel-day-city">{day.city}</span>}
+                </span>
+                <svg
+                  class="ps-travel-chevron"
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </summary>
+              <div class="ps-travel-accordion-body">
+                {day.summary && <p class="ps-travel-day-summary">{day.summary}</p>}
+                {day.meals && (
+                  <p class="ps-travel-day-meals">
+                    <strong>Konsumsi:</strong> {day.meals}
+                  </p>
+                )}
+              </div>
+            </details>
+          ))}
+        </div>
+      </section>
+    )}
+
+    {/* 4. Jadwal Keberangkatan (Date-Only, Zero Seat Counter / Zero OTA Checkout) */}
+    {model.departures.length > 0 && (
+      <section
+        class="ps-travel-block"
+        aria-labelledby={`${id}-departures-heading`}
+        data-testid="travel-departures-section"
+      >
+        <h2 id={`${id}-departures-heading`} class="ps-travel-heading">
+          Jadwal Keberangkatan
+        </h2>
+        <div class="ps-travel-table-wrap">
+          <table class="ps-travel-table" data-testid="travel-departures-table">
+            <thead>
+              <tr>
+                <th scope="col">Tanggal Berangkat</th>
+                {hasReturnDateColumn && <th scope="col">Tanggal Pulang</th>}
+                {hasDepartureCityColumn && <th scope="col">Kota Keberangkatan</th>}
+                {hasDepartureLabelColumn && <th scope="col">Keterangan</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {model.departures.map((dep) => (
+                <tr data-departure-date={dep.departureDate}>
+                  <td>
+                    <time datetime={dep.departureDate}>
+                      {formatTravelDateOnlyIndonesian(dep.departureDate)}
+                    </time>
+                  </td>
+                  {hasReturnDateColumn && (
+                    <td>
+                      {dep.returnDate ? (
+                        <time datetime={dep.returnDate}>
+                          {formatTravelDateOnlyIndonesian(dep.returnDate)}
+                        </time>
+                      ) : (
+                        "—"
+                      )}
+                    </td>
+                  )}
+                  {hasDepartureCityColumn && <td>{dep.departureCity ?? "—"}</td>}
+                  {hasDepartureLabelColumn && <td>{dep.label ?? "—"}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p class="ps-travel-footnote">
+          Jadwal keberangkatan ditampilkan sebagai tanggal kalender informatif tanpa sistem
+          tiket otomatis. Hubungi tim kami melalui WhatsApp untuk konfirmasi jadwal dan pendaftaran.
+        </p>
+      </section>
+    )}
+
+    {/* 5. Direct WhatsApp / Inquiry CTA (No JS required, No Cart/OTA) */}
+    {(safeWhatsappHref || safeInquiryHref) && (
+      <div class="ps-travel-cta-band" data-testid="travel-inquiry-cta-band">
+        <div class="ps-travel-cta-copy">
+          <p class="ps-travel-cta-title">Tertarik dengan paket perjalanan ini?</p>
+          <p class="ps-travel-cta-desc">
+            Konsultasikan pilihan tanggal keberangkatan, rincian akomodasi, dan dokumen langsung
+            bersama tim konsultan kami.
+          </p>
+        </div>
+        <div class="ps-travel-cta-actions">
+          {safeWhatsappHref && (
+            <a
+              href={safeWhatsappHref}
+              class="ps-btn ps-btn--whatsapp ps-travel-cta-btn"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="travel-whatsapp-cta"
+              data-wa-event="wa_click"
+            >
+              {whatsappLabel}
+            </a>
+          )}
+          {safeInquiryHref && (
+            <a
+              href={safeInquiryHref}
+              class="ps-btn ps-btn--secondary ps-travel-cta-btn"
+              target={isExternalInquiry ? "_blank" : undefined}
+              rel={isExternalInquiry ? "noopener noreferrer" : undefined}
+              data-testid="travel-secondary-inquiry-cta"
+            >
+              {resolvedInquiryLabel}
+            </a>
+          )}
+        </div>
+      </div>
+    )}
+  </div>
+</div>
+
+<style>
+  .ps-travel-stack {
+    display: flex;
+    flex-direction: column;
+    gap: clamp(1.5rem, 3vw, 2.25rem);
+  }
+
+  .ps-travel-block {
+    display: flex;
+    flex-direction: column;
+    gap: 0.875rem;
+    min-width: 0;
+  }
+
+  .ps-travel-heading-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+
+  .ps-travel-heading {
+    margin: 0;
+    font-size: clamp(1.2rem, 1.08rem + 0.5vw, 1.45rem);
+    line-height: 1.3;
+    color: var(--ps-ink);
+  }
+
+  .ps-travel-subheading {
+    margin: 0 0 0.625rem;
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--ps-ink);
+  }
+
+  .ps-travel-verified-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.375rem 0.75rem;
+    border-radius: 999px;
+    border: 1px solid var(--ps-brand-primary);
+    background-color: var(--ps-surface-muted);
+    color: var(--ps-brand-primary);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    line-height: 1.3;
+  }
+
+  .ps-travel-facts {
+    margin: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    overflow: hidden;
+  }
+
+  .ps-travel-fact-row {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--ps-border);
+    background-color: var(--ps-surface);
+  }
+
+  .ps-travel-fact-row:last-child {
+    border-bottom: 0;
+  }
+
+  .ps-travel-fact-row:nth-child(even) {
+    background-color: var(--ps-surface-muted);
+  }
+
+  .ps-travel-fact-row dt {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-travel-fact-row dd {
+    margin: 0;
+    font-size: 0.9375rem;
+    font-weight: 500;
+    color: var(--ps-ink);
+    overflow-wrap: anywhere;
+  }
+
+  .ps-travel-subsection {
+    margin-top: 0.25rem;
+  }
+
+  .ps-travel-hotel-grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75rem;
+  }
+
+  .ps-travel-hotel-card {
+    padding: 0.875rem 1rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    background-color: var(--ps-surface);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .ps-travel-hotel-top {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+
+  .ps-travel-hotel-name {
+    font-size: 0.95rem;
+    color: var(--ps-ink);
+  }
+
+  .ps-travel-hotel-star {
+    font-size: 0.75rem;
+    font-weight: 700;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+    background-color: var(--ps-surface-muted);
+    border: 1px solid var(--ps-border);
+    color: var(--ps-ink);
+  }
+
+  .ps-travel-hotel-meta {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-travel-trust-box {
+    padding: 1rem 1.125rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    background-color: var(--ps-surface-muted);
+  }
+
+  .ps-travel-trust-dl {
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+
+  .ps-travel-trust-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.125rem;
+  }
+
+  .ps-travel-trust-item dt {
+    font-size: 0.8125rem;
+    font-weight: 700;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-travel-trust-item dd {
+    margin: 0;
+    font-size: 0.9375rem;
+    color: var(--ps-ink);
+    overflow-wrap: anywhere;
+  }
+
+  .ps-travel-two-col {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1rem;
+  }
+
+  .ps-travel-card {
+    padding: 1rem 1.125rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    background-color: var(--ps-surface);
+  }
+
+  .ps-travel-list {
+    margin: 0;
+    padding-left: 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    font-size: 0.9375rem;
+    color: var(--ps-ink);
+    line-height: 1.5;
+  }
+
+  .ps-travel-accordion-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.625rem;
+  }
+
+  .ps-travel-accordion-item {
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    background-color: var(--ps-surface);
+    overflow: hidden;
+  }
+
+  .ps-travel-accordion-summary {
+    list-style: none;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    min-height: 48px;
+    padding: 0.75rem 1rem;
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--ps-ink);
+    user-select: none;
+  }
+
+  .ps-travel-accordion-summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .ps-travel-accordion-summary:hover {
+    background-color: var(--ps-surface-muted);
+  }
+
+  .ps-travel-day-heading {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  .ps-travel-day-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    background-color: var(--ps-brand-primary);
+    color: var(--ps-brand-on-primary);
+    font-size: 0.75rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .ps-travel-day-title {
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: var(--ps-ink);
+    overflow-wrap: anywhere;
+  }
+
+  .ps-travel-day-city {
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-travel-chevron {
+    flex-shrink: 0;
+    color: var(--ps-ink-muted);
+    transition: transform 160ms ease;
+  }
+
+  .ps-travel-accordion-item[open] .ps-travel-chevron {
+    transform: rotate(180deg);
+  }
+
+  .ps-travel-accordion-body {
+    padding: 0.25rem 1rem 1rem;
+    border-top: 1px solid var(--ps-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .ps-travel-day-summary {
+    margin: 0.5rem 0 0;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    color: var(--ps-ink);
+  }
+
+  .ps-travel-day-meals {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-travel-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius);
+    background-color: var(--ps-surface);
+  }
+
+  .ps-travel-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9375rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ps-travel-table th,
+  .ps-travel-table td {
+    padding: 0.75rem 0.875rem;
+    border-bottom: 1px solid var(--ps-border);
+    text-align: left;
+  }
+
+  .ps-travel-table th {
+    background-color: var(--ps-surface-muted);
+    font-weight: 700;
+    color: var(--ps-ink);
+    white-space: nowrap;
+  }
+
+  .ps-travel-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .ps-travel-footnote {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-sm);
+    background-color: var(--ps-surface-muted);
+    font-size: 0.8125rem;
+    color: var(--ps-ink-muted);
+    line-height: 1.5;
+  }
+
+  .ps-travel-cta-band {
+    padding: 1.25rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-lg);
+    background-color: var(--ps-surface-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  .ps-travel-cta-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+  }
+
+  .ps-travel-cta-title {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--ps-ink);
+  }
+
+  .ps-travel-cta-desc {
+    margin: 0;
+    font-size: 0.875rem;
+    color: var(--ps-ink-muted);
+    line-height: 1.55;
+  }
+
+  .ps-travel-cta-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.625rem;
+  }
+
+  .ps-travel-cta-btn {
+    min-height: 44px;
+    width: 100%;
+  }
+
+  @media (min-width: 768px) {
+    .ps-travel-hotel-grid,
+    .ps-travel-two-col {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .ps-travel-cta-band {
+      flex-direction: row;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .ps-travel-cta-btn {
+      width: auto;
+    }
+  }
+</style>
