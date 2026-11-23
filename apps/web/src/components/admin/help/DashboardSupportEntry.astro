@@ -1,0 +1,84 @@
+---
+import type { DashboardHelpScreenId } from "@punyasitus/core/help/index";
+import type {
+  AgencySupportContactInput,
+  PlatformSupportSettingsInput,
+} from "@punyasitus/core/support/index";
+import {
+  DashboardSupportButton,
+  DashboardSupportCard,
+} from "./DashboardSupportPanel";
+import {
+  loadDashboardSupportContext,
+  resolvePlatformDbFromRuntime,
+} from "./support-loader";
+
+export interface Props {
+  handle: string;
+  screen: DashboardHelpScreenId | string;
+  tenantId?: string | null;
+  mode?: "button" | "card";
+  label?: string;
+  helpBaseUrl?: string;
+  helpScreen?: DashboardHelpScreenId;
+  align?: "start" | "end";
+  openInNewTab?: boolean;
+  defaultOpen?: boolean;
+  platformSettingsOverride?: PlatformSupportSettingsInput | null;
+  agencyContactOverride?: AgencySupportContactInput | null;
+  class?: string;
+}
+
+const {
+  handle,
+  screen,
+  tenantId = null,
+  mode = "button",
+  label = "Bantuan",
+  helpBaseUrl,
+  helpScreen,
+  align = "end",
+  openInNewTab = true,
+  defaultOpen = false,
+  platformSettingsOverride = null,
+  agencyContactOverride = null,
+  class: className = "",
+} = Astro.props;
+
+const platformDb =
+  platformSettingsOverride && agencyContactOverride !== undefined
+    ? null
+    : await resolvePlatformDbFromRuntime(Astro.locals);
+
+const support = await loadDashboardSupportContext(platformDb, {
+  tenantId,
+  handle,
+  screen,
+  platformSettingsOverride,
+  agencyContactOverride,
+});
+---
+
+{
+  mode === "card" ? (
+    <DashboardSupportCard
+      support={support}
+      helpBaseUrl={helpBaseUrl}
+      helpScreen={helpScreen}
+      openInNewTab={openInNewTab}
+      className={className}
+    />
+  ) : (
+    <DashboardSupportButton
+      client:load
+      support={support}
+      label={label}
+      helpBaseUrl={helpBaseUrl}
+      helpScreen={helpScreen}
+      align={align}
+      openInNewTab={openInNewTab}
+      defaultOpen={defaultOpen}
+      className={className}
+    />
+  )
+}

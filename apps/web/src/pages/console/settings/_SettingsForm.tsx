@@ -1,7 +1,11 @@
 import * as React from "react";
+import { resolveDashboardSupportModel } from "@punyasitus/core/support/index";
 import {
   AlertCircleIcon,
   CheckCircle2Icon,
+  Clock,
+  ExternalLink,
+  MessageCircle,
   RefreshCwIcon,
   SaveIcon,
   ShieldAlertIcon,
@@ -145,6 +149,12 @@ export function SettingsForm({ initialSettings, stepUpFresh }: SettingsFormProps
     if (reason.trim().length < 10) {
       localErrors.reason = "Alasan perubahan audit wajib diisi minimal 10 karakter.";
     }
+    if (supportHours.trim().length > 120) {
+      localErrors.supportHours = "Jam layanan dukungan maksimal 120 karakter.";
+    }
+    if (supportResponseTarget.trim().length > 120) {
+      localErrors.supportResponseTarget = "Target waktu respons maksimal 120 karakter.";
+    }
 
     const parsedMonthly = Number(monthlyPriceIdr.trim());
     const parsedYearly = Number(yearlyPriceIdr.trim());
@@ -229,6 +239,22 @@ export function SettingsForm({ initialSettings, stepUpFresh }: SettingsFormProps
     }
   }
 
+  const supportPreview = React.useMemo(
+    () =>
+      resolveDashboardSupportModel({
+        handle: "kopi-nusantara",
+        screen: "settings",
+        platformSettings: {
+          salesWhatsapp: salesWhatsapp.trim(),
+          supportEmail: supportEmail.trim(),
+          supportHours: supportHours.trim() || null,
+          supportResponseTarget: supportResponseTarget.trim() || null,
+          configured: salesWhatsapp.trim().length > 0,
+        },
+      }),
+    [salesWhatsapp, supportEmail, supportHours, supportResponseTarget],
+  );
+
   return (
     <div className="space-y-5" data-testid="console-settings-panel">
       {!stepUpFresh && (
@@ -307,7 +333,7 @@ export function SettingsForm({ initialSettings, stepUpFresh }: SettingsFormProps
                 htmlFor="settings-sales-whatsapp"
                 className="block text-sm font-medium text-foreground"
               >
-                WhatsApp Penjualan (E.164 Indonesia)
+                WhatsApp Resmi &amp; Dukungan Platform (E.164 Indonesia)
               </label>
               <Input
                 id="settings-sales-whatsapp"
@@ -322,13 +348,19 @@ export function SettingsForm({ initialSettings, stepUpFresh }: SettingsFormProps
                   }
                 }}
                 aria-invalid={fieldErrors.salesWhatsapp ? "true" : undefined}
-                aria-describedby={fieldErrors.salesWhatsapp ? "err-salesWhatsapp" : undefined}
+                aria-describedby={
+                  fieldErrors.salesWhatsapp ? "err-salesWhatsapp" : "hint-salesWhatsapp"
+                }
                 disabled={pending}
                 className="tabular-nums"
               />
-              {fieldErrors.salesWhatsapp && (
+              {fieldErrors.salesWhatsapp ? (
                 <p id="err-salesWhatsapp" role="alert" className="text-xs font-medium text-destructive">
                   {fieldErrors.salesWhatsapp}
+                </p>
+              ) : (
+                <p id="hint-salesWhatsapp" className="text-xs text-muted-foreground">
+                  Dipakai tombol bantuan WhatsApp di dasbor pengguna &amp; CTA penjualan.
                 </p>
               )}
             </div>
@@ -428,17 +460,36 @@ export function SettingsForm({ initialSettings, stepUpFresh }: SettingsFormProps
                 htmlFor="settings-support-hours"
                 className="block text-sm font-medium text-foreground"
               >
-                Jam Layanan Dukungan (Opsional)
+                Jam Layanan Dukungan (Dipublikasikan di Dasbor)
               </label>
               <Input
                 id="settings-support-hours"
                 name="supportHours"
                 type="text"
-                placeholder="Senin–Jumat, 09.00–17.00 WIB"
+                maxLength={120}
+                placeholder="Senin–Jumat 09:00–17:00 WIB, Sabtu 09:00–13:00 WIB"
                 value={supportHours}
-                onChange={(e) => setSupportHours(e.target.value)}
+                onChange={(e) => {
+                  setSupportHours(e.target.value);
+                  if (fieldErrors.supportHours) {
+                    setFieldErrors((prev) => ({ ...prev, supportHours: "" }));
+                  }
+                }}
+                aria-invalid={fieldErrors.supportHours ? "true" : undefined}
+                aria-describedby={
+                  fieldErrors.supportHours ? "err-supportHours" : "hint-supportHours"
+                }
                 disabled={pending}
               />
+              {fieldErrors.supportHours ? (
+                <p id="err-supportHours" role="alert" className="text-xs font-medium text-destructive">
+                  {fieldErrors.supportHours}
+                </p>
+              ) : (
+                <p id="hint-supportHours" className="text-xs text-muted-foreground">
+                  Ditampilkan di panel bantuan dasbor (maks. 120 karakter).
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -446,17 +497,42 @@ export function SettingsForm({ initialSettings, stepUpFresh }: SettingsFormProps
                 htmlFor="settings-response-target"
                 className="block text-sm font-medium text-foreground"
               >
-                Target Waktu Respons (Opsional)
+                Target Waktu Respons (Dipublikasikan di Dasbor)
               </label>
               <Input
                 id="settings-response-target"
                 name="supportResponseTarget"
                 type="text"
-                placeholder="Maksimal 1 hari kerja"
+                maxLength={120}
+                placeholder="< 2 jam kerja"
                 value={supportResponseTarget}
-                onChange={(e) => setSupportResponseTarget(e.target.value)}
+                onChange={(e) => {
+                  setSupportResponseTarget(e.target.value);
+                  if (fieldErrors.supportResponseTarget) {
+                    setFieldErrors((prev) => ({ ...prev, supportResponseTarget: "" }));
+                  }
+                }}
+                aria-invalid={fieldErrors.supportResponseTarget ? "true" : undefined}
+                aria-describedby={
+                  fieldErrors.supportResponseTarget
+                    ? "err-supportResponseTarget"
+                    : "hint-supportResponseTarget"
+                }
                 disabled={pending}
               />
+              {fieldErrors.supportResponseTarget ? (
+                <p
+                  id="err-supportResponseTarget"
+                  role="alert"
+                  className="text-xs font-medium text-destructive"
+                >
+                  {fieldErrors.supportResponseTarget}
+                </p>
+              ) : (
+                <p id="hint-supportResponseTarget" className="text-xs text-muted-foreground">
+                  Estimasi balasan tim dukungan pada jam kerja (maks. 120 karakter).
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -568,6 +644,92 @@ export function SettingsForm({ initialSettings, stepUpFresh }: SettingsFormProps
           <span>Terakhir diperbarui: {formatUpdatedAt(updatedAt)}</span>
           <span>Batas keamanan: protokol http:, javascript:, dan host internal ditolak</span>
         </CardFooter>
+      </Card>
+
+      <Card data-testid="console-support-preview-card">
+        <CardHeader className="border-b border-border pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-base">
+                Pratinjau Panel Dukungan WhatsApp Dasbor
+              </CardTitle>
+              <CardDescription>
+                Menampilkan nomor dukungan, jam layanan, target respons, dan pesan otomatis yang
+                dilihat pengguna dasbor (hanya handle situs &amp; nama layar; situs agensi tetap
+                mengutamakan kontak agensi terlebih dahulu).
+              </CardDescription>
+            </div>
+            <Badge
+              variant={supportPreview.platformChannel.whatsappUrl ? "success" : "warning"}
+              data-testid="console-support-preview-status"
+            >
+              {supportPreview.platformChannel.whatsappUrl
+                ? "WhatsApp Siap"
+                : "Nomor Belum Valid"}
+            </Badge>
+          </div>
+        </CardHeader>
+
+        <CardContent className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="space-y-2 rounded-md border border-border bg-muted/40 p-3.5 text-sm">
+            <div className="flex items-center gap-2 font-medium text-foreground">
+              <Clock className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              <span>Jam Layanan &amp; Target Respons Terbit</span>
+            </div>
+            <p className="text-xs text-muted-foreground" data-testid="console-support-preview-hours">
+              <strong className="font-medium text-foreground">Jam layanan:</strong>{" "}
+              {supportPreview.platformChannel.supportHours}
+            </p>
+            <p
+              className="text-xs text-muted-foreground"
+              data-testid="console-support-preview-target"
+            >
+              <strong className="font-medium text-foreground">Target respons:</strong>{" "}
+              {supportPreview.platformChannel.responseTarget}
+            </p>
+            <p
+              className="text-xs text-muted-foreground tabular-nums"
+              data-testid="console-support-preview-number"
+            >
+              <strong className="font-medium text-foreground">Nomor WhatsApp:</strong>{" "}
+              {supportPreview.platformChannel.whatsappDisplay ?? "Belum dikonfigurasi"}
+            </p>
+          </div>
+
+          <div className="space-y-2.5 rounded-md border border-border bg-muted/40 p-3.5 text-sm">
+            <div className="flex items-center gap-2 font-medium text-foreground">
+              <MessageCircle className="size-4 shrink-0 text-primary" aria-hidden="true" />
+              <span>Contoh Pesan Otomatis (Tanpa Rahasia / PII)</span>
+            </div>
+            <p
+              className="rounded border border-border bg-card px-2.5 py-2 font-mono text-xs text-foreground break-words"
+              data-testid="console-support-preview-message"
+            >
+              {supportPreview.prefilledMessage}
+            </p>
+            {supportPreview.platformChannel.whatsappUrl && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="min-h-11 w-full justify-between sm:w-auto md:min-h-9"
+                data-testid="console-support-preview-link"
+                render={
+                  <a
+                    href={supportPreview.platformChannel.whatsappUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  />
+                }
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <MessageCircle className="size-3.5" aria-hidden="true" />
+                  Uji Tautan wa.me
+                </span>
+                <ExternalLink className="size-3.5" aria-hidden="true" />
+              </Button>
+            )}
+          </div>
+        </CardContent>
       </Card>
     </div>
   );
