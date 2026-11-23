@@ -45,6 +45,7 @@ const CSRF_PROTECTED_API_PREFIXES = [
   "/api/tenants",
   "/api/account",
   "/api/auth",
+  "/api/affiliates",
   "/api/console",
   "/auth/consent",
 ] as const;

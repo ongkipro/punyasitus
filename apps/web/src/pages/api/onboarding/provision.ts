@@ -19,6 +19,10 @@ import {
   type OnboardingApiOptions,
   type OnboardingRuntimeEnv,
 } from "./_shared.ts";
+import {
+  extractOnboardingReferralInput,
+  resolveAndLockOnboardingReferral,
+} from "./_referral.ts";
 
 /**
  * `POST /api/onboarding/provision`
@@ -136,7 +140,8 @@ export async function handleOnboardingProvisionRequest(
       });
     }
 
-    const validated = validateOnboardingProvisionPayload(rawBody);
+    const { coreBody, manualReferralCode } = extractOnboardingReferralInput(rawBody);
+    const validated = validateOnboardingProvisionPayload(coreBody);
     const headerKey = request.headers.get("idempotency-key")?.trim() ?? "";
     const resolvedIdempotencyKey = headerKey || validated.idempotencyKey || "";
     if (!resolvedIdempotencyKey) {
@@ -161,6 +166,17 @@ export async function handleOnboardingProvisionRequest(
       nowMs: options.nowMs,
     });
 
+    const affiliateAttribution = await resolveAndLockOnboardingReferral({
+      request,
+      runtimeEnv,
+      tenantId: result.tenant.id,
+      ownerUserId: authCheck.session.userId,
+      manualReferralCode,
+      replayed: result.replayed,
+      requestId,
+      nowMs: options.nowMs,
+    });
+
     const httpStatus = result.recoveryRequired ? 202 : result.replayed ? 200 : 201;
     return onboardingJsonResponse(httpStatus, {
       success: true,
@@ -175,6 +191,7 @@ export async function handleOnboardingProvisionRequest(
       retryEnqueued: result.retryEnqueued,
       idempotencyKey: result.idempotencyKey,
       nextPath: result.nextPath,
+      affiliateAttribution,
       tenant: result.tenant,
     });
   } catch (err) {
@@ -201,8 +218,13 @@ export async function handleOnboardingProvisionRequest(
   }
 }
 
-export const POST: APIRoute = ({ request }) =>
-  handleOnboardingProvisionRequest(
-    request,
-    extractOnboardingEnvFromCloudflare(env as unknown as Record<string, unknown>),
-  );
+export const POST: APIRoute = ({ request }) => {
+  const rawEnv = env as unknown as Record<string, unknown>;
+  const onboardingEnv = {
+    ...extractOnboardingEnvFromCloudflare(rawEnv),
+    ...(typeof rawEnv.AFFILIATE_COOKIE_SECRET === "string"
+      ? { AFFILIATE_COOKIE_SECRET: rawEnv.AFFILIATE_COOKIE_SECRET }
+      : {}),
+  };
+  return handleOnboardingProvisionRequest(request, onboardingEnv);
+};
