@@ -442,3 +442,4 @@ export function renderThemeCssCustomProperties(snapshot: ThemeConfigSnapshot): s
 }
 
 export * from "./sections.ts";
+export * from "./compatibility.ts";
