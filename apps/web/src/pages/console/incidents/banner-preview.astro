@@ -1,0 +1,112 @@
+---
+import { env } from "cloudflare:workers";
+import {
+  authorizeConsoleRequest,
+  type ConsoleRuntimeEnv,
+} from "@punyasitus/auth/platform/index";
+import type { CloudflareSendEmailBinding } from "@punyasitus/core/email/index";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const runtimeEnv = env as typeof env & {
+  readonly AUTH_SECRET?: string;
+  readonly CONSOLE_AUTH_SECRET?: string;
+};
+const consoleEnv: ConsoleRuntimeEnv = {
+  APP_ENV: runtimeEnv.APP_ENV,
+  PLATFORM_DOMAIN: runtimeEnv.PLATFORM_DOMAIN,
+  PLATFORM_DB: runtimeEnv.PLATFORM_DB,
+  AUTH_SECRET: runtimeEnv.AUTH_SECRET,
+  CONSOLE_AUTH_SECRET: runtimeEnv.CONSOLE_AUTH_SECRET,
+  EMAIL: runtimeEnv.EMAIL as unknown as CloudflareSendEmailBinding | undefined,
+};
+
+const authz = await authorizeConsoleRequest(
+  Astro.request,
+  consoleEnv,
+  { action: "console.incidents.preview_banner", requireStepUp: false },
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email }
+      : null,
+  },
+);
+
+if (!authz.ok) {
+  if (authz.response.status === 404) {
+    return new Response("Not Found", {
+      status: 404,
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    });
+  }
+  return new Response(
+    `<!doctype html><html lang="id"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><meta name="robots" content="noindex, nofollow"/><title>Akses Console Operasional Dibatasi</title></head><body><main><h1>Akses Console Operasional Dibatasi</h1><p>Halaman pratinjau banner insiden hanya dapat diakses operator platform terverifikasi.</p></main></body></html>`,
+    {
+      status: authz.response.status,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "private, no-store",
+        "X-Robots-Tag": "noindex, nofollow",
+      },
+    },
+  );
+}
+---
+
+<DashboardLayout
+  title="Beranda — Pratinjau Banner Insiden"
+  workspaceName="Alpha Studio"
+  workspaceSubtitle="alpha-studio.situsku.click"
+  activeNavId="home"
+  basePath="/dashboard/alpha-studio"
+  offeringLabel="Layanan"
+  unreadLeadsCount={3}
+  lifecycleStatus="active"
+  userDisplayName="Pemilik Situs (Pratinjau)"
+  userRoleLabel="Pemilik"
+>
+  <div class="space-y-4" data-testid="dashboard-banner-preview-page">
+    <section class="rounded-lg border border-border bg-card p-5">
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div class="space-y-1">
+          <h1 class="text-xl font-semibold text-foreground">
+            Ringkasan Situs — Alpha Studio
+          </h1>
+          <p class="text-sm text-muted-foreground">
+            Tampilan pratinjau dashboard tenant dengan banner insiden platform aktif dari <code class="font-mono">PLATFORM_DB</code>.
+          </p>
+        </div>
+        <a
+          href="/console/incidents"
+          class="inline-flex min-h-11 items-center rounded-md border border-border bg-card px-3.5 text-sm font-medium text-foreground hover:bg-muted md:min-h-9"
+        >
+          &larr; Kembali ke Console Insiden
+        </a>
+      </div>
+    </section>
+
+    <section class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div class="rounded-lg border border-border bg-card p-4">
+        <p class="text-xs font-medium text-muted-foreground">Kunjungan 7 Hari Terakhir</p>
+        <p class="mt-1 text-2xl font-semibold tabular-nums text-foreground">1.284</p>
+      </div>
+      <div class="rounded-lg border border-border bg-card p-4">
+        <p class="text-xs font-medium text-muted-foreground">Pesan Masuk Baru</p>
+        <p class="mt-1 text-2xl font-semibold tabular-nums text-foreground">3</p>
+      </div>
+      <div class="rounded-lg border border-border bg-card p-4">
+        <p class="text-xs font-medium text-muted-foreground">Klik WhatsApp</p>
+        <p class="mt-1 text-2xl font-semibold tabular-nums text-foreground">47</p>
+      </div>
+    </section>
+  </div>
+</DashboardLayout>

@@ -1,0 +1,11 @@
+{
+  "name": "@punyasitus/status",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone static status page for PunyaSitus (status.punyasitus.com) with zero Worker or runtime bindings.",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "preview": "node scripts/preview.mjs"
+  }
+}

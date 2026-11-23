@@ -1,0 +1,12 @@
+---
+import type { PublicIncidentBannerItem } from "@punyasitus/db/incidents/index";
+import { DashboardIncidentBanner as DashboardIncidentBannerView } from "./DashboardIncidentBanner";
+
+export interface Props {
+  readonly incidents: readonly PublicIncidentBannerItem[];
+}
+
+const { incidents } = Astro.props;
+---
+
+{incidents.length > 0 ? <DashboardIncidentBannerView incidents={incidents} /> : null}

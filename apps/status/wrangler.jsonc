@@ -1,0 +1,8 @@
+{
+  // Standalone static Cloudflare Pages configuration for status.punyasitus.com (REQ-106).
+  // Intentionally declares ZERO Worker entrypoints and ZERO D1/R2/DO/Queue/Service bindings
+  // so the status page stays reachable even during a complete platform Worker outage.
+  "name": "punyasitus-status",
+  "compatibility_date": "2026-11-22",
+  "pages_build_output_dir": "./dist"
+}

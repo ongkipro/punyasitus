@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "serviceName": "PunyaSitus",
+  "statusHost": "status.punyasitus.com",
+  "overallStatus": "operational",
+  "overallSummary": "Seluruh layanan utama PunyaSitus beroperasi normal tanpa gangguan.",
+  "updatedAt": "2026-11-23T01:00:00Z",
+  "components": [
+    {
+      "id": "public_sites",
+      "name": "Situs Publik",
+      "description": "Penayangan situs pelanggan pada subdomain situsku.click dan domain kustom.",
+      "status": "operational"
+    },
+    {
+      "id": "dashboard_cms",
+      "name": "Dashboard & CMS",
+      "description": "Pengelolaan halaman, penawaran, artikel, media, dan pesan masuk di app.punyasitus.com.",
+      "status": "operational"
+    },
+    {
+      "id": "domains_ssl",
+      "name": "Domain & SSL",
+      "description": "Verifikasi DNS domain kustom, penerbitan sertifikat TLS otomatis, dan perutean edge.",
+      "status": "operational"
+    },
+    {
+      "id": "billing_payments",
+      "name": "Pembayaran & Perpanjangan",
+      "description": "Checkout QRIS & Virtual Account, rekonsiliasi pembayaran, serta kuitansi PDF.",
+      "status": "operational"
+    },
+    {
+      "id": "email_notifications",
+      "name": "Notifikasi Email",
+      "description": "Pengiriman email verifikasi akun, pengingat masa aktif, dan notifikasi prospek.",
+      "status": "operational"
+    }
+  ],
+  "activeIncidents": [],
+  "resolvedIncidents": [
+    {
+      "id": "inc_20261118_tls_edge",
+      "title": "Keterlambatan penerbitan sertifikat SSL pada domain kustom baru",
+      "severity": "minor",
+      "status": "resolved",
+      "summary": "Sebagian domain kustom baru mengalami waktu verifikasi TLS lebih lama dari biasanya (hingga 20 menit). Situs yang sudah aktif tidak terdampak.",
+      "affectedComponents": ["domains_ssl"],
+      "declaredAt": "2026-11-18T03:15:00Z",
+      "resolvedAt": "2026-11-18T04:05:00Z",
+      "updates": [
+        {
+          "status": "investigating",
+          "timestamp": "2026-11-18T03:15:00Z",
+          "message": "Kami mendeteksi antrean penerbitan sertifikat TLS yang lebih lambat dari rata-rata untuk domain kustom baru."
+        },
+        {
+          "status": "monitoring",
+          "timestamp": "2026-11-18T03:45:00Z",
+          "message": "Rekonsiliasi antrean verifikasi domain telah kembali normal dan kami memantau pemrosesan domain tertunda."
+        },
+        {
+          "status": "resolved",
+          "timestamp": "2026-11-18T04:05:00Z",
+          "message": "Seluruh domain kustom tertunda telah mendapatkan sertifikat SSL aktif. Layanan Domain & SSL kembali beroperasi normal."
+        }
+      ]
+    }
+  ]
+}
