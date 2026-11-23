@@ -1,12 +1,12 @@
 import { env } from "cloudflare:workers";
 import type { APIRoute } from "astro";
 import {
-  buildConsoleRuntimeEnv,
-  handleConsoleProvisioningRequest,
-} from "../provisioning/_shared.ts";
+  buildConsoleTenantsRuntimeEnv,
+  handleConsoleTenantsCollectionRequest,
+} from "./_shared.ts";
 
 export const GET: APIRoute = ({ request }) =>
-  handleConsoleProvisioningRequest(request, buildConsoleRuntimeEnv(env));
+  handleConsoleTenantsCollectionRequest(request, buildConsoleTenantsRuntimeEnv(env));
 
 export const POST: APIRoute = ({ request }) =>
-  handleConsoleProvisioningRequest(request, buildConsoleRuntimeEnv(env));
+  handleConsoleTenantsCollectionRequest(request, buildConsoleTenantsRuntimeEnv(env));

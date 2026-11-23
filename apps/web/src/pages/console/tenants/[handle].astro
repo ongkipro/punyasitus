@@ -1,0 +1,165 @@
+---
+import { env } from "cloudflare:workers";
+import { PLATFORM_HOSTS } from "@punyasitus/core";
+import { getConsoleTenantDetail } from "@punyasitus/db/platform";
+import ConsoleLayout from "@/layouts/ConsoleLayout.astro";
+import {
+  buildConsoleTenantsRuntimeEnv,
+  listRegisteredCustomThemeSummaries,
+} from "../../api/console/tenants/_shared";
+import { authorizeConsoleTenantsPage } from "./_page-guard";
+import { TenantDetailPanel } from "./_TenantDetailPanel";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const runtimeEnv = buildConsoleTenantsRuntimeEnv(
+  env as typeof env & {
+    readonly AUTH_SECRET?: string;
+    readonly CONSOLE_AUTH_SECRET?: string;
+  },
+);
+
+const gate = await authorizeConsoleTenantsPage(
+  Astro.request,
+  runtimeEnv,
+  "console.tenants.detail.view",
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email }
+      : null,
+  },
+);
+
+if (!gate.ok) {
+  return gate.response;
+}
+
+const { actor, platformDb, nowMs, host } = gate.ctx;
+const saasZone = runtimeEnv.SAAS_ZONE || PLATFORM_HOSTS.saasZone;
+const rawParam = (Astro.params.handle ?? "").trim();
+const isUlid = /^[0-9A-HJKMNP-TV-Z]{26}$/.test(rawParam);
+
+const detail = rawParam
+  ? await getConsoleTenantDetail(
+      platformDb,
+      isUlid ? { tenantId: rawParam } : { handle: rawParam.toLowerCase() },
+      {
+        nowMs,
+        saasZone,
+        tenantStore: runtimeEnv.TENANT_STORE ?? null,
+      },
+    )
+  : null;
+
+if (!detail) {
+  Astro.response.status = 404;
+}
+
+const registeredCustomThemes = listRegisteredCustomThemeSummaries();
+const navLinks = [
+  { href: "/console", label: "Ringkasan", current: false },
+  { href: "/console/tenants", label: "Tenant", current: true },
+  { href: "/console/operators", label: "Operator", current: false },
+  { href: "/console/audit", label: "Audit Log", current: false },
+  { href: "/console/health", label: "Kesehatan", current: false },
+  { href: "/console/settings", label: "Pengaturan", current: false },
+];
+---
+
+<ConsoleLayout
+  title={detail ? `Tenant ${detail.tenant.handle}` : "Tenant Tidak Ditemukan"}
+  workspaceSubtitle={host.host}
+  activeNavId="tenants"
+  basePath="/console"
+  userDisplayName={actor.grant.name ?? actor.grant.email ?? "Operator Platform"}
+  userRoleLabel={
+    actor.grant.role === "platform_support" ? "Dukungan Platform" : "Superadmin Platform"
+  }
+>
+  <div class="space-y-5" data-testid="console-tenant-detail-page">
+    <!-- Explicit Platform Context Banner -->
+    <section
+      data-testid="console-context-banner"
+      aria-label="Konteks akses platform"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning-border bg-warning-soft px-4 py-3 text-xs text-warning md:text-sm"
+    >
+      <p class="font-medium">
+        Console Operasional Platform — Akses istimewa — bukan penyamaran akun tenant
+      </p>
+      <div class="flex flex-wrap items-center gap-2">
+        {
+          detail && (
+            <span
+              data-testid="tenant-context-badge"
+              class="rounded border border-primary/40 bg-card px-2 py-0.5 text-xs font-semibold text-primary"
+            >
+              Konteks Tenant: {detail.tenant.name} (@{detail.tenant.handle})
+            </span>
+          )
+        }
+        <span
+          data-testid="console-stepup-badge"
+          class="rounded border border-warning-border bg-card px-2 py-0.5 text-xs font-medium text-foreground"
+        >
+          {gate.stepUpFresh ? "2FA Step-Up Aktif (<10m)" : "2FA Perlu Verifikasi Ulang"}
+        </span>
+      </div>
+    </section>
+
+    <!-- Console Module Navigation -->
+    <nav
+      aria-label="Navigasi modul console"
+      data-testid="console-section-nav"
+      class="flex flex-wrap items-center gap-2 border-b border-border pb-3"
+    >
+      {
+        navLinks.map((link) => (
+          <a
+            href={link.href}
+            aria-current={link.current ? "page" : undefined}
+            class:list={[
+              "inline-flex min-h-11 items-center rounded-md border px-3.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9",
+              link.current
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card text-foreground hover:bg-muted",
+            ]}
+          >
+            {link.label}
+          </a>
+        ))
+      }
+    </nav>
+
+    {
+      !detail ? (
+        <section
+          data-testid="tenant-not-found-panel"
+          class="space-y-3 rounded-lg border border-border bg-card p-6"
+        >
+          <h1 class="text-xl font-semibold text-foreground">Tenant tidak ditemukan</h1>
+          <p class="text-sm text-muted-foreground">
+            Tenant dengan handle atau ID <code class="font-mono">{rawParam || "(kosong)"}</code>{" "}
+            tidak terdaftar pada control plane.
+          </p>
+          <a
+            href="/console/tenants"
+            class="inline-flex min-h-11 items-center rounded-md border border-border bg-card px-4 text-sm font-medium text-foreground hover:bg-muted md:min-h-9"
+          >
+            &larr; Kembali ke Direktori Tenant
+          </a>
+        </section>
+      ) : (
+        <TenantDetailPanel
+          client:load
+          initialDetail={detail}
+          registeredCustomThemes={registeredCustomThemes}
+          stepUpFresh={gate.stepUpFresh}
+        />
+      )
+    }
+  </div>
+</ConsoleLayout>
