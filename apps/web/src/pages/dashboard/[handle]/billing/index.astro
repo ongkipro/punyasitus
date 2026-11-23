@@ -1,0 +1,408 @@
+---
+import "../../../../styles/admin/globals.css";
+import { env } from "cloudflare:workers";
+import type { TenantStatus, TenantVertical } from "@punyasitus/db/platform";
+import { getTenantBillingOverviewData } from "@punyasitus/db/billing/index";
+import { computeEffectiveTenantStatus } from "@punyasitus/db/routing/index";
+import type { LifecycleStatus } from "@/components/admin/navigation";
+import {
+  MemberBillingNotice,
+  OwnerBillingPanel,
+  getTenantStatusIndonesianLabel,
+  inspectPaymentReturnQueryParams,
+  type OwnerBillingChannelDto,
+  type OwnerBillingOverviewDto,
+} from "@/components/admin/billing";
+import { Badge } from "@/components/ui/badge";
+import { buttonVariants } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import {
+  formatAttemptInstruction,
+  formatObligationSummary,
+  resolveAutoLarisClient,
+} from "../../../api/tenants/[tenantId]/billing/_shared";
+import { buildBillingRuntimeEnv } from "../../../api/tenants/[tenantId]/billing/index";
+
+const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
+const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
+const isLocalEnv = env.APP_ENV === "local";
+const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
+
+if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "private, no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const authorized = Astro.locals.authorizedTenantMember;
+const authUser = Astro.locals.authUser;
+if (!authorized || !authUser || !env.PLATFORM_DB) {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "private, no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+interface TenantBillingPageRow {
+  readonly id: string;
+  readonly handle: string;
+  readonly name: string;
+  readonly vertical: TenantVertical;
+  readonly status: TenantStatus;
+  readonly operator_hold: number;
+  readonly operator_hold_reason: string | null;
+  readonly agency_id: string | null;
+  readonly trial_ends_at: number | null;
+  readonly paid_through: number | null;
+  readonly primary_host: string | null;
+}
+
+const tenantRow = await env.PLATFORM_DB.prepare(
+  `SELECT
+     t.id,
+     t.handle,
+     t.name,
+     t.vertical,
+     t.status,
+     t.operator_hold,
+     t.operator_hold_reason,
+     t.agency_id,
+     t.trial_ends_at,
+     t.paid_through,
+     (
+       SELECT th.host FROM tenant_hosts th
+       WHERE th.tenant_id = t.id AND th.is_primary = 1
+       LIMIT 1
+     ) AS primary_host
+   FROM tenants t
+   WHERE t.id = ?
+   LIMIT 1`,
+)
+  .bind(authorized.tenantId)
+  .first<TenantBillingPageRow>();
+
+if (!tenantRow || tenantRow.status === "purged") {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "private, no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const nowMs = Date.now();
+const operatorHold = tenantRow.operator_hold === 1;
+const effectiveStatus: TenantStatus =
+  Astro.locals.tenantEntitlement?.evaluation.effectiveStatus ??
+  computeEffectiveTenantStatus(
+    {
+      storedStatus: tenantRow.status,
+      operatorHold,
+      trialEndsAt: tenantRow.trial_ends_at,
+      paidThrough: tenantRow.paid_through,
+    },
+    nowMs,
+  );
+
+const saasZone = env.SAAS_ZONE || "situsku.click";
+const primaryHost = tenantRow.primary_host ?? `${tenantRow.handle}.${saasZone}`;
+const isAgencyManaged = tenantRow.agency_id !== null;
+const isOwnerPayer = isAgencyManaged
+  ? authorized.dbRole === "agency_staff"
+  : authorized.role === "owner";
+
+// Payment-only recovery shell for locked/suspended/recovery/held tenants:
+// renders ZERO CMS sidebar/navigation so locked owners never experience CMS flash!
+const isPaymentOnlyShell =
+  operatorHold ||
+  effectiveStatus === "locked" ||
+  effectiveStatus === "suspended" ||
+  effectiveStatus === "recovery";
+
+const roleLabel =
+  authorized.role === "owner"
+    ? "Pemilik Situs"
+    : authorized.role === "agency_admin"
+      ? "Admin Agensi"
+      : authorized.role === "admin"
+        ? "Admin"
+        : "Editor";
+
+function mapLifecycle(status: TenantStatus): LifecycleStatus {
+  if (
+    status === "trial" ||
+    status === "active" ||
+    status === "grace" ||
+    status === "locked" ||
+    status === "suspended"
+  ) {
+    return status;
+  }
+  return "suspended";
+}
+
+function offeringLabelForVertical(vertical?: TenantVertical): string {
+  switch (vertical) {
+    case "catalog":
+    case "resto":
+      return "Produk";
+    case "travel":
+      return "Paket Tur";
+    case "dealer":
+      return "Kendaraan";
+    default:
+      return "Layanan";
+  }
+}
+
+// Inspect browser payment-return query params purely for non-activation notice:
+// NEVER modifies tenant status or creates any DB side effect!
+const returnInspection = inspectPaymentReturnQueryParams(Astro.url.search);
+
+let initialOverview: OwnerBillingOverviewDto | null = null;
+
+if (isOwnerPayer) {
+  const rawOverview = await getTenantBillingOverviewData(
+    env.PLATFORM_DB,
+    authorized.tenantId,
+    effectiveStatus,
+  );
+
+  let channels: OwnerBillingChannelDto[] = [];
+  let providerOutage = false;
+
+  try {
+    const billingEnv = buildBillingRuntimeEnv();
+    const autolaris = resolveAutoLarisClient(billingEnv);
+    const liveChannels = await autolaris.listPaymentChannels(rawOverview.pricing.monthlyPriceIdr);
+    channels = liveChannels.map((ch) => ({
+      code: ch.code,
+      label: ch.label,
+      kind: ch.kind,
+      estimatedFeeIdr: ch.estimatedFeeIdr,
+      enabled: ch.enabled,
+    }));
+  } catch {
+    providerOutage = true;
+  }
+
+  initialOverview = {
+    tenantStatus: effectiveStatus,
+    operatorHold,
+    operatorHoldReason: tenantRow.operator_hold_reason,
+    trialEndsAt: rawOverview.deadlines.trialEndsAtIso,
+    paidThrough: rawOverview.deadlines.paidThroughIso,
+    graceEndsAt: rawOverview.deadlines.graceEndsAtIso,
+    lockedEndsAt: rawOverview.deadlines.lockedEndsAtIso,
+    deletionDueAt: rawOverview.deadlines.deletionDueAtIso,
+    activeObligation: rawOverview.activeObligation
+      ? (formatObligationSummary(rawOverview.activeObligation) as unknown as OwnerBillingOverviewDto["activeObligation"])
+      : null,
+    activeAttempt: rawOverview.activeAttempt
+      ? (formatAttemptInstruction(rawOverview.activeAttempt) as unknown as OwnerBillingOverviewDto["activeAttempt"])
+      : null,
+    obligations: rawOverview.obligations.map(
+      (o) =>
+        formatObligationSummary(o) as unknown as OwnerBillingOverviewDto["obligations"][number],
+    ),
+    pricingPlans: [
+      {
+        plan: "monthly",
+        months: 1,
+        baseAmountIdr: rawOverview.pricing.monthlyPriceIdr,
+        currency: rawOverview.pricing.currency,
+        savingsIdr: 0,
+      },
+      {
+        plan: "yearly",
+        months: 12,
+        baseAmountIdr: rawOverview.pricing.yearlyPriceIdr,
+        currency: rawOverview.pricing.currency,
+        savingsIdr: rawOverview.pricing.yearlySavingsIdr,
+      },
+    ],
+    channels,
+    taxNotice: rawOverview.taxNotice,
+    noRefundNotice: rawOverview.noRefundNotice,
+    providerOutage,
+  };
+}
+
+const lifecycleStatus = mapLifecycle(effectiveStatus);
+const lifecycleDaysRemaining =
+  lifecycleStatus === "trial" && typeof tenantRow.trial_ends_at === "number"
+    ? Math.max(0, Math.ceil((tenantRow.trial_ends_at - nowMs) / 86_400_000))
+    : undefined;
+const statusBadgeText = getTenantStatusIndonesianLabel(effectiveStatus, operatorHold);
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+---
+
+{
+  isPaymentOnlyShell ? (
+    <html lang="id">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="robots" content="noindex, nofollow" />
+        <link
+          rel="icon"
+          type="image/svg+xml"
+          href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23176b51'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='700' fill='%23ffffff'%3EPS%3C/text%3E%3C/svg%3E"
+        />
+        <title>Pemulihan Pembayaran — {tenantRow.name} — PunyaSitus</title>
+      </head>
+      <body class="min-h-dvh bg-background text-foreground">
+        <div
+          class="flex min-h-dvh flex-col"
+          data-testid="billing-payment-only-shell"
+          data-effective-status={effectiveStatus}
+          data-payer={isOwnerPayer ? "true" : "false"}
+        >
+          <a
+            href="#konten-tagihan"
+            class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground"
+          >
+            Lewati ke konten pembayaran
+          </a>
+
+          <header
+            data-slot="billing-recovery-topbar"
+            class="sticky top-0 z-30 flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-4 py-2 md:px-6"
+          >
+            <div class="flex min-w-0 items-center gap-2.5">
+              <span
+                aria-hidden="true"
+                class="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground"
+              >
+                PS
+              </span>
+              <div class="min-w-0">
+                <p class="truncate text-sm font-semibold leading-tight text-foreground">
+                  {tenantRow.name}
+                </p>
+                <p class="truncate text-xs text-muted-foreground">{primaryHost}</p>
+              </div>
+              <Badge variant="destructive" className="shrink-0">
+                {statusBadgeText}
+              </Badge>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="hidden text-xs text-muted-foreground sm:inline">
+                {authUser.name} ({roleLabel})
+              </span>
+              <a
+                href={`/dashboard/${encodeURIComponent(tenantRow.handle)}/service-status`}
+                class={cn(
+                  buttonVariants({
+                    variant: "outline",
+                    size: "sm",
+                    className: "min-h-11 md:min-h-8",
+                  }),
+                )}
+              >
+                Status Layanan
+              </a>
+              <a
+                href="/auth/login?signOut=1"
+                class={cn(
+                  buttonVariants({
+                    variant: "outline",
+                    size: "sm",
+                    className: "min-h-11 md:min-h-8",
+                  }),
+                )}
+              >
+                Keluar
+              </a>
+            </div>
+          </header>
+
+          <main
+            id="konten-tagihan"
+            tabindex="-1"
+            class="mx-auto w-full max-w-5xl flex-1 px-4 py-6 focus:outline-none md:px-6 md:py-8"
+          >
+            {isOwnerPayer && initialOverview ? (
+              <OwnerBillingPanel
+                client:load
+                tenantId={tenantRow.id}
+                handle={tenantRow.handle}
+                tenantName={tenantRow.name}
+                primaryHost={primaryHost}
+                initialOverview={initialOverview}
+                initialNowMs={nowMs}
+                isPaymentOnlyShell={true}
+                initialReturnClaim={returnInspection.hasPaymentReturnClaim}
+              />
+            ) : (
+              <MemberBillingNotice
+                handle={tenantRow.handle}
+                tenantName={tenantRow.name}
+                tenantStatus={effectiveStatus}
+                operatorHold={operatorHold}
+                agencyManaged={isAgencyManaged}
+                roleLabel={roleLabel}
+                isPaymentOnlyShell={true}
+              />
+            )}
+          </main>
+        </div>
+      </body>
+    </html>
+  ) : (
+    <DashboardLayout
+      title={`Tagihan Langganan — ${tenantRow.name}`}
+      surface="dashboard"
+      workspaceName={tenantRow.name}
+      workspaceSubtitle={primaryHost}
+      activeNavId="settings"
+      basePath={`/dashboard/${tenantRow.handle}`}
+      offeringLabel={offeringLabelForVertical(tenantRow.vertical)}
+      lifecycleStatus={lifecycleStatus}
+      lifecycleDaysRemaining={lifecycleDaysRemaining}
+      lifecycleReason={tenantRow.operator_hold_reason ?? undefined}
+      publicSiteHref={`https://${primaryHost}`}
+      userDisplayName={authUser.name}
+      userRoleLabel={roleLabel}
+    >
+      {isOwnerPayer && initialOverview ? (
+        <OwnerBillingPanel
+          client:load
+          tenantId={tenantRow.id}
+          handle={tenantRow.handle}
+          tenantName={tenantRow.name}
+          primaryHost={primaryHost}
+          initialOverview={initialOverview}
+          initialNowMs={nowMs}
+          isPaymentOnlyShell={false}
+          initialReturnClaim={returnInspection.hasPaymentReturnClaim}
+        />
+      ) : (
+        <MemberBillingNotice
+          handle={tenantRow.handle}
+          tenantName={tenantRow.name}
+          tenantStatus={effectiveStatus}
+          operatorHold={operatorHold}
+          agencyManaged={isAgencyManaged}
+          roleLabel={roleLabel}
+          isPaymentOnlyShell={false}
+        />
+      )}
+    </DashboardLayout>
+  )
+}

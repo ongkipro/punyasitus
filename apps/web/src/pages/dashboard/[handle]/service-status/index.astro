@@ -1,4 +1,5 @@
 ---
+import "../../../../styles/admin/globals.css";
 import { env } from "cloudflare:workers";
 import type { TenantStatus, TenantVertical } from "@punyasitus/db/platform";
 import { computeEffectiveTenantStatus } from "@punyasitus/db/routing/index";
@@ -28,33 +29,32 @@ import {
 } from "@/components/ui/card";
 import DashboardLayout from "@/layouts/DashboardLayout.astro";
 
+const NO_STORE_NOT_FOUND_HEADERS = {
+  "Content-Type": "text/plain; charset=utf-8",
+  "Cache-Control": "private, no-store",
+  "X-Robots-Tag": "noindex, nofollow",
+} as const;
+
+function notFoundResponse(): Response {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: NO_STORE_NOT_FOUND_HEADERS,
+  });
+}
+
 const HANDLE_RE = /^[a-z0-9](?:[a-z0-9-]{1,38}[a-z0-9])?$/;
 const rawHandle = (Astro.params.handle ?? "").trim().toLowerCase();
 const isLocalEnv = env.APP_ENV === "local";
 const isLocalLoopback = Astro.locals.isLocalLoopback && isLocalEnv;
 
 if (!HANDLE_RE.test(rawHandle) || (!isLocalLoopback && Astro.locals.surface !== "app")) {
-  return new Response("Halaman tidak ditemukan", {
-    status: 404,
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-store",
-      "X-Robots-Tag": "noindex, nofollow",
-    },
-  });
+  return notFoundResponse();
 }
 
 const authorized = Astro.locals.authorizedTenantMember;
 const authUser = Astro.locals.authUser;
 if (!authorized || !authUser || !env.PLATFORM_DB) {
-  return new Response("Halaman tidak ditemukan", {
-    status: 404,
-    headers: {
-      "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": "no-store",
-      "X-Robots-Tag": "noindex, nofollow",
-    },
-  });
+  return notFoundResponse();
 }
 
 interface TenantLifecycleRow {
@@ -97,26 +97,47 @@ const row = await env.PLATFORM_DB.prepare(
   .bind(authorized.tenantId)
   .first<TenantLifecycleRow>();
 
-if (!row) {
-  return new Response("Halaman tidak ditemukan", { status: 404 });
+if (!row || row.status === "purged") {
+  return notFoundResponse();
 }
 
 const nowMs = Date.now();
 const operatorHold = row.operator_hold === 1;
-const effectiveStatus = computeEffectiveTenantStatus(
-  {
-    storedStatus: row.status,
-    operatorHold,
-    trialEndsAt: row.trial_ends_at,
-    paidThrough: row.paid_through,
-  },
-  nowMs,
-);
+const effectiveStatus: TenantStatus =
+  Astro.locals.tenantEntitlement?.evaluation.effectiveStatus ??
+  computeEffectiveTenantStatus(
+    {
+      storedStatus: row.status,
+      operatorHold,
+      trialEndsAt: row.trial_ends_at,
+      paidThrough: row.paid_through,
+    },
+    nowMs,
+  );
 
 const saasZone = env.SAAS_ZONE || "situsku.click";
 const primaryHost = row.primary_host ?? `${row.handle}.${saasZone}`;
-const isOwnerPayer = !row.agency_id && authorized.role === "owner";
 const isAgencyManaged = row.agency_id !== null;
+const isOwnerPayer = isAgencyManaged
+  ? authorized.dbRole === "agency_staff"
+  : authorized.role === "owner";
+
+// Standalone non-CMS recovery shell for locked/suspended/recovery/held tenants:
+// prevents locked CMS sidebar flash when navigating between /billing and /service-status!
+const isPaymentOnlyShell =
+  operatorHold ||
+  effectiveStatus === "locked" ||
+  effectiveStatus === "suspended" ||
+  effectiveStatus === "recovery";
+
+const roleLabel =
+  authorized.role === "owner"
+    ? "Pemilik Situs"
+    : authorized.role === "agency_admin"
+      ? "Admin Agensi"
+      : authorized.role === "admin"
+        ? "Admin"
+        : "Editor";
 
 function formatDateTimeWib(ms: number | null): string {
   if (!ms) return "—";
@@ -234,7 +255,7 @@ function getStatusCopy(status: TenantStatus, hold: boolean): StatusCopy {
         badgeVariant: "destructive",
         alertVariant: "destructive",
         headline: "Situs sedang dalam mode pemulihan teknis",
-        publicAccess: 'Situs publik menampilkan halaman pemeliharaan sementara HTTP 503.',
+        publicAccess: "Situs publik menampilkan halaman pemeliharaan sementara HTTP 503.",
         cmsAccess:
           "Operasi tulis CMS ditunda sementara hingga proses pemulihan basis data selesai oleh tim operasional.",
         ownerGuidance:
@@ -268,180 +289,311 @@ const lifecycleDaysRemaining =
     ? Math.max(0, Math.ceil((row.trial_ends_at - nowMs) / 86_400_000))
     : undefined;
 
-Astro.response.headers.set("Cache-Control", "no-store");
+const encodedHandle = encodeURIComponent(row.handle);
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
 Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
 ---
 
-<DashboardLayout
-  title={`Status Layanan — ${row.name}`}
-  surface="dashboard"
-  workspaceName={row.name}
-  workspaceSubtitle={primaryHost}
-  activeNavId="settings"
-  basePath={`/dashboard/${row.handle}`}
-  lifecycleStatus={lifecycleStatus}
-  lifecycleDaysRemaining={lifecycleDaysRemaining}
-  lifecycleReason={row.operator_hold_reason ?? undefined}
-  publicSiteHref={`https://${primaryHost}`}
-  userDisplayName={authUser.name}
-  userRoleLabel={authorized.role === "owner" ? "Pemilik Situs" : authorized.role === "admin" ? "Admin" : "Editor"}
->
-  <div
-    class="space-y-6"
-    data-testid="service-status-page"
-    data-handle={row.handle}
-    data-effective-status={effectiveStatus}
-    data-operator-hold={operatorHold ? "true" : "false"}
-  >
-    <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div class="min-w-0 space-y-1">
-        <div class="flex flex-wrap items-center gap-2">
-          <Badge variant={copy.badgeVariant} data-testid="service-status-badge">
-            {copy.label}
-          </Badge>
-          <span class="font-mono text-xs text-muted-foreground">{primaryHost}</span>
-        </div>
-        <h1 class="text-2xl font-semibold tracking-tight text-foreground">
-          Status Layanan Situs
-        </h1>
-        <p class="text-sm text-muted-foreground">
-          Ringkasan status operasional, akses publik, dan panduan pemulihan untuk{" "}
-          <strong class="text-foreground">{row.name}</strong>.
-        </p>
-      </div>
+{
+  isPaymentOnlyShell ? (
+    <html lang="id">
+      <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="robots" content="noindex, nofollow" />
+        <link
+          rel="icon"
+          type="image/svg+xml"
+          href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23176b51'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='700' fill='%23ffffff'%3EPS%3C/text%3E%3C/svg%3E"
+        />
+        <title>Status Layanan — {row.name} — PunyaSitus</title>
+      </head>
+      <body class="min-h-dvh bg-background text-foreground">
+        <div
+          class="flex min-h-dvh flex-col"
+          data-testid="service-status-recovery-shell"
+          data-effective-status={effectiveStatus}
+          data-payer={isOwnerPayer ? "true" : "false"}
+        >
+          <a
+            href="#konten-status-layanan"
+            class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-[60] focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground"
+          >
+            Lewati ke status layanan
+          </a>
 
-      <a
-        href={`/dashboard/${encodeURIComponent(row.handle)}`}
-        class={cn(
-          buttonVariants({
-            variant: "outline",
-            className: "min-h-11 w-full sm:w-auto md:min-h-9",
-          }),
-        )}
+          <header
+            data-slot="service-status-recovery-topbar"
+            class="sticky top-0 z-30 flex min-h-14 flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-4 py-2 md:px-6"
+          >
+            <div class="flex min-w-0 items-center gap-2.5">
+              <span
+                aria-hidden="true"
+                class="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground"
+              >
+                PS
+              </span>
+              <div class="min-w-0">
+                <p class="truncate text-sm font-semibold leading-tight text-foreground">
+                  {row.name}
+                </p>
+                <p class="truncate text-xs text-muted-foreground">{primaryHost}</p>
+              </div>
+              <Badge variant="destructive" className="shrink-0">
+                {copy.label}
+              </Badge>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="hidden text-xs text-muted-foreground sm:inline">
+                {authUser.name} ({roleLabel})
+              </span>
+              {isOwnerPayer && (
+                <a
+                  href={`/dashboard/${encodedHandle}/billing`}
+                  class={cn(
+                    buttonVariants({
+                      variant: "default",
+                      size: "sm",
+                      className: "min-h-11 md:min-h-8",
+                    }),
+                  )}
+                >
+                  Tagihan &amp; Bayar
+                </a>
+              )}
+              <a
+                href="/auth/login?signOut=1"
+                class={cn(
+                  buttonVariants({
+                    variant: "outline",
+                    size: "sm",
+                    className: "min-h-11 md:min-h-8",
+                  }),
+                )}
+              >
+                Keluar
+              </a>
+            </div>
+          </header>
+
+          <main
+            id="konten-status-layanan"
+            tabindex="-1"
+            class="mx-auto w-full max-w-5xl flex-1 px-4 py-6 focus:outline-none md:px-6 md:py-8"
+          >
+            <div
+              class="space-y-6"
+              data-testid="service-status-page"
+              data-handle={row.handle}
+              data-effective-status={effectiveStatus}
+              data-operator-hold={operatorHold ? "true" : "false"}
+            >
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+                <div class="min-w-0 space-y-1">
+                  <div class="flex flex-wrap items-center gap-2">
+                    <Badge variant={copy.badgeVariant} data-testid="service-status-badge">
+                      {copy.label}
+                    </Badge>
+                    <span class="font-mono text-xs text-muted-foreground">{primaryHost}</span>
+                  </div>
+                  <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+                    Status Layanan Situs
+                  </h1>
+                  <p class="text-sm text-muted-foreground">
+                    Ringkasan status operasional, akses publik, dan panduan pemulihan untuk{" "}
+                    <strong class="text-foreground">{row.name}</strong>.
+                  </p>
+                </div>
+
+                {isOwnerPayer && (
+                  <a
+                    href={`/dashboard/${encodedHandle}/billing`}
+                    class={cn(
+                      buttonVariants({
+                        variant: "default",
+                        className: "min-h-11 w-full sm:w-auto md:min-h-9",
+                      }),
+                    )}
+                    data-testid="service-status-billing-link"
+                  >
+                    <CreditCardIcon className="size-4" aria-hidden="true" />
+                    Bayar &amp; Pulihkan Langganan
+                  </a>
+                )}
+              </div>
+
+              <Alert variant={copy.alertVariant} data-testid="service-status-summary-alert">
+                {effectiveStatus === "locked" && !operatorHold && (
+                  <LockIcon className="size-4" aria-hidden="true" />
+                )}
+                {effectiveStatus === "recovery" && !operatorHold && (
+                  <WrenchIcon className="size-4" aria-hidden="true" />
+                )}
+                {(effectiveStatus === "suspended" || operatorHold) && (
+                  <BanIcon className="size-4" aria-hidden="true" />
+                )}
+                <AlertTitle>{copy.headline}</AlertTitle>
+                <AlertDescription>
+                  {operatorHold && row.operator_hold_reason ? (
+                    <span>Alasan penangguhan operator: {row.operator_hold_reason}</span>
+                  ) : (
+                    <span>{isOwnerPayer ? copy.ownerGuidance : copy.memberGuidance}</span>
+                  )}
+                </AlertDescription>
+              </Alert>
+
+              <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Card>
+                  <CardHeader className="border-b border-border">
+                    <CardTitle className="text-base">Dampak Akses Saat Ini</CardTitle>
+                    <CardDescription>Aturan sistem untuk situs publik dan dashboard CMS.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4 pt-4 text-sm">
+                    <div class="space-y-1">
+                      <p class="font-medium text-foreground">Situs Publik ({primaryHost})</p>
+                      <p class="text-muted-foreground">{copy.publicAccess}</p>
+                    </div>
+                    <div class="space-y-1">
+                      <p class="font-medium text-foreground">Dashboard CMS</p>
+                      <p class="text-muted-foreground">{copy.cmsAccess}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="border-b border-border">
+                    <CardTitle className="text-base">Jadwal &amp; Periode Layanan</CardTitle>
+                    <CardDescription>Semua batas waktu ditampilkan dalam Waktu Indonesia Barat (WIB).</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3 pt-4 text-sm">
+                    <div class="flex items-center justify-between gap-4 border-b border-border pb-2">
+                      <span class="text-muted-foreground">Batas Uji Coba</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatDateTimeWib(row.trial_ends_at)}
+                      </span>
+                    </div>
+                    <div class="flex items-center justify-between gap-4 border-b border-border pb-2">
+                      <span class="text-muted-foreground">Aktif Hingga</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatDateTimeWib(row.paid_through)}
+                      </span>
+                    </div>
+                    <div class="flex items-center justify-between gap-4">
+                      <span class="text-muted-foreground">Batas Retensi Data</span>
+                      <span class="font-medium text-foreground tabular-nums">
+                        {formatDateTimeWib(row.deletion_due_at)}
+                      </span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </div>
+
+              <Card data-testid="service-status-role-guidance">
+                <CardHeader className="border-b border-border">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    {isOwnerPayer ? (
+                      <CreditCardIcon className="size-4 text-primary" aria-hidden="true" />
+                    ) : (
+                      <ShieldAlertIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+                    )}
+                    {isOwnerPayer
+                      ? isAgencyManaged
+                        ? "Tindakan Pengelola Agensi (Payer)"
+                        : "Tindakan Pemilik Situs (Owner)"
+                      : isAgencyManaged
+                        ? "Pengelolaan Tagihan oleh Agensi"
+                        : "Panduan Anggota Tim (Non-Owner)"}
+                  </CardTitle>
+                  <CardDescription>
+                    {isOwnerPayer
+                      ? "Anda memegang hak akses tagihan dan pemulihan langganan untuk situs ini."
+                      : isAgencyManaged
+                        ? "Tagihan langganan situs ini dikelola langsung oleh agensi pengelola Anda."
+                        : "Akses tagihan dan perpanjangan hanya tersedia bagi Pemilik Situs (Owner)."}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4 pt-4">
+                  <p class="text-sm text-muted-foreground">
+                    {isOwnerPayer ? copy.ownerGuidance : copy.memberGuidance}
+                  </p>
+
+                  <div class="flex flex-wrap items-center gap-3">
+                    {isOwnerPayer && (
+                      <a
+                        href={`/dashboard/${encodedHandle}/billing`}
+                        class={cn(
+                          buttonVariants({
+                            variant: "default",
+                            className: "min-h-11 w-full sm:w-auto md:min-h-9",
+                          }),
+                        )}
+                      >
+                        <CreditCardIcon className="size-4" aria-hidden="true" />
+                        Buka Halaman Pembayaran
+                      </a>
+                    )}
+                    <a
+                      href="/account/security"
+                      class={cn(
+                        buttonVariants({
+                          variant: "outline",
+                          className: "min-h-11 w-full sm:w-auto md:min-h-9",
+                        }),
+                      )}
+                    >
+                      Keamanan Akun &amp; 2FA
+                    </a>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </main>
+        </div>
+      </body>
+    </html>
+  ) : (
+    <DashboardLayout
+      title={`Status Layanan — ${row.name}`}
+      surface="dashboard"
+      workspaceName={row.name}
+      workspaceSubtitle={primaryHost}
+      activeNavId="settings"
+      basePath={`/dashboard/${row.handle}`}
+      lifecycleStatus={lifecycleStatus}
+      lifecycleDaysRemaining={lifecycleDaysRemaining}
+      lifecycleReason={row.operator_hold_reason ?? undefined}
+      publicSiteHref={`https://${primaryHost}`}
+      userDisplayName={authUser.name}
+      userRoleLabel={roleLabel}
+    >
+      <div
+        class="space-y-6"
+        data-testid="service-status-page"
+        data-handle={row.handle}
+        data-effective-status={effectiveStatus}
+        data-operator-hold={operatorHold ? "true" : "false"}
       >
-        <ArrowLeftIcon className="size-4" aria-hidden="true" />
-        Kembali ke Beranda
-      </a>
-    </div>
-
-    <Alert variant={copy.alertVariant} data-testid="service-status-summary-alert">
-      {effectiveStatus === "active" && !operatorHold && (
-        <CheckCircle2Icon className="size-4" aria-hidden="true" />
-      )}
-      {effectiveStatus === "trial" && !operatorHold && (
-        <ClockIcon className="size-4" aria-hidden="true" />
-      )}
-      {effectiveStatus === "grace" && !operatorHold && (
-        <AlertTriangleIcon className="size-4" aria-hidden="true" />
-      )}
-      {effectiveStatus === "locked" && !operatorHold && (
-        <LockIcon className="size-4" aria-hidden="true" />
-      )}
-      {effectiveStatus === "recovery" && !operatorHold && (
-        <WrenchIcon className="size-4" aria-hidden="true" />
-      )}
-      {(effectiveStatus === "suspended" || operatorHold) && (
-        <BanIcon className="size-4" aria-hidden="true" />
-      )}
-      <AlertTitle>{copy.headline}</AlertTitle>
-      <AlertDescription>
-        {operatorHold && row.operator_hold_reason ? (
-          <span>Alasan penangguhan operator: {row.operator_hold_reason}</span>
-        ) : (
-          <span>{isOwnerPayer ? copy.ownerGuidance : copy.memberGuidance}</span>
-        )}
-      </AlertDescription>
-    </Alert>
-
-    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
-      <Card>
-        <CardHeader className="border-b border-border">
-          <CardTitle className="text-base">Dampak Akses Saat Ini</CardTitle>
-          <CardDescription>Aturan sistem untuk situs publik dan dashboard CMS.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4 pt-4 text-sm">
-          <div class="space-y-1">
-            <p class="font-medium text-foreground">Situs Publik ({primaryHost})</p>
-            <p class="text-muted-foreground">{copy.publicAccess}</p>
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <div class="min-w-0 space-y-1">
+            <div class="flex flex-wrap items-center gap-2">
+              <Badge variant={copy.badgeVariant} data-testid="service-status-badge">
+                {copy.label}
+              </Badge>
+              <span class="font-mono text-xs text-muted-foreground">{primaryHost}</span>
+            </div>
+            <h1 class="text-2xl font-semibold tracking-tight text-foreground">
+              Status Layanan Situs
+            </h1>
+            <p class="text-sm text-muted-foreground">
+              Ringkasan status operasional, akses publik, dan panduan pemulihan untuk{" "}
+              <strong class="text-foreground">{row.name}</strong>.
+            </p>
           </div>
-          <div class="space-y-1">
-            <p class="font-medium text-foreground">Dashboard CMS</p>
-            <p class="text-muted-foreground">{copy.cmsAccess}</p>
-          </div>
-        </CardContent>
-      </Card>
 
-      <Card>
-        <CardHeader className="border-b border-border">
-          <CardTitle className="text-base">Jadwal & Periode Layanan</CardTitle>
-          <CardDescription>Semua batas waktu ditampilkan dalam Waktu Indonesia Barat (WIB).</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3 pt-4 text-sm">
-          <div class="flex items-center justify-between gap-4 border-b border-border pb-2">
-            <span class="text-muted-foreground">Batas Uji Coba</span>
-            <span class="font-medium text-foreground tabular-nums">
-              {formatDateTimeWib(row.trial_ends_at)}
-            </span>
-          </div>
-          <div class="flex items-center justify-between gap-4 border-b border-border pb-2">
-            <span class="text-muted-foreground">Aktif Hingga</span>
-            <span class="font-medium text-foreground tabular-nums">
-              {formatDateTimeWib(row.paid_through)}
-            </span>
-          </div>
-          <div class="flex items-center justify-between gap-4">
-            <span class="text-muted-foreground">Batas Retensi Data</span>
-            <span class="font-medium text-foreground tabular-nums">
-              {formatDateTimeWib(row.deletion_due_at)}
-            </span>
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-
-    <Card data-testid="service-status-role-guidance">
-      <CardHeader className="border-b border-border">
-        <CardTitle className="flex items-center gap-2 text-base">
-          {isOwnerPayer ? (
-            <CreditCardIcon className="size-4 text-primary" aria-hidden="true" />
-          ) : (
-            <ShieldAlertIcon className="size-4 text-muted-foreground" aria-hidden="true" />
-          )}
-          {isOwnerPayer
-            ? "Tindakan Pemilik Situs (Owner)"
-            : isAgencyManaged
-              ? "Pengelolaan Tagihan oleh Agensi"
-              : "Panduan Anggota Tim (Non-Owner)"}
-        </CardTitle>
-        <CardDescription>
-          {isOwnerPayer
-            ? "Anda memegang hak akses tagihan dan pengelolaan keanggotaan untuk situs ini."
-            : isAgencyManaged
-              ? "Tagihan langganan situs ini dikelola langsung oleh agensi pengelola Anda."
-              : "Akses tagihan dan perpanjangan hanya tersedia bagi Pemilik Situs (Owner)."}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4 pt-4">
-        <p class="text-sm text-muted-foreground">
-          {isOwnerPayer ? copy.ownerGuidance : copy.memberGuidance}
-        </p>
-
-        <div class="flex flex-wrap items-center gap-3">
           <a
-            href={`/dashboard/${encodeURIComponent(row.handle)}/settings/members`}
-            class={cn(
-              buttonVariants({
-                variant: "outline",
-                className: "min-h-11 w-full sm:w-auto md:min-h-9",
-              }),
-            )}
-            data-testid="service-status-members-link"
-          >
-            <UsersIcon className="size-4" aria-hidden="true" />
-            Kelola Anggota Tim
-          </a>
-          <a
-            href="/account/security"
+            href={`/dashboard/${encodedHandle}`}
             class={cn(
               buttonVariants({
                 variant: "outline",
@@ -449,10 +601,146 @@ Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
               }),
             )}
           >
-            Keamanan Akun & 2FA
+            <ArrowLeftIcon className="size-4" aria-hidden="true" />
+            Kembali ke Beranda
           </a>
         </div>
-      </CardContent>
-    </Card>
-  </div>
-</DashboardLayout>
+
+        <Alert variant={copy.alertVariant} data-testid="service-status-summary-alert">
+          {effectiveStatus === "active" && !operatorHold && (
+            <CheckCircle2Icon className="size-4" aria-hidden="true" />
+          )}
+          {effectiveStatus === "trial" && !operatorHold && (
+            <ClockIcon className="size-4" aria-hidden="true" />
+          )}
+          {effectiveStatus === "grace" && !operatorHold && (
+            <AlertTriangleIcon className="size-4" aria-hidden="true" />
+          )}
+          <AlertTitle>{copy.headline}</AlertTitle>
+          <AlertDescription>
+            <span>{isOwnerPayer ? copy.ownerGuidance : copy.memberGuidance}</span>
+          </AlertDescription>
+        </Alert>
+
+        <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+          <Card>
+            <CardHeader className="border-b border-border">
+              <CardTitle className="text-base">Dampak Akses Saat Ini</CardTitle>
+              <CardDescription>Aturan sistem untuk situs publik dan dashboard CMS.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-4 text-sm">
+              <div class="space-y-1">
+                <p class="font-medium text-foreground">Situs Publik ({primaryHost})</p>
+                <p class="text-muted-foreground">{copy.publicAccess}</p>
+              </div>
+              <div class="space-y-1">
+                <p class="font-medium text-foreground">Dashboard CMS</p>
+                <p class="text-muted-foreground">{copy.cmsAccess}</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="border-b border-border">
+              <CardTitle className="text-base">Jadwal &amp; Periode Layanan</CardTitle>
+              <CardDescription>Semua batas waktu ditampilkan dalam Waktu Indonesia Barat (WIB).</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 pt-4 text-sm">
+              <div class="flex items-center justify-between gap-4 border-b border-border pb-2">
+                <span class="text-muted-foreground">Batas Uji Coba</span>
+                <span class="font-medium text-foreground tabular-nums">
+                  {formatDateTimeWib(row.trial_ends_at)}
+                </span>
+              </div>
+              <div class="flex items-center justify-between gap-4 border-b border-border pb-2">
+                <span class="text-muted-foreground">Aktif Hingga</span>
+                <span class="font-medium text-foreground tabular-nums">
+                  {formatDateTimeWib(row.paid_through)}
+                </span>
+              </div>
+              <div class="flex items-center justify-between gap-4">
+                <span class="text-muted-foreground">Batas Retensi Data</span>
+                <span class="font-medium text-foreground tabular-nums">
+                  {formatDateTimeWib(row.deletion_due_at)}
+                </span>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
+        <Card data-testid="service-status-role-guidance">
+          <CardHeader className="border-b border-border">
+            <CardTitle className="flex items-center gap-2 text-base">
+              {isOwnerPayer ? (
+                <CreditCardIcon className="size-4 text-primary" aria-hidden="true" />
+              ) : (
+                <ShieldAlertIcon className="size-4 text-muted-foreground" aria-hidden="true" />
+              )}
+              {isOwnerPayer
+                ? isAgencyManaged
+                  ? "Tindakan Pengelola Agensi (Payer)"
+                  : "Tindakan Pemilik Situs (Owner)"
+                : isAgencyManaged
+                  ? "Pengelolaan Tagihan oleh Agensi"
+                  : "Panduan Anggota Tim (Non-Owner)"}
+            </CardTitle>
+            <CardDescription>
+              {isOwnerPayer
+                ? "Anda memegang hak akses tagihan dan pengelolaan keanggotaan untuk situs ini."
+                : isAgencyManaged
+                  ? "Tagihan langganan situs ini dikelola langsung oleh agensi pengelola Anda."
+                  : "Akses tagihan dan perpanjangan hanya tersedia bagi Pemilik Situs (Owner)."}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4 pt-4">
+            <p class="text-sm text-muted-foreground">
+              {isOwnerPayer ? copy.ownerGuidance : copy.memberGuidance}
+            </p>
+
+            <div class="flex flex-wrap items-center gap-3">
+              {isOwnerPayer && (
+                <a
+                  href={`/dashboard/${encodedHandle}/billing`}
+                  class={cn(
+                    buttonVariants({
+                      variant: "default",
+                      className: "min-h-11 w-full sm:w-auto md:min-h-9",
+                    }),
+                  )}
+                  data-testid="service-status-billing-link"
+                >
+                  <CreditCardIcon className="size-4" aria-hidden="true" />
+                  Kelola Tagihan &amp; Pembayaran
+                </a>
+              )}
+              <a
+                href={`/dashboard/${encodedHandle}/settings/members`}
+                class={cn(
+                  buttonVariants({
+                    variant: "outline",
+                    className: "min-h-11 w-full sm:w-auto md:min-h-9",
+                  }),
+                )}
+                data-testid="service-status-members-link"
+              >
+                <UsersIcon className="size-4" aria-hidden="true" />
+                Kelola Anggota Tim
+              </a>
+              <a
+                href="/account/security"
+                class={cn(
+                  buttonVariants({
+                    variant: "outline",
+                    className: "min-h-11 w-full sm:w-auto md:min-h-9",
+                  }),
+                )}
+              >
+                Keamanan Akun &amp; 2FA
+              </a>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    </DashboardLayout>
+  )
+}
