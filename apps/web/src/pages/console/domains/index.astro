@@ -1,0 +1,156 @@
+---
+import { env } from "cloudflare:workers";
+import { PLATFORM_HOSTS } from "@punyasitus/core";
+import {
+  DEFAULT_RECOVERY_PAGE_LIMIT,
+  listConsoleDomainsQueue,
+} from "@punyasitus/db/platform";
+import ConsoleLayout from "@/layouts/ConsoleLayout.astro";
+import { buildConsoleDomainsRuntimeEnv } from "../../api/console/domains/_shared";
+import { authorizeConsoleDomainsPage } from "./_page-guard";
+import { ConsoleDomainsPanel } from "./_ConsoleDomainsPanel";
+
+Astro.response.headers.set("Cache-Control", "private, no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+
+const runtimeEnv = buildConsoleDomainsRuntimeEnv(
+  env as typeof env & {
+    readonly AUTH_SECRET?: string;
+    readonly CONSOLE_AUTH_SECRET?: string;
+    readonly SAAS_CNAME_TARGET?: string;
+    readonly CF_SAAS_ZONE_ID?: string;
+    readonly CF_SAAS_API_TOKEN?: string;
+    readonly CF_API_BASE_URL?: string;
+  },
+);
+
+const gate = await authorizeConsoleDomainsPage(
+  Astro.request,
+  runtimeEnv,
+  "console.domains.page.view",
+  {
+    session: Astro.locals.authSession
+      ? { id: Astro.locals.authSession.id, userId: Astro.locals.authSession.userId }
+      : null,
+    user: Astro.locals.authUser
+      ? { id: Astro.locals.authUser.id, email: Astro.locals.authUser.email }
+      : null,
+  },
+);
+
+if (!gate.ok) {
+  return gate.response;
+}
+
+const { actor, platformDb, nowMs, host } = gate.ctx;
+const saasZone = runtimeEnv.SAAS_ZONE || PLATFORM_HOSTS.saasZone;
+
+const url = new URL(Astro.request.url);
+const initialStatus = url.searchParams.get("status")?.trim().toLowerCase() || "all";
+const initialSearch = url.searchParams.get("search")?.trim() ?? "";
+const initialTenantId = url.searchParams.get("tenantId")?.trim() ?? "";
+const rawPage = Number(url.searchParams.get("page") ?? "1");
+const initialPage = Number.isInteger(rawPage) && rawPage >= 1 && rawPage <= 1000 ? rawPage : 1;
+
+let queue;
+try {
+  queue = await listConsoleDomainsQueue(platformDb, {
+    status: initialStatus,
+    search: initialSearch || undefined,
+    tenantId: initialTenantId || undefined,
+    page: initialPage,
+    limit: DEFAULT_RECOVERY_PAGE_LIMIT,
+    nowMs,
+  });
+} catch {
+  queue = await listConsoleDomainsQueue(platformDb, {
+    status: "all",
+    page: 1,
+    limit: DEFAULT_RECOVERY_PAGE_LIMIT,
+    nowMs,
+  });
+}
+
+const navLinks = [
+  { href: "/console", label: "Ringkasan", current: false },
+  { href: "/console/tenants", label: "Tenant", current: false },
+  { href: "/console/domains", label: "Domain & SSL", current: true },
+  { href: "/console/jobs", label: "Antrean & Jobs", current: false },
+  { href: "/console/operators", label: "Operator", current: false },
+  { href: "/console/audit", label: "Audit Log", current: false },
+  { href: "/console/health", label: "Kesehatan", current: false },
+  { href: "/console/settings", label: "Pengaturan", current: false },
+];
+---
+
+<ConsoleLayout
+  title="Antrean Pemulihan Domain & SSL"
+  workspaceSubtitle={host.host}
+  activeNavId="domains"
+  basePath="/console"
+  userDisplayName={actor.grant.name ?? actor.grant.email ?? "Operator Platform"}
+  userRoleLabel={
+    actor.grant.role === "platform_support" ? "Dukungan Platform" : "Superadmin Platform"
+  }
+>
+  <div class="space-y-5" data-testid="console-domains-page">
+    <!-- Explicit Platform Context Banner -->
+    <section
+      data-testid="console-context-banner"
+      aria-label="Konteks akses platform"
+      class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-warning-border bg-warning-soft px-4 py-3 text-xs text-warning md:text-sm"
+    >
+      <p class="font-medium">
+        Console Operasional Platform — Akses istimewa — bukan penyamaran akun tenant
+      </p>
+      <div class="flex flex-wrap items-center gap-2">
+        <span
+          data-testid="console-scope-badge"
+          class="rounded border border-warning-border bg-card px-2 py-0.5 text-xs font-medium text-foreground"
+        >
+          Konteks: Pemulihan Domain &amp; TLS
+        </span>
+        <span
+          data-testid="console-stepup-badge"
+          class="rounded border border-warning-border bg-card px-2 py-0.5 text-xs font-medium text-foreground"
+        >
+          {gate.stepUpFresh ? "2FA Step-Up Aktif (<10m)" : "2FA Perlu Verifikasi Ulang"}
+        </span>
+      </div>
+    </section>
+
+    <!-- Console Module Navigation -->
+    <nav
+      aria-label="Navigasi modul console"
+      data-testid="console-section-nav"
+      class="flex flex-wrap items-center gap-2 border-b border-border pb-3"
+    >
+      {
+        navLinks.map((link) => (
+          <a
+            href={link.href}
+            aria-current={link.current ? "page" : undefined}
+            class:list={[
+              "inline-flex min-h-11 items-center rounded-md border px-3.5 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring md:min-h-9",
+              link.current
+                ? "border-primary bg-primary text-primary-foreground"
+                : "border-border bg-card text-foreground hover:bg-muted",
+            ]}
+          >
+            {link.label}
+          </a>
+        ))
+      }
+    </nav>
+
+    <ConsoleDomainsPanel
+      client:load
+      initialQueue={queue}
+      initialStatus={initialStatus}
+      initialSearch={initialSearch}
+      initialTenantId={initialTenantId}
+      saasZone={saasZone}
+      stepUpFresh={gate.stepUpFresh}
+    />
+  </div>
+</ConsoleLayout>
