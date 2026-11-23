@@ -1,0 +1,112 @@
+---
+import { canPerform } from "@punyasitus/auth";
+import { listFormVerticalTemplates } from "@punyasitus/core/forms/index";
+import { FormNotFoundError, getTenantFormById } from "@punyasitus/db/forms/index";
+import { ShieldAlertIcon } from "lucide-react";
+import {
+  neutralAdminNotFoundResponse,
+  resolveCmsAdminServerContext,
+} from "@/components/admin/editor/cms-server-context";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { FormBuilderClient, type FormBuilderInitialState } from "./_FormBuilderClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const canReadForms = canPerform(ctx.permissions.role, "settings:read");
+const canWriteForms =
+  canPerform(ctx.permissions.role, "settings:write") && !ctx.permissions.isLocked;
+const canPublishForms =
+  canPerform(ctx.permissions.role, "settings:publish") && !ctx.permissions.isLocked;
+
+const rawFormId = (Astro.params.formId ?? "").trim();
+if (!/^[1-9]\d{0,9}$/.test(rawFormId)) {
+  return neutralAdminNotFoundResponse();
+}
+const formId = Number(rawFormId);
+
+if (!canReadForms) {
+  Astro.response.status = 403;
+}
+
+let loaded: Awaited<ReturnType<typeof getTenantFormById>> | null = null;
+if (canReadForms) {
+  try {
+    loaded = await getTenantFormById(ctx.tenantDb, formId);
+  } catch (err) {
+    if (err instanceof FormNotFoundError) {
+      return neutralAdminNotFoundResponse();
+    }
+    throw err;
+  }
+}
+
+const templates = listFormVerticalTemplates();
+const initialForm: FormBuilderInitialState | null = loaded
+  ? {
+      id: loaded.form.id,
+      slug: loaded.form.slug,
+      name: loaded.form.name,
+      description: loaded.form.description ?? "",
+      submitLabel: loaded.form.submitLabel,
+      templateKey: loaded.form.templateKey,
+      fields: loaded.form.fields,
+      afterSubmitAction: loaded.form.afterSubmitAction,
+      afterSubmitConfig: {
+        message: loaded.form.afterSubmitConfig.message,
+        whatsappPhoneOverride: loaded.form.afterSubmitConfig.whatsappPhoneOverride ?? "",
+        whatsappIntro: loaded.form.afterSubmitConfig.whatsappIntro ?? "",
+        redirectUrl: loaded.form.afterSubmitConfig.redirectUrl ?? "",
+      },
+      isPublished: loaded.form.isPublished,
+      publishedVersion: loaded.form.publishedVersion,
+      hasUnpublishedChanges: loaded.form.hasUnpublishedChanges,
+      active: loaded.form.active,
+      version: loaded.form.version,
+    }
+  : null;
+---
+
+<DashboardLayout
+  title={loaded ? `${loaded.form.name} — ${ctx.workspaceName}` : `Formulir — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="pages"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  {!canReadForms || !loaded || !initialForm ? (
+    <div class="space-y-4" data-testid="forms-permission-denied">
+      <Alert variant="destructive">
+        <ShieldAlertIcon className="size-4" aria-hidden="true" />
+        <AlertTitle>Akses Ditolak</AlertTitle>
+        <AlertDescription>
+          Anda tidak memiliki izin untuk membuka konfigurasi formulir ini.
+        </AlertDescription>
+      </Alert>
+    </div>
+  ) : (
+    <FormBuilderClient
+      client:load
+      handle={ctx.handle}
+      basePath={ctx.basePath}
+      canWrite={canWriteForms}
+      canPublish={canPublishForms}
+      isLocked={ctx.permissions.isLocked}
+      compliance={loaded.compliance}
+      templates={templates}
+      initialForm={initialForm}
+    />
+  )}
+</DashboardLayout>

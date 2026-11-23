@@ -8,12 +8,25 @@ import {
   type EmailPort,
 } from "@punyasitus/core/email/index";
 import {
+  resolveCustomFormAfterSubmit,
+  validateCustomFormSubmission,
+  type PublishedFormDefinition,
+} from "@punyasitus/core/forms/index";
+import {
   isHoneypotTriggered,
   stripTurnstileAndHoneypotFields,
   verifyTurnstileGuard,
 } from "@punyasitus/core/security/turnstile";
 import { isEmailSuppressed } from "@punyasitus/db/email/index";
-import { executeIdempotentLeadWrite, hashLeadPayload } from "@punyasitus/db/lead-dedup/index";
+import {
+  getPublishedTenantFormBySlug,
+  getTenantFormComplianceContext,
+} from "@punyasitus/db/forms/index";
+import {
+  executeIdempotentLeadWrite,
+  hashLeadPayload,
+  type LeadInsertInput,
+} from "@punyasitus/db/lead-dedup/index";
 import {
   buildNewLeadOwnerNotificationEmail,
   getLeadNotificationSettings,
@@ -154,16 +167,191 @@ function isFormRequest(request: Request): boolean {
 function buildPrgRedirectResponse(
   returnTo: string,
   params: Readonly<Record<string, string>>,
+  hash = "formulir-kontak",
 ): Response {
   const safePath = sanitizeSafeRelativePath(returnTo) ?? "/";
   const search = new URLSearchParams(params);
   return new Response(null, {
     status: 303,
     headers: {
-      Location: `${safePath}?${search.toString()}#formulir-kontak`,
+      Location: `${safePath}?${search.toString()}#${hash}`,
       ...NO_STORE_HEADERS,
     },
   });
+}
+
+const CUSTOM_FORM_TRANSPORT_KEYS: ReadonlySet<string> = new Set([
+  "formSlug",
+  "form_slug",
+  "answers",
+  "customFields",
+  "privacyConsent",
+  "privacy_consent",
+  "sourcePath",
+  "pagePath",
+  "returnTo",
+  "sourceCategory",
+  "source_category",
+  "utm",
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+  "idempotencyKey",
+  "idempotency_key",
+]);
+
+const CUSTOM_FORM_UTM_KEYS = [
+  "utm_source",
+  "utm_medium",
+  "utm_campaign",
+  "utm_term",
+  "utm_content",
+] as const;
+
+const CUSTOM_FORM_SOURCE_CATEGORIES: ReadonlySet<string> = new Set([
+  "direct",
+  "search",
+  "social",
+  "ai_assistant",
+  "referral",
+  "campaign",
+]);
+
+function parseConsentFlag(raw: unknown): boolean {
+  if (raw === true) return true;
+  if (typeof raw === "string") {
+    const v = raw.trim().toLowerCase();
+    return v === "true" || v === "on" || v === "1" || v === "yes";
+  }
+  return false;
+}
+
+function extractCustomFormAnswersPayload(
+  cleanedPayload: Readonly<Record<string, unknown>>,
+  publishedDef: PublishedFormDefinition,
+): Record<string, unknown> {
+  const answers: Record<string, unknown> = {};
+  const checkboxGroupBuckets = new Map<string, string[]>();
+  const checkboxGroupKeys = new Set(
+    publishedDef.fields.filter((f) => f.type === "checkbox_group").map((f) => f.key),
+  );
+
+  // Explicit `answers` or `customFields` object (preferred JSON progressive-enhancement format)
+  const nestedObj =
+    cleanedPayload.answers && typeof cleanedPayload.answers === "object" && !Array.isArray(cleanedPayload.answers)
+      ? (cleanedPayload.answers as Record<string, unknown>)
+      : cleanedPayload.customFields &&
+          typeof cleanedPayload.customFields === "object" &&
+          !Array.isArray(cleanedPayload.customFields)
+        ? (cleanedPayload.customFields as Record<string, unknown>)
+        : null;
+
+  if (nestedObj) {
+    for (const [k, v] of Object.entries(nestedObj)) {
+      answers[k] = v;
+    }
+    for (const key of Object.keys(cleanedPayload)) {
+      if (!CUSTOM_FORM_TRANSPORT_KEYS.has(key)) {
+        answers[key] = cleanedPayload[key];
+      }
+    }
+    return answers;
+  }
+
+  // Flat or `cf_`-prefixed format (supports 100% no-JS HTML form POST including multi-checkboxes!)
+  for (const [key, value] of Object.entries(cleanedPayload)) {
+    if (CUSTOM_FORM_TRANSPORT_KEYS.has(key)) continue;
+
+    // Indexed checkbox_group entry: `cf_<fieldKey>__<idx>`
+    const cbMatch = /^cf_([a-z][a-z0-9_]{0,47})__\d+$/.exec(key);
+    if (cbMatch && cbMatch[1] && checkboxGroupKeys.has(cbMatch[1])) {
+      const fieldKey = cbMatch[1];
+      const list = checkboxGroupBuckets.get(fieldKey) ?? [];
+      if (typeof value === "string" && value.trim().length > 0) {
+        list.push(value.trim());
+      }
+      checkboxGroupBuckets.set(fieldKey, list);
+      continue;
+    }
+
+    if (key.startsWith("cf_")) {
+      const strippedKey = key.slice(3);
+      answers[strippedKey] = value;
+      continue;
+    }
+
+    answers[key] = value;
+  }
+
+  for (const [fieldKey, list] of checkboxGroupBuckets.entries()) {
+    answers[fieldKey] = list;
+  }
+
+  return answers;
+}
+
+function extractCustomFormUtmAndMeta(cleanedPayload: Readonly<Record<string, unknown>>): {
+  readonly pagePath: string | null;
+  readonly sourceCategory: string;
+  readonly utmJson: string | null;
+  readonly utm: Record<string, string> | null;
+  readonly bodyIdempotencyKey: string | null;
+  readonly returnTo: string | null;
+} {
+  const rawPath =
+    cleanedPayload.sourcePath !== undefined ? cleanedPayload.sourcePath : cleanedPayload.pagePath;
+  const pagePath =
+    typeof rawPath === "string" && !rawPath.includes("?") && !rawPath.includes("#")
+      ? sanitizeSafeRelativePath(rawPath)
+      : null;
+
+  const utmOut: Record<string, string> = {};
+  if (cleanedPayload.utm && typeof cleanedPayload.utm === "object" && !Array.isArray(cleanedPayload.utm)) {
+    for (const key of CUSTOM_FORM_UTM_KEYS) {
+      const val = (cleanedPayload.utm as Record<string, unknown>)[key];
+      if (typeof val === "string" && val.trim().length > 0 && val.trim().length <= 100) {
+        utmOut[key] = val.trim();
+      }
+    }
+  }
+  for (const key of CUSTOM_FORM_UTM_KEYS) {
+    const val = cleanedPayload[key];
+    if (typeof val === "string" && val.trim().length > 0 && val.trim().length <= 100) {
+      utmOut[key] = val.trim();
+    }
+  }
+  const hasUtm = Object.keys(utmOut).length > 0;
+
+  const rawSourceCat =
+    cleanedPayload.sourceCategory !== undefined
+      ? cleanedPayload.sourceCategory
+      : cleanedPayload.source_category;
+  let sourceCategory = hasUtm ? "campaign" : "direct";
+  if (typeof rawSourceCat === "string" && CUSTOM_FORM_SOURCE_CATEGORIES.has(rawSourceCat.trim().toLowerCase())) {
+    sourceCategory = rawSourceCat.trim().toLowerCase();
+  }
+
+  const rawIdem =
+    cleanedPayload.idempotencyKey !== undefined
+      ? cleanedPayload.idempotencyKey
+      : cleanedPayload.idempotency_key;
+  const bodyIdempotencyKey =
+    typeof rawIdem === "string" && rawIdem.trim().length > 0 && rawIdem.trim().length <= 128
+      ? rawIdem.trim()
+      : null;
+
+  const returnTo = sanitizeSafeRelativePath(cleanedPayload.returnTo);
+
+  return {
+    pagePath,
+    sourceCategory,
+    utmJson: hasUtm ? JSON.stringify(utmOut) : null,
+    utm: hasUtm ? utmOut : null,
+    bodyIdempotencyKey,
+    returnTo,
+  };
 }
 
 function buildFormServiceUnavailableHtml(message: string, returnTo: string): Response {
@@ -444,8 +632,288 @@ export async function handlePublicLeadPost(
     );
   }
 
-  // 5. Strip Turnstile/honeypot transport fields & strictly validate lead payload + privacy consent.
+  // 5. Strip Turnstile/honeypot transport fields & route custom form vs classic contact form.
   const cleanedPayload = stripAllAntiBotFields(inputCheck.rawPayload);
+
+  // 5a. Tenant-Defined Custom Form Submission (`REQ-080`, `TASK-080`) when `formSlug` is supplied.
+  const rawFormSlug =
+    typeof cleanedPayload.formSlug === "string"
+      ? cleanedPayload.formSlug.trim().toLowerCase()
+      : typeof cleanedPayload.form_slug === "string"
+        ? cleanedPayload.form_slug.trim().toLowerCase()
+        : "";
+
+  if (rawFormSlug.length > 0) {
+    const formMeta = extractCustomFormUtmAndMeta(cleanedPayload);
+    const effectiveReturnTo = formMeta.returnTo ?? returnPath;
+    const formHash = `formulir-${rawFormSlug.replace(/[^a-z0-9-]/g, "") || "kustom"}`;
+
+    const rateLimitSalt = deps.rateLimitSalt?.trim();
+    if (!deps.tenantDb || !rateLimitSalt) {
+      const unavailableMsg =
+        "Layanan penyimpanan formulir sementara tidak tersedia. Silakan coba lagi beberapa saat lagi.";
+      if (submissionMode === "form") {
+        return buildFormServiceUnavailableHtml(unavailableMsg, effectiveReturnTo);
+      }
+      return createApiErrorJsonResponse(503, "SERVICE_UNAVAILABLE", unavailableMsg, requestId);
+    }
+
+    const nowMs = Math.floor(deps.nowMs ?? Date.now());
+    const rateLimit = await enforceLeadRateLimit(deps.tenantDb, {
+      tenantId: deps.tenant.id,
+      clientIp: inputCheck.clientIp,
+      salt: rateLimitSalt,
+      nowMs,
+      policy: deps.rateLimitPolicy,
+    });
+
+    if (!rateLimit.ok) {
+      if (submissionMode === "form") {
+        return buildFormServiceUnavailableHtml(rateLimit.message, effectiveReturnTo);
+      }
+      return createApiErrorJsonResponse(503, "SERVICE_UNAVAILABLE", rateLimit.message, requestId);
+    }
+
+    if (!rateLimit.allowed) {
+      if (submissionMode === "form") {
+        return buildPrgRedirectResponse(
+          effectiveReturnTo,
+          { leadStatus: "error", code: "RATE_LIMITED", formSlug: rawFormSlug },
+          formHash,
+        );
+      }
+      return createApiErrorJsonResponse(
+        429,
+        "RATE_LIMITED",
+        rateLimit.message,
+        requestId,
+        undefined,
+        { "Retry-After": String(rateLimit.retryAfterSeconds) },
+      );
+    }
+
+    let publishedForm;
+    try {
+      publishedForm = await getPublishedTenantFormBySlug(deps.tenantDb, rawFormSlug);
+    } catch {
+      const unavailableMsg =
+        "Layanan formulir sementara tidak tersedia. Silakan coba lagi beberapa saat lagi.";
+      if (submissionMode === "form") {
+        return buildFormServiceUnavailableHtml(unavailableMsg, effectiveReturnTo);
+      }
+      return createApiErrorJsonResponse(503, "SERVICE_UNAVAILABLE", unavailableMsg, requestId);
+    }
+
+    if (!publishedForm) {
+      if (submissionMode === "form") {
+        return buildPrgRedirectResponse(
+          effectiveReturnTo,
+          { leadStatus: "error", code: "FORM_NOT_FOUND", formSlug: rawFormSlug },
+          formHash,
+        );
+      }
+      return createApiErrorJsonResponse(
+        404,
+        "NOT_FOUND",
+        "Formulir tidak ditemukan atau belum diterbitkan.",
+        requestId,
+      );
+    }
+
+    const rawAnswers = extractCustomFormAnswersPayload(cleanedPayload, publishedForm.definition);
+    const explicitConsent = parseConsentFlag(
+      cleanedPayload.privacyConsent !== undefined
+        ? cleanedPayload.privacyConsent
+        : cleanedPayload.privacy_consent,
+    );
+
+    const formValidation = validateCustomFormSubmission(publishedForm.definition, rawAnswers, {
+      explicitPrivacyConsent: explicitConsent,
+      nowIso: new Date(nowMs).toISOString(),
+    });
+
+    if (!formValidation.ok) {
+      if (submissionMode === "form") {
+        return buildPrgRedirectResponse(
+          effectiveReturnTo,
+          { leadStatus: "error", code: "VALIDATION_ERROR", formSlug: publishedForm.slug },
+          formHash,
+        );
+      }
+      return createApiErrorJsonResponse(
+        422,
+        "VALIDATION_ERROR",
+        formValidation.message,
+        requestId,
+        formValidation.fields,
+      );
+    }
+
+    const canonicalPayload: Record<string, unknown> = {
+      formSlug: publishedForm.slug,
+      formVersion: publishedForm.publishedVersion,
+      answers: formValidation.data.canonicalAnswers,
+      sourceCategory: formMeta.sourceCategory,
+      utm: formMeta.utm,
+      pagePath: formMeta.pagePath,
+    };
+
+    const explicitIdempotencyKey = inputCheck.idempotencyKey ?? formMeta.bodyIdempotencyKey;
+    let idempotencyKey: string;
+    if (explicitIdempotencyKey) {
+      idempotencyKey = explicitIdempotencyKey;
+    } else {
+      const bucket30s = Math.floor(nowMs / NOJS_DOUBLE_SUBMIT_WINDOW_MS);
+      const ipHash = await hashNetworkIdentifier(inputCheck.clientIp, rateLimitSalt);
+      const fingerprint = await hashLeadPayload({
+        tenantId: deps.tenant.id,
+        ipHash,
+        payload: canonicalPayload,
+      });
+      idempotencyKey = `nojs:${bucket30s}:${fingerprint.slice(0, 48)}`;
+    }
+
+    const leadInsert: LeadInsertInput = {
+      formId: publishedForm.id,
+      formSnapshotJson: JSON.stringify(formValidation.data.snapshot),
+      name: formValidation.data.projectedLead.name,
+      phoneE164: formValidation.data.projectedLead.phoneE164,
+      email: formValidation.data.projectedLead.email,
+      message: formValidation.data.projectedLead.message,
+      preferredDate: formValidation.data.projectedLead.preferredDate,
+      sourceCategory: formMeta.sourceCategory,
+      utmJson: formMeta.utmJson,
+      pagePath: formMeta.pagePath,
+    };
+
+    const writeResult = await executeIdempotentLeadWrite(deps.tenantDb, {
+      idempotencyKey,
+      lead: leadInsert,
+      payload: canonicalPayload,
+      nowMs,
+    });
+
+    if (!writeResult.ok) {
+      if (writeResult.kind === "invalid_key") {
+        if (submissionMode === "form") {
+          return buildPrgRedirectResponse(
+            effectiveReturnTo,
+            { leadStatus: "error", code: "VALIDATION_ERROR", formSlug: publishedForm.slug },
+            formHash,
+          );
+        }
+        return createApiErrorJsonResponse(422, "VALIDATION_ERROR", writeResult.message, requestId, [
+          { field: "idempotencyKey", code: "INVALID_IDEMPOTENCY_KEY", message: writeResult.message },
+        ]);
+      }
+      if (submissionMode === "form") {
+        return buildFormServiceUnavailableHtml(writeResult.message, effectiveReturnTo);
+      }
+      return createApiErrorJsonResponse(503, "SERVICE_UNAVAILABLE", writeResult.message, requestId);
+    }
+
+    if (writeResult.kind === "conflict") {
+      if (submissionMode === "form") {
+        return buildPrgRedirectResponse(
+          effectiveReturnTo,
+          { leadStatus: "error", code: "IDEMPOTENCY_CONFLICT", formSlug: publishedForm.slug },
+          formHash,
+        );
+      }
+      return createApiErrorJsonResponse(409, "IDEMPOTENCY_CONFLICT", writeResult.message, requestId);
+    }
+
+    if (writeResult.kind === "created") {
+      const postCommitWork = Promise.all([
+        recordLeadSubmitMetricBestEffort(
+          deps.tenantDb,
+          formMeta.pagePath,
+          nowMs,
+          deps.tenant.timeZone,
+        ),
+        dispatchOwnerLeadNotificationBestEffort({
+          deps,
+          tenant: deps.tenant,
+          tenantDb: deps.tenantDb,
+          leadId: writeResult.leadId,
+        }),
+      ]).then(() => undefined);
+
+      if (deps.waitUntil) {
+        deps.waitUntil(postCommitWork);
+      } else {
+        await postCommitWork;
+      }
+    }
+
+    let tenantWhatsappPhone: string | null = null;
+    if (
+      publishedForm.definition.afterSubmitAction === "whatsapp" &&
+      !publishedForm.definition.afterSubmitConfig.whatsappPhoneOverride
+    ) {
+      try {
+        const complianceCtx = await getTenantFormComplianceContext(deps.tenantDb);
+        tenantWhatsappPhone = complianceCtx.whatsappE164;
+      } catch {
+        tenantWhatsappPhone = null;
+      }
+    }
+
+    const pageUrl = `https://${deps.tenant.host}${formMeta.pagePath ?? "/"}`;
+    const afterSubmit = resolveCustomFormAfterSubmit({
+      publishedDef: publishedForm.definition,
+      snapshot: formValidation.data.snapshot,
+      tenantPhone: tenantWhatsappPhone,
+      pageUrl,
+    });
+
+    if (submissionMode === "form") {
+      if (afterSubmit.action === "whatsapp" && afterSubmit.whatsappUrl) {
+        return new Response(null, {
+          status: 303,
+          headers: {
+            Location: afterSubmit.whatsappUrl,
+            ...NO_STORE_HEADERS,
+          },
+        });
+      }
+      if (afterSubmit.action === "url" && afterSubmit.redirectUrl) {
+        return new Response(null, {
+          status: 303,
+          headers: {
+            Location: afterSubmit.redirectUrl,
+            ...NO_STORE_HEADERS,
+          },
+        });
+      }
+      return buildPrgRedirectResponse(
+        effectiveReturnTo,
+        {
+          leadStatus: "accepted",
+          leadNumber: String(writeResult.leadId),
+          formSlug: publishedForm.slug,
+        },
+        formHash,
+      );
+    }
+
+    return Response.json(
+      {
+        leadNumber: writeResult.leadId,
+        status: "accepted",
+        confirmationMessage: afterSubmit.message,
+        formSlug: publishedForm.slug,
+        formVersion: publishedForm.publishedVersion,
+        afterSubmit,
+      },
+      {
+        status: 201,
+        headers: NO_STORE_HEADERS,
+      },
+    );
+  }
+
+  // 5b. Classic Built-In Contact Form Submission (`TASK-021`, `TASK-029` — preserved unchanged).
   const validation = validatePublicLeadSubmission(cleanedPayload, {
     requirePrivacyConsent: true,
   });
