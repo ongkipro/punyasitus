@@ -1,0 +1,185 @@
+---
+import { env } from "cloudflare:workers";
+import { validateMcpAuthorizeRequest } from "@punyasitus/auth/mcp/index";
+import { MCP_SCOPE_CATALOG, MCP_SCOPES } from "@punyasitus/core/mcp/index";
+import type { TenantStoreNamespaceLike } from "@punyasitus/db/connections";
+import {
+  consumeMcpAuthorizeRateLimit,
+  listUserTenantsForMcpConsent,
+  type EligibleUserTenantForMcp,
+} from "@punyasitus/db/mcp/index";
+import { resolvePlatformAuthHostContext } from "../../../middleware/auth.ts";
+import { handleMcpAccountApiRequest } from "../../api/auth/mcp/[action].ts";
+import "../../../styles/admin/globals.css";
+import { McpConsentScreen } from "./_McpConsent";
+
+const runtimeEnv = env as typeof env & {
+  readonly AUTH_SECRET?: string;
+  readonly CONSOLE_AUTH_SECRET?: string;
+};
+
+// Direct POST /auth/consent uses the exact same CSRF/Origin-protected JSON consent handler
+if (Astro.request.method.toUpperCase() === "POST") {
+  return handleMcpAccountApiRequest("consent", Astro.request, {
+    APP_ENV: runtimeEnv.APP_ENV,
+    PLATFORM_DOMAIN: runtimeEnv.PLATFORM_DOMAIN,
+    PLATFORM_DB: runtimeEnv.PLATFORM_DB,
+    TENANT_STORE: runtimeEnv.TENANT_STORE as unknown as TenantStoreNamespaceLike | undefined,
+    AUTH_SECRET: runtimeEnv.AUTH_SECRET,
+    CONSOLE_AUTH_SECRET: runtimeEnv.CONSOLE_AUTH_SECRET,
+  });
+}
+
+const authUser = Astro.locals.authUser;
+const hostCtx = resolvePlatformAuthHostContext(Astro.request, {
+  APP_ENV: runtimeEnv.APP_ENV,
+  PLATFORM_DOMAIN: runtimeEnv.PLATFORM_DOMAIN,
+  PLATFORM_DB: runtimeEnv.PLATFORM_DB,
+});
+
+let validationError: string | null = null;
+let clientName = "Aplikasi AI";
+let clientId = Astro.url.searchParams.get("client_id")?.trim() ?? "";
+let clientUri: string | null = null;
+let redirectUri = Astro.url.searchParams.get("redirect_uri")?.trim() ?? "";
+let resource = Astro.url.searchParams.get("resource")?.trim() ?? "";
+let codeChallenge = Astro.url.searchParams.get("code_challenge")?.trim() ?? "";
+let codeChallengeMethod = Astro.url.searchParams.get("code_challenge_method")?.trim() ?? "S256";
+let state = Astro.url.searchParams.get("state")?.trim() ?? "";
+let requestedScopes: readonly string[] = ["content:read"];
+
+if (!hostCtx.allowed || hostCtx.surface !== "app") {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+if (!authUser) {
+  // Unauthenticated visitors immediately see the login prompt with ZERO CIMD fetch and ZERO D1 writes.
+  validationError = null;
+} else if (!runtimeEnv.PLATFORM_DB) {
+  validationError = "Layanan otorisasi sedang tidak tersedia.";
+} else {
+  // Defense-in-depth rate limit + strictly NO outbound CIMD fetch / D1 upsert on GET /auth/consent
+  // (clients MUST be pre-validated & cached via rate-limited GET /oauth2/authorize).
+  const callerKey =
+    Astro.request.headers.get("cf-connecting-ip")?.trim() || `user:${authUser.id}`;
+  const rl = await consumeMcpAuthorizeRateLimit(runtimeEnv.PLATFORM_DB, { callerKey });
+  if (!rl.allowed) {
+    validationError = "Terlalu banyak permintaan otorisasi. Tunggu sebentar lalu coba lagi.";
+  } else {
+    const synthParams = new URLSearchParams(Astro.url.searchParams);
+    if (!synthParams.has("response_type")) {
+      synthParams.set("response_type", "code");
+    }
+    const validated = await validateMcpAuthorizeRequest(
+      runtimeEnv.PLATFORM_DB,
+      synthParams,
+      hostCtx.expectedOrigin,
+      { allowOutboundCimdFetch: false },
+    );
+    if (!validated.ok) {
+      validationError = validated.description;
+    } else {
+      clientName = validated.params.client.clientName;
+      clientId = validated.params.client.clientId;
+      clientUri = validated.params.client.clientUri;
+      redirectUri = validated.params.redirectUri;
+      resource = validated.params.resource;
+      codeChallenge = validated.params.codeChallenge;
+      codeChallengeMethod = validated.params.codeChallengeMethod;
+      state = validated.params.state;
+      requestedScopes = validated.params.scopes;
+    }
+  }
+}
+
+let tenants: readonly EligibleUserTenantForMcp[] = [];
+if (authUser && runtimeEnv.PLATFORM_DB) {
+  try {
+    tenants = await listUserTenantsForMcpConsent(runtimeEnv.PLATFORM_DB, authUser.id);
+  } catch {
+    tenants = [];
+  }
+}
+
+const availableScopes = MCP_SCOPES.map((scope) => MCP_SCOPE_CATALOG[scope]);
+const loginHref = `/auth/login?next=${encodeURIComponent(`${Astro.url.pathname}${Astro.url.search}`)}`;
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+Astro.response.headers.set("X-Frame-Options", "DENY");
+Astro.response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+Astro.response.headers.set("Referrer-Policy", "no-referrer");
+---
+
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23176b51'/%3E%3Ctext x='16' y='21' text-anchor='middle' font-family='sans-serif' font-size='14' font-weight='700' fill='%23ffffff'%3EPS%3C/text%3E%3C/svg%3E"
+    />
+    <title>Persetujuan Akses Agen AI — PunyaSitus</title>
+  </head>
+  <body class="min-h-screen bg-background text-foreground">
+    <a
+      href="#main-content"
+      class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground"
+    >
+      Lewati ke konten utama
+    </a>
+
+    <header class="border-b border-border bg-card">
+      <div class="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
+        <a
+          href="/account/connected-apps"
+          class="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-foreground md:min-h-0"
+        >
+          <span
+            class="inline-flex size-7 items-center justify-center rounded-md bg-primary text-xs font-bold text-primary-foreground"
+            aria-hidden="true"
+          >
+            PS
+          </span>
+          <span>PunyaSitus</span>
+        </a>
+        <span class="text-xs text-muted-foreground">Otorisasi MCP</span>
+      </div>
+    </header>
+
+    <main
+      id="main-content"
+      class="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-5xl items-center justify-center px-4 py-8"
+    >
+      <McpConsentScreen
+        client:load
+        authenticated={Boolean(authUser)}
+        userName={authUser?.name ?? null}
+        userEmail={authUser?.email ?? null}
+        validationError={validationError}
+        clientName={clientName}
+        clientId={clientId}
+        clientUri={clientUri}
+        redirectUri={redirectUri}
+        resource={resource}
+        codeChallenge={codeChallenge}
+        codeChallengeMethod={codeChallengeMethod}
+        state={state}
+        requestedScopes={requestedScopes}
+        availableScopes={availableScopes}
+        tenants={tenants}
+        loginHref={loginHref}
+      />
+    </main>
+  </body>
+</html>

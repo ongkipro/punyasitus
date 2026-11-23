@@ -155,6 +155,7 @@ export function isMcpOrOAuthProtocolPath(pathname: string): boolean {
     normalized === "/mcp" ||
     normalized.startsWith("/mcp/") ||
     normalized === "/oauth2/token" ||
+    normalized === "/oauth2/revoke" ||
     normalized === "/oauth2/register" ||
     normalized.startsWith("/.well-known/oauth-")
   );

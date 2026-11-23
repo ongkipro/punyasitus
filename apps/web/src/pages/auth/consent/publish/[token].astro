@@ -1,0 +1,133 @@
+---
+import { env } from "cloudflare:workers";
+import { verifyLiveMcpMemberAndEntitlement } from "@punyasitus/auth/mcp/index";
+import { getMcpPublishApprovalByToken } from "@punyasitus/db/mcp/index";
+import { resolvePlatformAuthHostContext } from "../../../../middleware/auth.ts";
+import "../../../../styles/admin/globals.css";
+import { McpPublishApprovalScreen } from "./_McpPublishApproval";
+
+const runtimeEnv = env as typeof env & {
+  readonly AUTH_SECRET?: string;
+};
+
+const hostCtx = resolvePlatformAuthHostContext(Astro.request, {
+  APP_ENV: runtimeEnv.APP_ENV,
+  PLATFORM_DOMAIN: runtimeEnv.PLATFORM_DOMAIN,
+  PLATFORM_DB: runtimeEnv.PLATFORM_DB,
+});
+
+if (!hostCtx.allowed || hostCtx.surface !== "app") {
+  return new Response("Halaman tidak ditemukan", {
+    status: 404,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    },
+  });
+}
+
+const rawToken = Astro.params.token?.trim() ?? "";
+const authUser = Astro.locals.authUser;
+const nowMs = Date.now();
+
+const stored =
+  rawToken && runtimeEnv.PLATFORM_DB
+    ? await getMcpPublishApprovalByToken(runtimeEnv.PLATFORM_DB, rawToken).catch(() => null)
+    : null;
+
+let canApprove = false;
+let roleError: string | null = null;
+if (stored && authUser && runtimeEnv.PLATFORM_DB) {
+  const live = await verifyLiveMcpMemberAndEntitlement(runtimeEnv.PLATFORM_DB, {
+    userId: authUser.id,
+    tenantId: stored.tenantId,
+    nowMs,
+  });
+  if (!live.ok) {
+    roleError = live.message;
+  } else if (stored.requestedByUserId !== authUser.id && live.member.dbRole !== "owner") {
+    roleError =
+      "Hanya peminta asli atau Pemilik (Owner) situs yang dapat memproses tautan persetujuan publikasi ini.";
+  } else {
+    canApprove = true;
+  }
+}
+
+const loginHref = `/auth/login?next=${encodeURIComponent(Astro.url.pathname)}`;
+
+Astro.response.headers.set("Cache-Control", "no-store");
+Astro.response.headers.set("X-Robots-Tag", "noindex, nofollow");
+Astro.response.headers.set("X-Frame-Options", "DENY");
+Astro.response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+Astro.response.headers.set("Referrer-Policy", "no-referrer");
+---
+
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Konfirmasi Publikasi Draf — PunyaSitus</title>
+  </head>
+  <body class="min-h-screen bg-background text-foreground">
+    <a
+      href="#main-content"
+      class="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-50 focus:rounded-md focus:bg-primary focus:px-3 focus:py-2 focus:text-sm focus:font-medium focus:text-primary-foreground"
+    >
+      Lewati ke konten utama
+    </a>
+
+    <header class="border-b border-border bg-card">
+      <div class="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
+        <a
+          href="/account/connected-apps"
+          class="inline-flex min-h-11 items-center gap-2 text-sm font-semibold text-foreground md:min-h-0"
+        >
+          <span
+            class="inline-flex size-7 items-center justify-center rounded-md bg-primary text-xs font-bold text-primary-foreground"
+            aria-hidden="true"
+          >
+            PS
+          </span>
+          <span>PunyaSitus</span>
+        </a>
+        <span class="text-xs text-muted-foreground">Konfirmasi Publikasi MCP</span>
+      </div>
+    </header>
+
+    <main
+      id="main-content"
+      class="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-5xl items-center justify-center px-4 py-8"
+    >
+      <McpPublishApprovalScreen
+        client:load
+        authenticated={Boolean(authUser)}
+        token={rawToken}
+        loginHref={loginHref}
+        notFound={!stored}
+        expired={stored ? nowMs >= stored.expiresAt : false}
+        canApprove={canApprove}
+        roleError={roleError}
+        approval={
+          stored
+            ? {
+                id: stored.id,
+                tenantHandle: stored.tenantHandle,
+                tenantName: stored.tenantName,
+                clientName: stored.clientName,
+                resourceType: stored.resourceType,
+                resourceId: stored.resourceId,
+                expectedVersion: stored.expectedVersion,
+                resourceTitle: stored.resourceTitle,
+                resourceSlug: stored.resourceSlug,
+                status: stored.status,
+                expiresAtIso: new Date(stored.expiresAt).toISOString(),
+              }
+            : null
+        }
+      />
+    </main>
+  </body>
+</html>
