@@ -1,6 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { RestrictedRichTextDoc } from "@punyasitus/core/content/index";
 import {
+  calculateLinearReadingTimeMinutes,
+  extractTocFromRichTextDoc,
+} from "@punyasitus/core/posts/index";
+import {
   extractChecklistSignalsFromRichTextDoc,
   validateSearchAppearanceTemplateString,
   type PeerPublishedSeoSummary,
@@ -9,11 +13,14 @@ import {
 import type { SiteVisibility } from "@punyasitus/core/seo/index";
 import {
   ArrowLeftIcon,
+  ClockIcon,
   EyeIcon,
   GlobeIcon,
   ImageIcon,
+  ListIcon,
   SaveIcon,
   Trash2Icon,
+  UserIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -22,6 +29,7 @@ import {
   ConfirmDestructiveDialog,
   ContentStatusBadge,
   fieldErrorsToMap,
+  formatDateTimeId,
   InlineFieldError,
   LockedTenantBanner,
   RestrictedRichTextEditor,
@@ -39,6 +47,13 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import type { PostTaxonomyOptionDto } from "./_PostsListClient";
 
+export interface PostAuthorOptionDto {
+  readonly id: number;
+  readonly name: string;
+  readonly roleTitle: string | null;
+  readonly bio: string | null;
+}
+
 export interface PostEditorInitialData {
   readonly id: number | null;
   readonly title: string;
@@ -47,12 +62,15 @@ export interface PostEditorInitialData {
   readonly body: RestrictedRichTextDoc;
   readonly status: "draft" | "published" | "trashed";
   readonly featuredMediaId: number | null;
+  readonly authorId?: number | null;
   readonly primaryCategoryId: number | null;
   readonly categoryIds: readonly number[];
   readonly tagIds: readonly number[];
   readonly enableToc: boolean;
   readonly seo?: SeoEditorOverrideInput | null;
   readonly hasUnpublishedChanges: boolean;
+  readonly publishedAt?: string | null;
+  readonly contentModifiedAt?: string | null;
   readonly version: number;
 }
 
@@ -63,6 +81,7 @@ export interface PostEditorClientProps {
   readonly initialPost: PostEditorInitialData;
   readonly categories: readonly PostTaxonomyOptionDto[];
   readonly tags: readonly PostTaxonomyOptionDto[];
+  readonly authors?: readonly PostAuthorOptionDto[];
   readonly siteName?: string;
   readonly primaryHost?: string;
   readonly siteVisibility?: SiteVisibility;
@@ -77,6 +96,7 @@ export function PostEditorClient({
   initialPost,
   categories,
   tags,
+  authors = [],
   siteName = handle,
   primaryHost = `${handle}.situsku.click`,
   siteVisibility = "public",
@@ -88,6 +108,10 @@ export function PostEditorClient({
   const [status, setStatus] = useState<"draft" | "published" | "trashed">(initialPost.status);
   const [hasUnpublishedChanges, setHasUnpublishedChanges] = useState(
     initialPost.hasUnpublishedChanges,
+  );
+  const [publishedAt, setPublishedAt] = useState<string | null>(initialPost.publishedAt ?? null);
+  const [contentModifiedAt, setContentModifiedAt] = useState<string | null>(
+    initialPost.contentModifiedAt ?? null,
   );
 
   const [title, setTitle] = useState(initialPost.title);
@@ -102,6 +126,7 @@ export function PostEditorClient({
   const [featuredMediaId, setFeaturedMediaId] = useState<number | null>(
     initialPost.featuredMediaId,
   );
+  const [authorId, setAuthorId] = useState<number | null>(initialPost.authorId ?? null);
   const [primaryCategoryId, setPrimaryCategoryId] = useState<number | null>(
     initialPost.primaryCategoryId,
   );
@@ -172,6 +197,12 @@ export function PostEditorClient({
     () => extractChecklistSignalsFromRichTextDoc(body, primaryHost),
     [body, primaryHost],
   );
+  const estimatedReadingMinutes = useMemo(() => calculateLinearReadingTimeMinutes(body), [body]);
+  const liveTocOutline = useMemo(() => extractTocFromRichTextDoc(body), [body]);
+  const selectedAuthor = useMemo(
+    () => (authorId !== null ? (authors.find((a) => a.id === authorId) ?? null) : null),
+    [authors, authorId],
+  );
 
   function validateLocally(): boolean {
     const errs: Record<string, string> = {};
@@ -214,6 +245,7 @@ export function PostEditorClient({
         excerpt: excerpt.trim() ? excerpt.trim() : null,
         body,
         featuredMediaId,
+        authorId,
         primaryCategoryId,
         categoryIds,
         tagIds,
@@ -333,6 +365,8 @@ export function PostEditorClient({
       setStatus(result.status);
       setSlug(result.slug);
       setHasUnpublishedChanges(result.hasUnpublishedChanges);
+      setPublishedAt(result.publishedAt ?? publishedAt);
+      setContentModifiedAt(result.contentModifiedAt ?? contentModifiedAt);
       setOriginalPublishedSlug(result.status === "published" ? result.slug : "");
       setConfirmSlugChange(false);
       setBanner({
@@ -373,10 +407,13 @@ export function PostEditorClient({
       setBody(fresh.body);
       setStatus(fresh.status);
       setFeaturedMediaId(fresh.featuredMediaId);
+      setAuthorId(fresh.authorId ?? null);
       setPrimaryCategoryId(fresh.primaryCategoryId);
       setCategoryIds(fresh.categoryIds);
       setTagIds(fresh.tagIds);
       setEnableToc(fresh.enableToc);
+      setPublishedAt(fresh.publishedAt ?? null);
+      setContentModifiedAt(fresh.contentModifiedAt ?? null);
       setVersion(fresh.version);
       setHasUnpublishedChanges(fresh.hasUnpublishedChanges);
       setFieldErrors({});
@@ -489,16 +526,31 @@ export function PostEditorClient({
             {submitting ? "Menyimpan..." : "Simpan Draf"}
           </Button>
           {status === "published" ? (
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={!permissions.canPublishContent || submitting}
-              onClick={() => void handlePublishOrUnpublish("unpublish")}
-              className="min-h-11 md:min-h-9"
-              data-testid="post-unpublish-btn"
-            >
-              Batalkan Terbit
-            </Button>
+            <>
+              {(hasUnpublishedChanges || isDirty) && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={!permissions.canPublishContent || submitting}
+                  onClick={() => void handlePublishOrUnpublish("publish")}
+                  className="min-h-11 md:min-h-9"
+                  data-testid="post-republish-btn"
+                >
+                  <GlobeIcon className="size-4" aria-hidden="true" />
+                  Terbitkan Perubahan
+                </Button>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!permissions.canPublishContent || submitting}
+                onClick={() => void handlePublishOrUnpublish("unpublish")}
+                className="min-h-11 md:min-h-9"
+                data-testid="post-unpublish-btn"
+              >
+                Batalkan Terbit
+              </Button>
+            </>
           ) : (
             <Button
               type="button"
@@ -689,12 +741,121 @@ export function PostEditorClient({
             </CardContent>
           </Card>
 
+          <Card data-testid="post-author-card">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <UserIcon className="size-4 text-primary" aria-hidden="true" />
+                Profil Penulis (Byline)
+              </CardTitle>
+              <CardDescription>
+                Ditampilkan sebagai byline artikel dan <code>Article.author</code> JSON-LD.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="post-author-select"
+                  className="block text-xs font-medium text-muted-foreground"
+                >
+                  Pilih Penulis
+                </label>
+                <select
+                  id="post-author-select"
+                  value={authorId !== null ? String(authorId) : ""}
+                  disabled={readOnly}
+                  onChange={(e) => {
+                    setAuthorId(e.target.value ? Number(e.target.value) : null);
+                    markDirty();
+                  }}
+                  className="min-h-11 w-full rounded-md border border-input bg-card px-3 py-2 text-base md:min-h-9 md:text-sm"
+                  data-testid="post-author-select"
+                >
+                  <option value="">Tanpa profil penulis (default)</option>
+                  {authors.map((author) => (
+                    <option key={author.id} value={String(author.id)}>
+                      {author.name}
+                      {author.roleTitle ? ` — ${author.roleTitle}` : ""}
+                    </option>
+                  ))}
+                </select>
+                <InlineFieldError message={fieldErrors.authorId} />
+              </div>
+
+              {selectedAuthor && (
+                <div
+                  className="rounded-md border border-border bg-muted/30 p-3 text-xs space-y-1"
+                  data-testid="post-selected-author-preview"
+                >
+                  <p className="font-semibold text-foreground">{selectedAuthor.name}</p>
+                  {selectedAuthor.roleTitle && (
+                    <p className="font-medium text-primary">{selectedAuthor.roleTitle}</p>
+                  )}
+                  {selectedAuthor.bio && (
+                    <p className="text-muted-foreground">{selectedAuthor.bio}</p>
+                  )}
+                </div>
+              )}
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="min-h-11 w-full md:min-h-8"
+                render={<a href={`${basePath}/posts/authors`} />}
+                data-testid="post-manage-authors-link"
+              >
+                Kelola Profil Penulis
+              </Button>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle className="text-base">Kategori, Tag &amp; Daftar Isi</CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              <label className="flex items-center gap-2.5 text-sm font-medium text-foreground">
+              <div
+                className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs"
+                data-testid="post-reading-time-summary"
+              >
+                <span className="inline-flex items-center gap-1.5 font-medium text-foreground">
+                  <ClockIcon className="size-3.5 text-primary" aria-hidden="true" />
+                  Estimasi waktu baca
+                </span>
+                <Badge variant="outline" className="tabular-nums">
+                  {estimatedReadingMinutes} menit baca
+                </Badge>
+              </div>
+
+              {(publishedAt || contentModifiedAt) && (
+                <div
+                  className="space-y-1 rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
+                  data-testid="post-modified-discipline-info"
+                >
+                  {publishedAt && (
+                    <p>
+                      Diterbitkan:{" "}
+                      <span className="font-medium text-foreground">
+                        {formatDateTimeId(publishedAt)}
+                      </span>
+                    </p>
+                  )}
+                  {contentModifiedAt && (
+                    <p>
+                      Diperbarui (publik):{" "}
+                      <span className="font-medium text-foreground">
+                        {formatDateTimeId(contentModifiedAt)}
+                      </span>
+                    </p>
+                  )}
+                  <p className="text-[11px]">
+                    Simpan draf tidak mengubah tanggal pembaruan publik atau sitemap sampai
+                    perubahan substansial diterbitkan ulang.
+                  </p>
+                </div>
+              )}
+
+              <label className="flex min-h-11 items-center gap-2.5 text-sm font-medium text-foreground md:min-h-8">
                 <input
                   type="checkbox"
                   checked={enableToc}
@@ -709,27 +870,67 @@ export function PostEditorClient({
                 <span>Tampilkan Daftar Isi (TOC) otomatis dari H2/H3</span>
               </label>
 
+              {enableToc && (
+                <div
+                  className="space-y-1.5 rounded-md border border-border/80 bg-muted/20 p-3 text-xs"
+                  data-testid="post-toc-preview"
+                >
+                  <div className="flex items-center justify-between font-medium text-foreground">
+                    <span className="inline-flex items-center gap-1.5">
+                      <ListIcon className="size-3.5 text-primary" aria-hidden="true" />
+                      Pratinjau Daftar Isi (Zero-JS)
+                    </span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {liveTocOutline.length} judul
+                    </span>
+                  </div>
+                  {liveTocOutline.length > 0 ? (
+                    <ol className="space-y-1 pt-1 text-muted-foreground">
+                      {liveTocOutline.map((entry) => (
+                        <li
+                          key={entry.id}
+                          className={entry.level === 3 ? "pl-3 text-[11px]" : "font-medium text-foreground"}
+                        >
+                          #{entry.id} — {entry.text}
+                        </li>
+                      ))}
+                    </ol>
+                  ) : (
+                    <p className="text-[11px] text-muted-foreground">
+                      Tambahkan subjudul H2 atau H3 pada isi artikel agar Daftar Isi muncul.
+                    </p>
+                  )}
+                </div>
+              )}
+
               {categories.length > 0 && (
                 <div className="space-y-2">
                   <span className="block text-xs font-semibold text-foreground uppercase">
-                    Kategori
+                    Kategori (maks. 3 tingkat)
                   </span>
                   <div className="space-y-1.5">
-                    {categories.map((cat) => (
-                      <label
-                        key={cat.id}
-                        className="flex min-h-9 items-center gap-2 text-sm text-foreground"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={categoryIds.includes(cat.id)}
-                          disabled={readOnly}
-                          onChange={() => toggleCategory(cat.id)}
-                          className="size-4 rounded border-input accent-primary"
-                        />
-                        <span>{cat.name}</span>
-                      </label>
-                    ))}
+                    {categories.map((cat) => {
+                      const indentPx = Math.max(0, Math.min(2, (cat.depth ?? 1) - 1)) * 14;
+                      return (
+                        <label
+                          key={cat.id}
+                          style={{ paddingLeft: `${indentPx}px` }}
+                          className="flex min-h-11 items-center gap-2 text-sm text-foreground md:min-h-8"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={categoryIds.includes(cat.id)}
+                            disabled={readOnly}
+                            onChange={() => toggleCategory(cat.id)}
+                            className="size-4 rounded border-input accent-primary"
+                          />
+                          <span>
+                            {(cat.depth ?? 1) > 1 ? "↳ " : ""}
+                            {cat.name}
+                          </span>
+                        </label>
+                      );
+                    })}
                   </div>
                   {categoryIds.length > 0 && (
                     <div className="space-y-1 pt-1">
@@ -748,6 +949,7 @@ export function PostEditorClient({
                           markDirty();
                         }}
                         className="min-h-11 w-full rounded-md border border-input bg-card px-3 py-2 text-base md:min-h-9 md:text-sm"
+                        data-testid="post-primary-category-select"
                       >
                         <option value="">Otomatis</option>
                         {categories

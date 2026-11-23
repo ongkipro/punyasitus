@@ -8,6 +8,7 @@ import {
   RotateCcwIcon,
   SearchIcon,
   Trash2Icon,
+  UserIcon,
 } from "lucide-react";
 import {
   CmsApiError,
@@ -36,6 +37,8 @@ export interface PostTaxonomyOptionDto {
   readonly id: number;
   readonly name: string;
   readonly slug: string;
+  readonly depth?: number;
+  readonly parentId?: number | null;
 }
 
 export interface PostListItemDto {
@@ -278,6 +281,15 @@ export function PostsListClient({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2 self-start sm:self-auto">
+          <Button
+            variant="outline"
+            className="min-h-11 md:min-h-9"
+            render={<a href={`${basePath}/posts/authors`} />}
+            data-testid="posts-authors-link"
+          >
+            <UserIcon className="size-4" aria-hidden="true" />
+            Profil Penulis
+          </Button>
           <Button
             variant="outline"
             className="min-h-11 md:min-h-9"

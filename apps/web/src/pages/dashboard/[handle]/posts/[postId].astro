@@ -1,5 +1,5 @@
 ---
-import { getPostById, listBlogTaxonomies } from "@punyasitus/db/posts/index";
+import { getPostById, listBlogTaxonomies, listPostAuthors } from "@punyasitus/db/posts/index";
 import { isSeoAutopilotEnabledForTenant } from "@punyasitus/db/seo/index";
 import {
   neutralAdminNotFoundResponse,
@@ -19,10 +19,11 @@ if (!/^[1-9]\d{0,9}$/.test(rawId)) {
 }
 
 const { ctx } = resolved;
-const [post, catsRes, tagsRes, seoAutopilotEnabled] = await Promise.all([
+const [post, catsRes, tagsRes, authorsRes, seoAutopilotEnabled] = await Promise.all([
   getPostById(ctx.tenantDb, Number(rawId), { includeTrashed: true }),
-  listBlogTaxonomies(ctx.tenantDb, { kind: "post_category", limit: 100 }),
+  listBlogTaxonomies(ctx.tenantDb, { kind: "post_category", limit: 100, sortOrder: "asc" }),
   listBlogTaxonomies(ctx.tenantDb, { kind: "post_tag", limit: 100 }),
+  listPostAuthors(ctx.tenantDb, { tenantId: ctx.tenantId, limit: 100 }),
   isSeoAutopilotEnabledForTenant(ctx.tenantDb),
 ]);
 
@@ -62,15 +63,30 @@ if (!post) {
       body: post.body,
       status: post.status,
       featuredMediaId: post.featuredMediaId,
+      authorId: post.authorId,
       primaryCategoryId: post.primaryCategoryId,
       categoryIds: post.categoryIds,
       tagIds: post.tagIds,
       enableToc: post.enableToc,
       seo: post.seo ?? null,
       hasUnpublishedChanges: post.hasUnpublishedChanges,
+      publishedAt: post.publishedAt,
+      contentModifiedAt: post.contentModifiedAt,
       version: post.version,
     }}
-    categories={catsRes.items.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
+    categories={catsRes.items.map((c) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      depth: c.depth,
+      parentId: c.parentId,
+    }))}
     tags={tagsRes.items.map((t) => ({ id: t.id, name: t.name, slug: t.slug }))}
+    authors={authorsRes.map((a) => ({
+      id: a.id,
+      name: a.name,
+      roleTitle: a.roleTitle,
+      bio: a.bio,
+    }))}
   />
 </DashboardLayout>

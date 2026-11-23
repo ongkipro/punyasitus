@@ -1,8 +1,7 @@
 import {
   assertNoForbiddenTenantSelectors,
-  calculateReadingTimeMinutes,
+  buildPublishedSnapshot,
   extractDraftSnapshotForAdmin,
-  extractTocFromSanitizedHtml,
   htmlToRestrictedRichTextDoc,
   PublicationAtomicError,
   PublicationNotFoundError,
@@ -22,6 +21,11 @@ import {
   type RestrictedRichTextDoc,
   type TocHeadingEntry,
 } from "@punyasitus/core/content/index";
+import {
+  calculateLinearReadingTimeMinutes,
+  extractAndInjectServerToc,
+  resolvePublishedContentModifiedAt,
+} from "@punyasitus/core/posts/index";
 import { RestrictedRichTextDocSchema } from "@punyasitus/core/schemas";
 import {
   buildSuffixedSlug,
@@ -43,10 +47,11 @@ import {
   bumpTenantCacheVersion,
   getDraftResourceForAdmin,
   getPublishedResource,
-  publishResourceAtomically,
   unpublishResourceAtomically,
 } from "../publication/index.ts";
 
+export * from "./authors.ts";
+export * from "./migrations.ts";
 export * from "./taxonomies.ts";
 
 /**
@@ -74,6 +79,7 @@ interface RawPostRow {
   readonly status: ResourceLifecycleStatus;
   readonly published_at: number | null;
   readonly content_modified_at: number | null;
+  readonly content_fingerprint?: string | null;
   readonly deleted_at: number | null;
   readonly version: number;
   readonly created_at: number;
@@ -96,10 +102,12 @@ export interface PostRecord {
   readonly categoryIds: readonly number[];
   readonly tagIds: readonly number[];
   readonly authorId: number | null;
+  readonly authorProfileId: number | null;
   readonly authorUserId: string | null;
   readonly authorName: string | null;
   readonly enableToc: boolean;
   readonly showToc: boolean;
+  readonly tocEnabled: boolean;
   readonly seo: PageSeoOverrides | null;
   readonly published: PostSnapshot | null;
   readonly hasUnpublishedChanges: boolean;
@@ -107,6 +115,7 @@ export interface PostRecord {
   readonly version: number;
   readonly publishedAt: string | null;
   readonly contentModifiedAt: string | null;
+  readonly contentFingerprint: string | null;
   readonly deletedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -130,10 +139,12 @@ export interface CreatePostInput {
   readonly categoryIds?: readonly number[];
   readonly tagIds?: readonly number[];
   readonly authorId?: number | null;
+  readonly authorProfileId?: number | null;
   readonly authorUserId?: string | null;
   readonly authorName?: string | null;
   readonly enableToc?: boolean;
   readonly showToc?: boolean;
+  readonly tocEnabled?: boolean;
   readonly seo?: unknown;
   readonly nowMs?: number;
 }
@@ -153,10 +164,12 @@ export interface UpdatePostInput {
   readonly categoryIds?: readonly number[];
   readonly tagIds?: readonly number[];
   readonly authorId?: number | null;
+  readonly authorProfileId?: number | null;
   readonly authorUserId?: string | null;
   readonly authorName?: string | null;
   readonly enableToc?: boolean;
   readonly showToc?: boolean;
+  readonly tocEnabled?: boolean;
   readonly seo?: unknown;
   readonly nowMs?: number;
 }
@@ -182,6 +195,8 @@ export interface PublishPostResult {
   readonly post: PostRecord;
   readonly cacheVersion: number;
   readonly revisionNumber: number | null;
+  readonly substantiveChanged: boolean;
+  readonly contentFingerprint: string;
 }
 
 export interface UnpublishPostInput {
@@ -344,26 +359,61 @@ function resolveCoverMediaIdInput(
 function resolveShowTocInput(
   enableToc: boolean | undefined,
   showToc: boolean | undefined,
+  tocEnabled?: boolean | undefined,
 ): { readonly supplied: boolean; readonly value: boolean } {
-  const hasEnable = enableToc !== undefined;
-  const hasShow = showToc !== undefined;
-  if (hasEnable && typeof enableToc !== "boolean") {
-    throw new PublicationValidationError("enableToc must be a boolean", [
-      { field: "enableToc", code: "INVALID_TYPE", message: "enableToc harus berupa boolean." },
+  const candidates: Array<{ readonly field: string; readonly val: boolean }> = [];
+  if (enableToc !== undefined) {
+    if (typeof enableToc !== "boolean") {
+      throw new PublicationValidationError("enableToc must be a boolean", [
+        { field: "enableToc", code: "INVALID_TYPE", message: "enableToc harus berupa boolean." },
+      ]);
+    }
+    candidates.push({ field: "enableToc", val: enableToc });
+  }
+  if (showToc !== undefined) {
+    if (typeof showToc !== "boolean") {
+      throw new PublicationValidationError("showToc must be a boolean", [
+        { field: "showToc", code: "INVALID_TYPE", message: "showToc harus berupa boolean." },
+      ]);
+    }
+    candidates.push({ field: "showToc", val: showToc });
+  }
+  if (tocEnabled !== undefined) {
+    if (typeof tocEnabled !== "boolean") {
+      throw new PublicationValidationError("tocEnabled must be a boolean", [
+        { field: "tocEnabled", code: "INVALID_TYPE", message: "tocEnabled harus berupa boolean." },
+      ]);
+    }
+    candidates.push({ field: "tocEnabled", val: tocEnabled });
+  }
+  if (candidates.length === 0) return { supplied: false, value: false };
+  const firstVal = candidates[0]!.val;
+  if (candidates.some((c) => c.val !== firstVal)) {
+    throw new PublicationValidationError("enableToc, showToc, and tocEnabled must match when provided", [
+      {
+        field: "tocEnabled",
+        code: "CONFLICTING_FIELDS",
+        message: "enableToc, showToc, dan tocEnabled harus bernilai sama.",
+      },
     ]);
   }
-  if (hasShow && typeof showToc !== "boolean") {
-    throw new PublicationValidationError("showToc must be a boolean", [
-      { field: "showToc", code: "INVALID_TYPE", message: "showToc harus berupa boolean." },
+  return { supplied: true, value: firstVal };
+}
+
+function resolveAuthorIdInput(
+  authorId: number | null | undefined,
+  authorProfileId: number | null | undefined,
+): number | null | undefined {
+  if (authorId !== undefined && authorProfileId !== undefined && authorId !== authorProfileId) {
+    throw new PublicationValidationError("authorId and authorProfileId must match when both are provided", [
+      {
+        field: "authorProfileId",
+        code: "CONFLICTING_FIELDS",
+        message: "authorId dan authorProfileId harus bernilai sama jika keduanya dikirim.",
+      },
     ]);
   }
-  if (hasEnable && hasShow && enableToc !== showToc) {
-    throw new PublicationValidationError("enableToc and showToc must match when both are provided", [
-      { field: "enableToc", code: "CONFLICTING_FIELDS", message: "enableToc dan showToc harus bernilai sama." },
-    ]);
-  }
-  if (!hasEnable && !hasShow) return { supplied: false, value: false };
-  return { supplied: true, value: Boolean(hasEnable ? enableToc : showToc) };
+  return authorId !== undefined ? authorId : authorProfileId;
 }
 
 function validateExcerpt(raw: unknown): string | null {
@@ -408,14 +458,14 @@ function normalizePostBodyInput(params: {
   if (typeof params.bodyHtml === "string") {
     const sanitizedHtml = sanitizeRichTextHtml(params.bodyHtml);
     const derivedBody = htmlToRestrictedRichTextDoc(sanitizedHtml);
-    const readingTimeMinutes = calculateReadingTimeMinutes(sanitizedHtml);
+    const readingTimeMinutes = calculateLinearReadingTimeMinutes(sanitizedHtml);
     return { body: derivedBody, sanitizedHtml, readingTimeMinutes };
   }
 
   if (typeof params.body === "string") {
     const sanitizedHtml = sanitizeRichTextHtml(params.body);
     const derivedBody = htmlToRestrictedRichTextDoc(sanitizedHtml);
-    const readingTimeMinutes = calculateReadingTimeMinutes(sanitizedHtml);
+    const readingTimeMinutes = calculateLinearReadingTimeMinutes(sanitizedHtml);
     return { body: derivedBody, sanitizedHtml, readingTimeMinutes };
   }
 
@@ -431,7 +481,7 @@ function normalizePostBodyInput(params: {
     }
     const cleanBody = sanitizeRichTextDoc(parsed.data);
     const sanitizedHtml = renderRichTextDocToSanitizedHtml(cleanBody);
-    const readingTimeMinutes = calculateReadingTimeMinutes(sanitizedHtml || cleanBody);
+    const readingTimeMinutes = calculateLinearReadingTimeMinutes(sanitizedHtml || cleanBody);
     return { body: cleanBody, sanitizedHtml, readingTimeMinutes };
   }
 
@@ -875,6 +925,9 @@ function mapRowToPostRecord(
   const categoryIds = draft.categoryIds ?? joinTaxonomies.categoryIds;
   const tagIds = draft.tagIds ?? joinTaxonomies.tagIds;
 
+  const anchored = extractAndInjectServerToc(sanitizedHtml);
+  const resolvedAuthorId = draft.authorId ?? null;
+
   return {
     id: Number(row.id),
     slug: draft.slug,
@@ -883,18 +936,20 @@ function mapRowToPostRecord(
     status: row.status,
     body: draft.body,
     sanitizedHtml,
-    toc: showToc ? extractTocFromSanitizedHtml(sanitizedHtml) : [],
+    toc: showToc ? anchored.toc : [],
     readingTimeMinutes: draft.readingTimeMinutes,
     featuredMediaId: coverMediaId,
     coverMediaId,
     primaryCategoryId: draft.primaryCategoryId ?? null,
     categoryIds,
     tagIds,
-    authorId: draft.authorId ?? null,
+    authorId: resolvedAuthorId,
+    authorProfileId: resolvedAuthorId,
     authorUserId: draft.authorUserId ?? null,
     authorName: draft.authorName ?? null,
     enableToc: showToc,
     showToc,
+    tocEnabled: showToc,
     seo: draft.seo ?? null,
     published,
     hasUnpublishedChanges,
@@ -902,6 +957,10 @@ function mapRowToPostRecord(
     version: Number(row.version),
     publishedAt: toIsoOrNull(row.published_at),
     contentModifiedAt: toIsoOrNull(row.content_modified_at),
+    contentFingerprint:
+      typeof row.content_fingerprint === "string" && row.content_fingerprint.trim()
+        ? row.content_fingerprint
+        : null,
     deletedAt: toIsoOrNull(row.deleted_at),
     createdAt: new Date(Number(row.created_at)).toISOString(),
     updatedAt: new Date(Number(row.updated_at)).toISOString(),
@@ -999,6 +1058,19 @@ async function isPostSlugTaken(
   return excludePostId === undefined || Number(existing.id) !== excludePostId;
 }
 
+async function hasPostContentFingerprintColumn(tenantDb: D1Database): Promise<boolean> {
+  try {
+    const res = await tenantDb
+      .prepare(`PRAGMA table_info(posts)`)
+      .all<{ readonly name: string }>();
+    return res.results.some((col) => col.name === "content_fingerprint");
+  } catch {
+    return false;
+  }
+}
+
+const MAX_RETAINED_POST_REVISIONS = 20 as const;
+
 function rewritePublishedPostEnvelopeSlug(
   rawPublishedJson: string | null,
   newSlug: string,
@@ -1059,7 +1131,8 @@ export async function createPost(
   });
   const coverResolution = resolveCoverMediaIdInput(input.featuredMediaId, input.coverMediaId);
   const coverMediaId = coverResolution.value;
-  const showToc = resolveShowTocInput(input.enableToc, input.showToc).value;
+  const showToc = resolveShowTocInput(input.enableToc, input.showToc, input.tocEnabled).value;
+  const resolvedAuthorIdInput = resolveAuthorIdInput(input.authorId, input.authorProfileId);
   const seo = input.seo !== undefined ? validatePageSeoOverrides(input.seo) : null;
 
   const primaryCategoryId =
@@ -1078,7 +1151,7 @@ export async function createPost(
   // Validate same-tenant author, categories, tags, and media references
   const [author, verifiedTaxonomies] = await Promise.all([
     resolveAndValidatePostAuthor(tenantDb, {
-      authorId: input.authorId,
+      authorId: resolvedAuthorIdInput,
       authorUserId: input.authorUserId,
       authorName: input.authorName,
       scope: authorScope,
@@ -1451,8 +1524,9 @@ export async function updatePost(
     ? coverRes.value
     : (currentDraft.coverMediaId ?? null);
 
-  const tocRes = resolveShowTocInput(input.enableToc, input.showToc);
+  const tocRes = resolveShowTocInput(input.enableToc, input.showToc, input.tocEnabled);
   const nextShowToc = tocRes.supplied ? tocRes.value : Boolean(currentDraft.showToc);
+  const resolvedAuthorIdInput = resolveAuthorIdInput(input.authorId, input.authorProfileId);
 
   const nextSeo =
     input.seo !== undefined ? validatePageSeoOverrides(input.seo) : (currentDraft.seo ?? null);
@@ -1482,7 +1556,7 @@ export async function updatePost(
   // Validate same-tenant author, categories, tags, and media
   const [author, verifiedTaxonomies] = await Promise.all([
     resolveAndValidatePostAuthor(tenantDb, {
-      authorId: input.authorId,
+      authorId: resolvedAuthorIdInput,
       authorUserId: input.authorUserId,
       authorName: input.authorName,
       fallbackAuthorId: currentDraft.authorId ?? null,
@@ -1791,15 +1865,16 @@ export async function publishPost(
 
   const taxMap = await fetchPostTaxonomiesBatch(tenantDb, [input.postId]);
   const existingTax = taxMap.get(input.postId) ?? { categoryIds: [], tagIds: [] };
-  const { draft } = extractPostDraftStateFromRow(priorRow, existingTax);
+  const { draft, published: priorPublished } = extractPostDraftStateFromRow(priorRow, existingTax);
 
   // Re-verify all referenced media (strictly `ready` on publish!), taxonomies, and author
-  const [verifiedTaxonomies] = await Promise.all([
+  const [verifiedTaxonomies, supportsFingerprint] = await Promise.all([
     verifyOwnedPostTaxonomies(tenantDb, {
       primaryCategoryId: draft.primaryCategoryId ?? null,
       categoryIds: draft.categoryIds ?? existingTax.categoryIds,
       tagIds: draft.tagIds ?? existingTax.tagIds,
     }),
+    hasPostContentFingerprintColumn(tenantDb),
     verifyOwnedPostMediaIds(
       tenantDb,
       {
@@ -1849,54 +1924,207 @@ export async function publishPost(
       })
     : null;
 
+  const renderedHtml = draft.sanitizedHtml ?? renderRichTextDocToSanitizedHtml(draft.body);
+  const anchoredHtml = extractAndInjectServerToc(renderedHtml).html;
+  const readingTimeMinutes = calculateLinearReadingTimeMinutes(anchoredHtml || draft.body);
+
   const normalizedDraftForPublish: PostSnapshot = {
     ...draft,
-    sanitizedHtml: draft.sanitizedHtml ?? renderRichTextDocToSanitizedHtml(draft.body),
+    sanitizedHtml: anchoredHtml,
+    readingTimeMinutes,
     categoryIds: verifiedTaxonomies.categoryIds,
     tagIds: verifiedTaxonomies.tagIds,
   };
 
-  const published = await publishResourceAtomically(platformDb, tenantDb, {
-    tenantId: input.tenantId,
-    resourceType: "post",
-    resourceId: input.postId,
-    expectedVersion: input.expectedVersion,
-    actorUserId: input.actorUserId,
-    draftOverride: normalizedDraftForPublish,
+  // Normalize legacy prior snapshot HTML identically before fingerprinting so legacy
+  // rows without `content_fingerprint` or heading `id`s never spuriously bump on no-op republish.
+  const priorPublishedForCompare: PostSnapshot | null = priorPublished
+    ? {
+        ...priorPublished,
+        sanitizedHtml:
+          priorPublished.sanitizedHtml && priorPublished.sanitizedHtml.trim().length > 0
+            ? priorPublished.sanitizedHtml
+            : renderRichTextDocToSanitizedHtml(priorPublished.body),
+      }
+    : null;
+
+  // Strict `content_modified_at` discipline (REQ-092):
+  // Only advance `content_modified_at` when substantive published content actually changed.
+  const modDecision = resolvePublishedContentModifiedAt({
+    priorPublished: priorPublishedForCompare,
+    nextPublished: normalizedDraftForPublish,
+    priorContentModifiedAt: priorRow.content_modified_at,
+    priorPublishedAt: priorRow.published_at,
+    priorFingerprint: priorRow.content_fingerprint ?? null,
     nowMs,
   });
 
-  // Sync `resource_slugs` and `post_taxonomies` atomically gated on the exact published `(id, slug, version)`
-  const committedGuardSql =
-    "EXISTS (SELECT 1 FROM posts WHERE id = ? AND slug = ? AND version = ? AND deleted_at IS NULL)";
-  const committedGuardBinds = [input.postId, draft.slug, published.version] as const;
+  const cleanTenantId = input.tenantId.trim();
+  if (!cleanTenantId) {
+    throw new PublicationValidationError("tenantId is required to publish", [
+      { field: "tenantId", code: "REQUIRED", message: "tenantId must be non-empty" },
+    ]);
+  }
 
-  const postPublishStmts: D1PreparedStatement[] = [];
+  const publishedAt = priorRow.published_at ?? nowMs;
+  const envelope = buildPublishedSnapshot("post", normalizedDraftForPublish, {
+    publishedAt,
+    contentModifiedAt: modDecision.contentModifiedAt,
+  });
+  const publishedJson = JSON.stringify(envelope);
+
+  const revRow = await tenantDb
+    .prepare(
+      `SELECT COALESCE(MAX(revision_number), 0) AS max_rev
+       FROM content_revisions
+       WHERE resource_type = 'post' AND resource_id = ?`,
+    )
+    .bind(input.postId)
+    .first<{ readonly max_rev: number }>();
+  const revisionNumber = (revRow?.max_rev ?? 0) + 1;
+
+  // Single atomic TenantStore batch: swap published snapshot with the EXACT disciplined
+  // `content_modified_at` & `content_fingerprint`, record revision snapshot with identical
+  // `contentModifiedAt`, prune revisions to 20, and sync `resource_slugs` & `post_taxonomies`.
+  const committedGuardSql =
+    "EXISTS (SELECT 1 FROM posts WHERE id = ? AND slug = ? AND version = ? AND published_body_json = ? AND deleted_at IS NULL)";
+  const committedGuardBinds = [input.postId, envelope.data.slug, swappedVersion, publishedJson] as const;
+
+  const updatePostStmt = supportsFingerprint
+    ? tenantDb
+        .prepare(
+          `UPDATE posts
+           SET slug = ?,
+               title = ?,
+               excerpt = ?,
+               primary_category_id = ?,
+               author_id = ?,
+               cover_media_id = ?,
+               reading_time_minutes = ?,
+               show_toc = ?,
+               seo_json = ?,
+               published_body_json = ?,
+               status = 'published',
+               published_at = COALESCE(published_at, ?),
+               content_modified_at = ?,
+               content_fingerprint = ?,
+               version = version + 1,
+               updated_at = ?
+           WHERE id = ? AND version = ? AND deleted_at IS NULL`,
+        )
+        .bind(
+          envelope.data.slug,
+          envelope.data.title,
+          envelope.data.excerpt ?? null,
+          envelope.data.primaryCategoryId ?? null,
+          envelope.data.authorId ?? null,
+          envelope.data.coverMediaId ?? null,
+          envelope.data.readingTimeMinutes,
+          envelope.data.showToc ? 1 : 0,
+          envelope.data.seo ? JSON.stringify(envelope.data.seo) : null,
+          publishedJson,
+          envelope.publishedAt,
+          modDecision.contentModifiedAt,
+          modDecision.fingerprint,
+          nowMs,
+          input.postId,
+          input.expectedVersion,
+        )
+    : tenantDb
+        .prepare(
+          `UPDATE posts
+           SET slug = ?,
+               title = ?,
+               excerpt = ?,
+               primary_category_id = ?,
+               author_id = ?,
+               cover_media_id = ?,
+               reading_time_minutes = ?,
+               show_toc = ?,
+               seo_json = ?,
+               published_body_json = ?,
+               status = 'published',
+               published_at = COALESCE(published_at, ?),
+               content_modified_at = ?,
+               version = version + 1,
+               updated_at = ?
+           WHERE id = ? AND version = ? AND deleted_at IS NULL`,
+        )
+        .bind(
+          envelope.data.slug,
+          envelope.data.title,
+          envelope.data.excerpt ?? null,
+          envelope.data.primaryCategoryId ?? null,
+          envelope.data.authorId ?? null,
+          envelope.data.coverMediaId ?? null,
+          envelope.data.readingTimeMinutes,
+          envelope.data.showToc ? 1 : 0,
+          envelope.data.seo ? JSON.stringify(envelope.data.seo) : null,
+          publishedJson,
+          envelope.publishedAt,
+          modDecision.contentModifiedAt,
+          nowMs,
+          input.postId,
+          input.expectedVersion,
+        );
+
+  const atomicBatchStmts: D1PreparedStatement[] = [
+    updatePostStmt,
+    tenantDb
+      .prepare(
+        `INSERT INTO content_revisions (resource_type, resource_id, revision_number, snapshot_json, created_by, created_at)
+         SELECT 'post', ?, ?, ?, ?, ?
+         WHERE ${committedGuardSql}`,
+      )
+      .bind(
+        input.postId,
+        revisionNumber,
+        publishedJson,
+        input.actorUserId ?? null,
+        nowMs,
+        ...committedGuardBinds,
+      ),
+    tenantDb
+      .prepare(
+        `DELETE FROM content_revisions
+         WHERE resource_type = 'post' AND resource_id = ?
+           AND ${committedGuardSql}
+           AND revision_number NOT IN (
+             SELECT revision_number
+             FROM content_revisions
+             WHERE resource_type = 'post' AND resource_id = ?
+             ORDER BY revision_number DESC
+             LIMIT ?
+           )`,
+      )
+      .bind(input.postId, ...committedGuardBinds, input.postId, MAX_RETAINED_POST_REVISIONS),
+  ];
+
   if (slugTransition && slugTransition.statements.length > 0) {
-    postPublishStmts.push(...slugTransition.statements);
+    atomicBatchStmts.push(...slugTransition.statements);
   } else {
-    const existingSlug = await findResourceSlug(tenantDb, "blog", draft.slug);
+    const existingSlug = await findResourceSlug(tenantDb, "blog", envelope.data.slug);
     if (!existingSlug) {
-      postPublishStmts.push(
+      atomicBatchStmts.push(
         tenantDb
           .prepare(
             `INSERT OR IGNORE INTO resource_slugs (namespace, slug, resource_id, is_current, redirect_target_slug, updated_at)
              SELECT 'blog', ?, ?, 1, NULL, ?
              WHERE ${committedGuardSql}`,
           )
-          .bind(draft.slug, input.postId, nowMs, ...committedGuardBinds),
+          .bind(envelope.data.slug, input.postId, nowMs, ...committedGuardBinds),
       );
     }
   }
 
   const allTaxIds = [...verifiedTaxonomies.categoryIds, ...verifiedTaxonomies.tagIds];
-  postPublishStmts.push(
+  atomicBatchStmts.push(
     tenantDb
       .prepare(`DELETE FROM post_taxonomies WHERE post_id = ? AND ${committedGuardSql}`)
       .bind(input.postId, ...committedGuardBinds),
   );
   for (const taxId of allTaxIds) {
-    postPublishStmts.push(
+    atomicBatchStmts.push(
       tenantDb
         .prepare(
           `INSERT INTO post_taxonomies (post_id, taxonomy_id)
@@ -1907,7 +2135,138 @@ export async function publishPost(
     );
   }
 
-  await tenantDb.batch(postPublishStmts);
+  const batchResults = await tenantDb.batch(atomicBatchStmts);
+  if ((batchResults[0]?.meta?.changes ?? 0) !== 1) {
+    const latest = await fetchRawPostRow(tenantDb, input.postId, { includeTrashed: false });
+    if (!latest) {
+      throw new PublicationNotFoundError("post", input.postId);
+    }
+    throw new StaleRevisionError({
+      resourceType: "post",
+      resourceId: input.postId,
+      expectedVersion: input.expectedVersion,
+      actualVersion: Number(latest.version),
+    });
+  }
+
+  // Bump PLATFORM_DB.tenants.cache_version with fail-closed TenantStore compensation
+  let cacheVersion: number;
+  try {
+    cacheVersion = await bumpTenantCacheVersion(platformDb, cleanTenantId, nowMs);
+  } catch (platformError) {
+    let compensated = false;
+    try {
+      const priorTaxIds = [...existingTax.categoryIds, ...existingTax.tagIds];
+      const restoreStmts: D1PreparedStatement[] = [
+        supportsFingerprint
+          ? tenantDb
+              .prepare(
+                `UPDATE posts
+                 SET slug = ?, title = ?, excerpt = ?, primary_category_id = ?,
+                     author_id = ?, cover_media_id = ?, reading_time_minutes = ?,
+                     show_toc = ?, seo_json = ?, published_body_json = ?,
+                     status = ?, published_at = ?, content_modified_at = ?,
+                     content_fingerprint = ?, version = ?, updated_at = ?
+                 WHERE id = ? AND version = ?`,
+              )
+              .bind(
+                priorRow.slug,
+                priorRow.title,
+                priorRow.excerpt,
+                priorRow.primary_category_id,
+                priorRow.author_id,
+                priorRow.cover_media_id,
+                priorRow.reading_time_minutes,
+                priorRow.show_toc,
+                priorRow.seo_json,
+                priorRow.published_body_json,
+                priorRow.status,
+                priorRow.published_at,
+                priorRow.content_modified_at,
+                priorRow.content_fingerprint ?? null,
+                priorRow.version,
+                priorRow.updated_at,
+                input.postId,
+                swappedVersion,
+              )
+          : tenantDb
+              .prepare(
+                `UPDATE posts
+                 SET slug = ?, title = ?, excerpt = ?, primary_category_id = ?,
+                     author_id = ?, cover_media_id = ?, reading_time_minutes = ?,
+                     show_toc = ?, seo_json = ?, published_body_json = ?,
+                     status = ?, published_at = ?, content_modified_at = ?,
+                     version = ?, updated_at = ?
+                 WHERE id = ? AND version = ?`,
+              )
+              .bind(
+                priorRow.slug,
+                priorRow.title,
+                priorRow.excerpt,
+                priorRow.primary_category_id,
+                priorRow.author_id,
+                priorRow.cover_media_id,
+                priorRow.reading_time_minutes,
+                priorRow.show_toc,
+                priorRow.seo_json,
+                priorRow.published_body_json,
+                priorRow.status,
+                priorRow.published_at,
+                priorRow.content_modified_at,
+                priorRow.version,
+                priorRow.updated_at,
+                input.postId,
+                swappedVersion,
+              ),
+        tenantDb
+          .prepare(
+            `DELETE FROM content_revisions
+             WHERE resource_type = 'post' AND resource_id = ? AND revision_number = ?`,
+          )
+          .bind(input.postId, revisionNumber),
+        tenantDb.prepare(`DELETE FROM post_taxonomies WHERE post_id = ?`).bind(input.postId),
+        ...priorTaxIds.map((tid) =>
+          tenantDb
+            .prepare(`INSERT OR IGNORE INTO post_taxonomies (post_id, taxonomy_id) VALUES (?, ?)`)
+            .bind(input.postId, tid),
+        ),
+      ];
+      if (slugChanged) {
+        restoreStmts.push(
+          tenantDb
+            .prepare(
+              `DELETE FROM resource_slugs
+               WHERE namespace = 'blog' AND slug = ? AND resource_id = ? AND is_current = 1`,
+            )
+            .bind(envelope.data.slug, input.postId),
+          tenantDb
+            .prepare(
+              `UPDATE resource_slugs
+               SET is_current = 1, redirect_target_slug = NULL, updated_at = ?
+               WHERE namespace = 'blog' AND slug = ? AND resource_id = ?`,
+            )
+            .bind(priorRow.updated_at, priorRow.slug, input.postId),
+          tenantDb
+            .prepare(
+              `UPDATE resource_slugs
+               SET redirect_target_slug = ?, updated_at = ?
+               WHERE namespace = 'blog' AND resource_id = ? AND is_current = 0`,
+            )
+            .bind(priorRow.slug, priorRow.updated_at, input.postId),
+        );
+      }
+      const restoreRes = await tenantDb.batch(restoreStmts);
+      compensated = (restoreRes[0]?.meta?.changes ?? 0) === 1;
+    } catch {
+      // Compensation failed
+    }
+    throw new PublicationAtomicError(
+      `Failed to complete atomic post publication (cache_version)${
+        compensated ? "; TenantStore rolled back cleanly" : "; TenantStore compensation failed"
+      }`,
+      { compensated, cause: platformError },
+    );
+  }
 
   const post = await getPostById(tenantDb, input.postId);
   if (!post) {
@@ -1915,8 +2274,10 @@ export async function publishPost(
   }
   return {
     post,
-    cacheVersion: published.cacheVersion,
-    revisionNumber: published.revisionNumber,
+    cacheVersion,
+    revisionNumber,
+    substantiveChanged: modDecision.substantiveChanged,
+    contentFingerprint: modDecision.fingerprint,
   };
 }
 

@@ -14,6 +14,7 @@ import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.a
 import Layout from "../../themes/default/Layout.astro";
 import PublicBreadcrumbs from "../layanan/_PublicBreadcrumbs.astro";
 import PublicNotFoundView from "../layanan/_PublicNotFoundView.astro";
+import { resolveBlogDetailPresentation } from "./_post-detail-helpers.ts";
 
 const deps = buildPublicRouteDepsFromAstro(
   Astro.locals,
@@ -30,7 +31,12 @@ if (result.kind === "response") {
 applyPublicRouteResponseMeta(Astro.response, result.http);
 const enriched =
   result.kind === "blog_detail" ? await enrichPublicBlogDetailResult(result, deps) : null;
-const authorProfile = enriched?.authorProfile ?? null;
+const presentation =
+  result.kind === "blog_detail"
+    ? await resolveBlogDetailPresentation(result, enriched, deps)
+    : null;
+
+const authorProfile = presentation?.authorByline ?? null;
 const displayAuthorName =
   authorProfile?.name ?? (result.kind === "blog_detail" ? result.post.authorName ?? "" : "");
 const authorInitials =
@@ -40,12 +46,25 @@ const authorInitials =
     .slice(0, 2)
     .map((part) => part.charAt(0).toUpperCase())
     .join("") || "TR";
-const blogIndexHref = enriched ? enriched.blogIndexHref : result.kind === "blog_detail" && result.shell.site.blogEnabled ? "/blog" : null;
+const blogIndexHref = enriched
+  ? enriched.blogIndexHref
+  : result.kind === "blog_detail" && result.shell.site.blogEnabled
+    ? "/blog"
+    : null;
 const catalogCta = enriched?.catalogCta ?? null;
 const relatedPostsToRender =
   enriched?.validatedRelatedPosts ?? (result.kind === "blog_detail" ? result.relatedPosts : []);
 const linkedCategoryNames = new Set((enriched?.categoryLinks ?? []).map((c) => c.name));
 const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
+const showToc = presentation?.showToc ?? false;
+const tocEntries = presentation?.toc ?? [];
+const readingTimeMinutes =
+  presentation?.readingTimeMinutes ??
+  (result.kind === "blog_detail" ? result.post.readingTimeMinutes : 1);
+const renderedSchemaGraph =
+  presentation?.schemaGraph ?? enriched?.head.schemaGraph ?? (result.kind === "blog_detail" ? result.schemaGraph : null);
+const breadcrumbsToRender =
+  presentation?.breadcrumbs ?? (result.kind === "blog_detail" ? result.breadcrumbs : []);
 ---
 
 {result.kind === "not_found" ? (
@@ -62,7 +81,7 @@ const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
     <PublicSeoHead
       slot="head"
       metadata={enriched?.head.metadata ?? result.seoMetadata}
-      schemaGraph={enriched?.head.schemaGraph ?? result.schemaGraph}
+      schemaGraph={renderedSchemaGraph}
       seoAutopilotEnabled={enriched?.head.seoAutopilotEnabled ?? false}
       publishedVerificationTokens={enriched?.head.publishedVerificationTokens ?? null}
       blogEnabled={enriched?.head.blogEnabled ?? result.shell.site.blogEnabled}
@@ -74,12 +93,19 @@ const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
     <article class="ps-article-shell" data-testid="blog-detail-article" data-post-slug={result.post.slug}>
       <div class="ps-container">
         <header class="ps-article-header">
-          <PublicBreadcrumbs items={result.breadcrumbs} />
+          <PublicBreadcrumbs items={breadcrumbsToRender} />
 
           {enriched && enriched.categoryLinks.length > 0 ? (
             <div class="ps-offering-badges" data-testid="blog-category-links">
               {enriched.categoryLinks.map((cat) => (
-                <a href={cat.href} class="ps-badge ps-badge--link">
+                <a
+                  href={cat.href}
+                  class:list={[
+                    "ps-badge ps-badge--link ps-t092-chip",
+                    presentation?.primaryCategoryLink?.href === cat.href && "ps-t092-chip--primary",
+                  ]}
+                  data-primary-category={presentation?.primaryCategoryLink?.href === cat.href ? "true" : undefined}
+                >
                   {cat.name}
                 </a>
               ))}
@@ -104,23 +130,31 @@ const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
           {result.post.excerpt && <p class="ps-route-lead">{result.post.excerpt}</p>}
 
           <div class="ps-article-meta" data-testid="blog-detail-meta">
-            {(authorProfile?.name ?? result.post.authorName) && (
-              <span>
-                Oleh <strong>{authorProfile?.name ?? result.post.authorName}</strong>
+            {displayAuthorName && (
+              <span class="ps-t092-byline-inline" data-testid="blog-detail-byline">
+                Oleh <strong>{displayAuthorName}</strong>
+                {authorProfile?.roleTitle && (
+                  <span class="ps-t092-byline-role"> — {authorProfile.roleTitle}</span>
+                )}
               </span>
             )}
             {result.post.publishedDateLabel && (
-              <time datetime={result.post.publishedAtIso ?? undefined}>
+              <time
+                datetime={result.post.publishedAtIso ?? undefined}
+                data-testid="blog-published-date"
+              >
                 Diterbitkan {result.post.publishedDateLabel}
               </time>
             )}
-            {result.post.modifiedDateLabel &&
-              result.post.modifiedDateLabel !== result.post.publishedDateLabel && (
-                <time datetime={result.post.modifiedAtIso ?? undefined}>
-                  Diperbarui {result.post.modifiedDateLabel}
-                </time>
-              )}
-            <span>{result.post.readingTimeMinutes} menit baca</span>
+            {presentation?.showUpdatedDate && result.post.modifiedDateLabel && (
+              <time
+                datetime={result.post.modifiedAtIso ?? undefined}
+                data-testid="blog-modified-date"
+              >
+                Diperbarui {result.post.modifiedDateLabel}
+              </time>
+            )}
+            <span data-testid="blog-reading-time">{readingTimeMinutes} menit baca</span>
           </div>
         </header>
 
@@ -140,20 +174,20 @@ const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
         <div
           class:list={[
             "ps-article-layout",
-            (enriched?.showToc ?? result.post.showToc) && "ps-article-layout--with-toc",
+            showToc && "ps-article-layout--with-toc",
           ]}
         >
           <div>
             <div
               class="ps-prose"
               data-testid="blog-detail-body"
-              set:html={enriched?.sanitizedHtmlWithAnchors ?? result.post.sanitizedHtml}
+              set:html={presentation?.sanitizedHtmlWithAnchors ?? result.post.sanitizedHtml}
             />
 
             {enriched && enriched.tagLinks.length > 0 ? (
               <div class="ps-tags-row" aria-label="Tag artikel" data-testid="blog-tag-links">
                 {enriched.tagLinks.map((tag) => (
-                  <a href={tag.href} class="ps-badge ps-badge--link">
+                  <a href={tag.href} class="ps-badge ps-badge--link ps-t092-chip">
                     #{tag.name}
                   </a>
                 ))}
@@ -173,7 +207,7 @@ const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
               )
             )}
 
-            {(authorProfile?.name ?? result.post.authorName) && (
+            {displayAuthorName && (
               <aside class="ps-author-box" aria-label="Tentang penulis" data-testid="blog-author-box">
                 <div class="ps-author-box__row">
                   {authorProfile?.avatar ? (
@@ -193,13 +227,18 @@ const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
                   )}
                   <div class="ps-author-box__body">
                     <p class="ps-author-name" data-testid="blog-author-name">
-                      {authorProfile?.name ?? result.post.authorName}
+                      {displayAuthorName}
                     </p>
-                    <p class="ps-author-bio" data-testid="blog-author-bio">
-                      {authorProfile?.bio ??
-                        result.post.authorBio ??
-                        `Tim redaksi dan pengelola informasi resmi ${result.shell.business.name}.`}
-                    </p>
+                    {authorProfile?.roleTitle && (
+                      <p class="ps-t092-author-role" data-testid="blog-author-role">
+                        {authorProfile.roleTitle}
+                      </p>
+                    )}
+                    {authorProfile?.bio && (
+                      <p class="ps-author-bio" data-testid="blog-author-bio">
+                        {authorProfile.bio}
+                      </p>
+                    )}
                     {authorProfile && authorProfile.sameAs.length > 0 && (
                       <ul class="ps-author-links" aria-label="Tautan profil penulis" data-testid="blog-author-links">
                         {authorProfile.sameAs.map((href) => (
@@ -208,7 +247,7 @@ const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
                               href={href}
                               target="_blank"
                               rel="noopener noreferrer"
-                              class="ps-author-sameas-link"
+                              class="ps-author-sameas-link ps-t092-touch-link"
                             >
                               {formatAuthorSameAsLabel(href)}
                             </a>
@@ -237,13 +276,13 @@ const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
             )}
           </div>
 
-          {(enriched?.showToc ?? result.post.showToc) && (
-            <nav class="ps-toc" aria-label="Daftar isi" data-testid="blog-detail-toc">
+          {showToc && (
+            <nav class="ps-toc ps-t092-toc" aria-label="Daftar Isi" data-testid="blog-detail-toc">
               <h2 class="ps-toc-heading">Daftar Isi</h2>
               <ol class="ps-toc-list">
-                {(enriched?.toc ?? result.post.toc).map((entry) => (
+                {tocEntries.map((entry) => (
                   <li class={`ps-toc-item--h${entry.level}`}>
-                    <a href={`#${entry.id}`} class="ps-toc-link">
+                    <a href={`#${entry.id}`} class="ps-toc-link ps-t092-toc-link">
                       {entry.text}
                     </a>
                   </li>
@@ -316,3 +355,50 @@ const linkedTagNames = new Set((enriched?.tagLinks ?? []).map((t) => t.name));
     )}
   </Layout>
 )}
+
+<style>
+  .ps-t092-byline-role {
+    color: var(--ps-muted, #4b5563);
+    font-weight: 400;
+  }
+
+  .ps-t092-author-role {
+    margin: 0.125rem 0 0.5rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    color: var(--ps-primary, #176b51);
+  }
+
+  .ps-t092-chip--primary {
+    border-color: var(--ps-primary, #176b51);
+    font-weight: 600;
+  }
+
+  .ps-t092-toc-link {
+    display: flex;
+    align-items: center;
+    min-height: 44px;
+    padding-block: 0.375rem;
+    line-height: 1.4;
+  }
+
+  .ps-t092-chip,
+  .ps-t092-touch-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding-inline: 0.75rem;
+  }
+
+  @media (min-width: 768px) {
+    .ps-t092-toc-link {
+      min-height: 32px;
+      padding-block: 0.25rem;
+    }
+
+    .ps-t092-chip,
+    .ps-t092-touch-link {
+      min-height: 32px;
+    }
+  }
+</style>
