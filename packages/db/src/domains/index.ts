@@ -1,0 +1,31 @@
+export {
+  DOMAIN_METADATA_SCHEMA_SQL,
+  ensureDomainMetadataSchema,
+} from "./schema.ts";
+
+export {
+  DEFAULT_DOMAIN_RECHECK_RATE_LIMIT,
+  STALE_HOSTNAME_REAPER_THRESHOLD_MS,
+  beginDomainRemoval,
+  claimTenantCustomHostname,
+  consumeDomainRecheckRateLimit,
+  finalizeDomainRemoval,
+  getTenantDomainBySelector,
+  listActiveCustomHostnamesForRenewalWatch,
+  listStaleCustomHostnamesForReaper,
+  listTenantDomains,
+  promoteDomainToPrimary,
+  recordRenewalWatchAlert,
+  serializeSanitizedProviderSnapshot,
+  syncDomainProviderState,
+  type ActiveCustomDomainWatchCandidate,
+  type BeginDomainRemovalInput,
+  type ClaimTenantCustomHostnameInput,
+  type ClaimTenantCustomHostnameResult,
+  type DomainRecheckRateLimitPolicy,
+  type PromoteDomainToPrimaryInput,
+  type StaleHostnameReaperCandidate,
+  type SyncDomainProviderStateInput,
+  type TenantDomainListResult,
+  type TenantDomainRecord,
+} from "./repository.ts";

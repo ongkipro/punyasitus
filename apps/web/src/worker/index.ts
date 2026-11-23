@@ -5,8 +5,15 @@ import {
   DAILY_PLATFORM_BACKUP_TOPIC,
   createDailyBackupQueueHandler,
 } from "../../../../scripts/backup-restore/index.ts";
-import { dispatchScheduledCron } from "./cron/index.ts";
+import {
+  DEFAULT_CRON_JOB_DEFINITIONS,
+  dispatchScheduledCron,
+} from "./cron/index.ts";
 import type { JobQueuePayload, PunyasitusEnv } from "./env.d.ts";
+import {
+  DOMAIN_CRON_JOB_DEFINITIONS,
+  createDomainJobRegistry,
+} from "./queues/domains/index.ts";
 import { EMAIL_DELIVERY_TOPIC, createEmailQueueHandler } from "./queues/email/handler.ts";
 import { processDurableQueueBatch, type DurableJobRegistry } from "./queues/index.ts";
 import {
@@ -25,6 +32,7 @@ type AstroCtx = Parameters<typeof handle>[2];
 const WORKER_JOB_REGISTRY: DurableJobRegistry = {
   ...createRetentionJobRegistry(),
   ...createMediaJobRegistry(),
+  ...createDomainJobRegistry(),
   [EMAIL_DELIVERY_TOPIC]: createEmailQueueHandler({
     onOwnerSuppressionNotice(event) {
       console.warn(
@@ -68,7 +76,10 @@ export default {
   },
 
   async scheduled(controller: ScheduledController, env: PunyasitusEnv): Promise<void> {
-    await dispatchScheduledCron(controller, env);
+    await dispatchScheduledCron(controller, env, [
+      ...DEFAULT_CRON_JOB_DEFINITIONS,
+      ...DOMAIN_CRON_JOB_DEFINITIONS,
+    ]);
     await sweepAllTenantsExpiredQuarantine(env, { nowMs: controller.scheduledTime });
   },
 };
