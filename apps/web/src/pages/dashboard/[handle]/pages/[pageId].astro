@@ -1,0 +1,59 @@
+---
+import { getPageById } from "@punyasitus/db/pages/index";
+import {
+  neutralAdminNotFoundResponse,
+  resolveCmsAdminServerContext,
+} from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { PageEditorClient } from "./_PageEditorClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const rawId = (Astro.params.pageId ?? "").trim();
+if (!/^[1-9]\d{0,9}$/.test(rawId)) {
+  return neutralAdminNotFoundResponse();
+}
+
+const { ctx } = resolved;
+const page = await getPageById(ctx.tenantDb, Number(rawId), { includeTrashed: true });
+if (!page) {
+  return neutralAdminNotFoundResponse();
+}
+---
+
+<DashboardLayout
+  title={`Edit ${page.title} — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="pages"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <PageEditorClient
+    client:only="react"
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialPage={{
+      id: page.id,
+      title: page.title,
+      slug: page.slug,
+      status: page.status,
+      isHomepage: page.isHomepage,
+      layoutMode: page.layoutMode,
+      sections: page.sections,
+      hasUnpublishedChanges: page.hasUnpublishedChanges,
+      version: page.version,
+    }}
+  />
+</DashboardLayout>

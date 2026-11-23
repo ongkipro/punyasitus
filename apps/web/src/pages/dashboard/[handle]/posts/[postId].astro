@@ -1,0 +1,70 @@
+---
+import { getPostById, listBlogTaxonomies } from "@punyasitus/db/posts/index";
+import {
+  neutralAdminNotFoundResponse,
+  resolveCmsAdminServerContext,
+} from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { PostEditorClient } from "./_PostEditorClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const rawId = (Astro.params.postId ?? "").trim();
+if (!/^[1-9]\d{0,9}$/.test(rawId)) {
+  return neutralAdminNotFoundResponse();
+}
+
+const { ctx } = resolved;
+const [post, catsRes, tagsRes] = await Promise.all([
+  getPostById(ctx.tenantDb, Number(rawId), { includeTrashed: true }),
+  listBlogTaxonomies(ctx.tenantDb, { kind: "post_category", limit: 100 }),
+  listBlogTaxonomies(ctx.tenantDb, { kind: "post_tag", limit: 100 }),
+]);
+
+if (!post) {
+  return neutralAdminNotFoundResponse();
+}
+---
+
+<DashboardLayout
+  title={`Edit ${post.title} — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="articles"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <PostEditorClient
+    client:only="react"
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialPost={{
+      id: post.id,
+      title: post.title,
+      slug: post.slug,
+      excerpt: post.excerpt ?? "",
+      body: post.body,
+      status: post.status,
+      featuredMediaId: post.featuredMediaId,
+      primaryCategoryId: post.primaryCategoryId,
+      categoryIds: post.categoryIds,
+      tagIds: post.tagIds,
+      enableToc: post.enableToc,
+      hasUnpublishedChanges: post.hasUnpublishedChanges,
+      version: post.version,
+    }}
+    categories={catsRes.items.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
+    tags={tagsRes.items.map((t) => ({ id: t.id, name: t.name, slug: t.slug }))}
+  />
+</DashboardLayout>

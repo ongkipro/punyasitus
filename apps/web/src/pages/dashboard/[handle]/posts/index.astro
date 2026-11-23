@@ -1,0 +1,58 @@
+---
+import { listBlogTaxonomies, listPosts } from "@punyasitus/db/posts/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { PostsListClient, type PostListItemDto } from "./_PostsListClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const [postsRes, catsRes, tagsRes] = await Promise.all([
+  listPosts(ctx.tenantDb, { status: "all", limit: 20, sortOrder: "desc" }),
+  listBlogTaxonomies(ctx.tenantDb, { kind: "post_category", limit: 100 }),
+  listBlogTaxonomies(ctx.tenantDb, { kind: "post_tag", limit: 100 }),
+]);
+
+const initialItems: PostListItemDto[] = postsRes.items.map((p) => ({
+  id: p.id,
+  slug: p.slug,
+  title: p.title,
+  excerpt: p.excerpt,
+  status: p.status,
+  readingTimeMinutes: p.readingTimeMinutes,
+  hasUnpublishedChanges: p.hasUnpublishedChanges,
+  version: p.version,
+  updatedAt: p.updatedAt,
+}));
+---
+
+<DashboardLayout
+  title={`Artikel — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="articles"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <PostsListClient
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialItems={initialItems}
+    initialNextCursor={postsRes.page.nextCursor}
+    initialHasMore={postsRes.page.hasMore}
+    categories={catsRes.items.map((c) => ({ id: c.id, name: c.name, slug: c.slug }))}
+    tags={tagsRes.items.map((t) => ({ id: t.id, name: t.name, slug: t.slug }))}
+  />
+</DashboardLayout>

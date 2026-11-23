@@ -1,0 +1,46 @@
+---
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { PageEditorClient } from "./_PageEditorClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+---
+
+<DashboardLayout
+  title={`Halaman Baru — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="pages"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <PageEditorClient
+    client:only="react"
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialPage={{
+      id: null,
+      title: "",
+      slug: "",
+      status: "draft",
+      isHomepage: false,
+      layoutMode: "standard",
+      sections: [],
+      hasUnpublishedChanges: true,
+      version: 0,
+    }}
+  />
+</DashboardLayout>

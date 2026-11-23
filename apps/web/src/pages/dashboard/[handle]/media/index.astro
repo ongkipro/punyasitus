@@ -1,0 +1,73 @@
+---
+import { listMediaItems } from "@punyasitus/db/media/index";
+import { getStorageUsageSnapshot } from "@punyasitus/db/storage-usage/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import { MediaLibraryManager, type MediaLibraryItemDto } from "@/components/admin/media";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+
+const [listed, storage] = await Promise.all([
+  listMediaItems(ctx.tenantDb, { limit: 24, includeTrashed: false }),
+  getStorageUsageSnapshot(ctx.tenantDb, { tenantStatus: ctx.permissions.tenantStatus }),
+]);
+
+const initialItems: MediaLibraryItemDto[] = listed.items.map((item) => ({
+  id: item.id,
+  kind: item.kind,
+  status: item.status,
+  alt: item.altText,
+  normalizedBytes: item.bytes,
+  width: item.width,
+  height: item.height,
+  publicUrl:
+    item.status === "ready" &&
+    item.dbStatus === "ready" &&
+    item.deletedAt === null &&
+    item.r2Key.includes("/media/") &&
+    !item.r2Key.includes("/quarantine/")
+      ? `${ctx.mediaPublicBaseUrl}/${item.r2Key}`
+      : null,
+  version: item.version,
+  createdAt: new Date(item.createdAt).toISOString(),
+}));
+---
+
+<DashboardLayout
+  title={`Pustaka Media — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="media"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <MediaLibraryManager
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialItems={initialItems}
+    initialNextCursor={listed.nextCursor}
+    initialHasMore={listed.hasMore}
+    initialStorage={{
+      usedBytes: storage.usedBytes,
+      reservedBytes: storage.reservedBytes,
+      quotaBytes: storage.quotaBytes,
+      availableBytes: storage.availableBytes,
+      percentUsed: storage.percentUsed,
+      warningAt80: storage.warningAt80,
+    }}
+  />
+</DashboardLayout>

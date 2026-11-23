@@ -1,0 +1,58 @@
+---
+import { listCatalogOfferings } from "@punyasitus/db/catalog/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { CatalogListClient, type CatalogListItemDto } from "./_CatalogListClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const result = await listCatalogOfferings(ctx.tenantDb, { limit: 20 });
+
+const initialItems: CatalogListItemDto[] = result.items.map((item) => ({
+  id: item.id,
+  offeringType: item.offeringType,
+  slug: item.slug,
+  publicPath: item.publicPath,
+  title: item.title,
+  status: item.status,
+  priceMode: item.priceMode,
+  price: item.price,
+  priceMax: item.priceMax,
+  negotiable: item.negotiable,
+  ctaMode: item.ctaMode,
+  unitStatus: item.unitStatus,
+  version: item.version,
+  updatedAt: item.updatedAt,
+}));
+---
+
+<DashboardLayout
+  title={`Katalog ${ctx.offeringLabel} — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="offering"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <CatalogListClient
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    offeringLabel={ctx.offeringLabel}
+    permissions={ctx.permissions}
+    initialItems={initialItems}
+    initialNextCursor={result.page.nextCursor}
+    initialHasMore={result.page.hasMore}
+  />
+</DashboardLayout>

@@ -1,0 +1,78 @@
+---
+import {
+  createEmptyTenantMenu,
+  getTenantMenuByLocation,
+} from "@punyasitus/db/menus/index";
+import { listPages } from "@punyasitus/db/pages/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { MenusManagerClient, type MenuLocationStateDto } from "./_MenusManagerClient";
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+const { ctx } = resolved;
+const [headerMenu, footerMenu, mobileMenu, pagesRes] = await Promise.all([
+  getTenantMenuByLocation(ctx.tenantDb, "header"),
+  getTenantMenuByLocation(ctx.tenantDb, "footer"),
+  getTenantMenuByLocation(ctx.tenantDb, "mobile"),
+  listPages(ctx.tenantDb, { status: "all", limit: 100 }),
+]);
+
+function mapMenuState(
+  loc: "header" | "footer" | "mobile",
+  raw: Awaited<ReturnType<typeof getTenantMenuByLocation>>,
+): MenuLocationStateDto {
+  const m = raw ?? createEmptyTenantMenu(loc);
+  return {
+    location: loc,
+    flatItems: m.flatItems.map((it) => ({
+      id: it.id,
+      parentId: it.parentId,
+      label: it.label,
+      href: it.href,
+      openInNewTab: it.openInNewTab,
+      targetType: it.targetType,
+      targetResourceId: it.targetResourceId,
+    })),
+    version: m.version,
+  };
+}
+---
+
+<DashboardLayout
+  title={`Menu Navigasi — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="settings"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <MenusManagerClient
+    client:load
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    initialMenus={{
+      header: mapMenuState("header", headerMenu),
+      footer: mapMenuState("footer", footerMenu),
+      mobile: mapMenuState("mobile", mobileMenu),
+    }}
+    pageOptions={pagesRes.items
+      .filter((p) => p.status !== "trashed")
+      .map((p) => ({
+        id: p.id,
+        title: p.title,
+        href: p.isHomepage ? "/" : `/${p.slug}`,
+      }))}
+  />
+</DashboardLayout>
