@@ -111,3 +111,28 @@ Record only durable implementation changes, validation evidence, and gotchas tha
   - `TASK-033` (`1934977`): CMS admin screens & media workflows (TipTap MIT `3.35.0`, client-only `RestrictedRichTextEditor`, browser canvas AVIF->WebP/PNG & <=2560px processor, Pages/Posts/Catalog/Menus/Media/Identity screens, RBAC/lifecycle gates).
   - `TASK-022` (`e307b62`): Consent-aware analytics signal dispatcher (official GA4 `gtag`/Meta `fbq`/TikTok `ttq` shims, zero tags before consent, PRG same-session submit marker, non-retroactive consent).
   - `TASK-087` (`5052983`): Platform marketing surface (`punyasitus.com`), 6 synthetic read-only `noindex` demo tenants, `platform/0008_marketing_funnel.sql`, live `platform_settings` pricing, `www -> 308 apex`, cookieless zero-PII funnel intake & `/console/funnel`.
+
+
+## 2026-11-23 — Wave 5 Batch B (15 Tasks Landed: 67/110 Total, 78.8% M1) & Safe-Pause Checkpoint
+
+- All 15 tasks built in isolated linked worktrees (`/home/fantastico/Projects/.wt/punyasitus-tXXX`), visually inspected on `360px`/`1440px` Playwright renders for UI tasks, independently cross-family reviewed by `pi-claude-sonnet-5-5` (`ai-ask pi`) to `VERDICT: APPROVE`, verified in `delivery-ledger` (`spec-check`, `lint-typecheck`, `build-dry-run`, `unit-integration` + task E2E), merged to `main` (67/67 unit test files PASS, 0 typecheck errors), checkpointed, and pushed to `origin/main` (`eabd067`).
+- **Wave 5 Batch B (22/39 Wave 5 landed):**
+  - `TASK-108` (`6ae2778`): Free SVG/PNG QR codes for website, pages, and offerings.
+  - `TASK-042` (`dd87474`): Theme library, compatibility preview, and activation workflow.
+  - `TASK-039` (`6f96e96`): Custom domain connect, primary switch, and safe removal UI.
+  - `TASK-106` (`91d77ab`): Platform status surface (`apps/status/**`), incident banner, `platform/0007_platform_incidents.sql`, and staged release workflow.
+  - `TASK-041` (`d4b1fbb`): Blog categories, tags, catalog taxonomies, 6 public archives, `tenant/0008_taxonomy_archive_settings.sql`, and O(1) `json_each(?)` bulk delete.
+  - `TASK-104` (`15c076c`): Indonesian Help Center (`punyasitus.com/bantuan`, 26 articles), marketing-only `/bantuan` rewrite in `middleware/index.ts` + `core/tenant.ts`, and in-dashboard help links.
+  - `TASK-060` (`0f3474b`): Short video upload, validation, and delivery (`tenant/0006_short_video_pipeline.sql`), pure-JS MP4 fast-start/metadata-strip, `createVideoJobRegistry()` wired in `apps/web/src/worker/index.ts`, fail-fast `VIDEO_TRANSCODER_UNAVAILABLE`.
+  - `TASK-070` (`ba9dad1`): Domain & business email guidance screens.
+  - `TASK-097` (`bc41b3f`): Frozen-core modular plugin runtime, `plg_*` `TenantStore` isolation & 5-slot dispatcher (`platform/0011_plugin_runtime_entitlements.sql`, `tenant/0004_plugin_migrations_ledger.sql`), hardened recursive `sql-guard.ts` (CTE/parenthesized/comma-join/bare `IN` defenses), `createPluginJobRegistry()` wired in `worker/index.ts`, `builtin:*` exclusion.
+  - `TASK-040` (`b4522ae`): Grouped admin settings & public defaults (`tenant/0005_site_settings_grouped.sql`), chained `changes()=1` atomic draft/publish/compensate, live navigation filtering in `public-data.ts`.
+  - `TASK-044` (`5c170c3`): Content trash, recovery, and 30-day purge worker (`createContentPurgeJobRegistry()` + `CONTENT_PURGE_CRON_JOB_DEFINITIONS` wired in `worker/index.ts`), atomic `json_tree` protected-ref and slug-occupancy guards.
+  - `TASK-068` (`58d1c27`): Locked-tenant retention, owner-only leads CSV export (`/leads/export.csv` delegated to `/leads/export`), and `DEC-022` offboarding (`platform/0017_tenant_offboarding.sql`, real `TenantStore.purgeAll()` DO RPC, `createOffboardingJobRegistry()` + `OFFBOARDING_CRON_JOB_DEFINITIONS` wired in `worker/index.ts`, `deletion-warning` email template).
+  - `TASK-046` (`63abe13`): Superadmin tenant directory & scoped operations (bare neutral 404 on non-console hosts, SHA-256 `requestHash` state-transition idempotency, active-theme revoke `409` + fail-closed `503`).
+  - `TASK-091` (`5c53991`): Structured business profile, Schema.org subtype mapping & auto-derived brand assets (`tenant/0011_business_profile_structured.sql`, `apps/web/src/worker/queues/media/brand-assets.ts`).
+  - `TASK-061` (`eabd067`): Custom theme service page, packages & requests (`platform/0016_custom_theme_service.sql`, `custom-theme-request-operator-notice` email template merged additively alongside `deletion-warning`, `/dashboard/[handle]/appearance/themes/custom` & `/console/custom-themes`).
+- **Migration Sequence & Handoff Notes for Resume:**
+  - Occupied `packages/db/migrations/platform/`: `0001..0011`, `0016`, `0017` → next available: **`0018_...sql`**.
+  - Occupied `packages/db/migrations/tenant/`: `0001..0006`, `0008`, `0011` → next available: **`0012_...sql`**.
+  - `TASK-063` (Wave 6 M1 Integration Gate) owns central `TENANT_MIGRATIONS` registration + `tests/task-001` checksum update + `TASK-003` metadata tables + `<AnalyticsHead />` in `Layout.astro` + staging/prod `APP_ENV` override.
