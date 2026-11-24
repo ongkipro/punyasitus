@@ -1,13 +1,16 @@
 ---
 import { env } from "cloudflare:workers";
+import type { VehicleShowroomAttributes } from "@punyasitus/core/catalog/vehicle";
+import { createTenantDb, openTenantStoreStub } from "@punyasitus/db/connections";
 import { enrichPublicOfferingListingResult } from "../../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
   resolveOfferingListingRoute,
 } from "../../core/public-routes.ts";
-import OfferingListingView from "../layanan/_OfferingListingView.astro";
+import { loadFrozenPublishedVehicleMapBySlugs } from "../dashboard/[handle]/catalog/vehicles/_api-handler.ts";
 import PublicNotFoundView from "../layanan/_PublicNotFoundView.astro";
+import VehicleShowroomListingView from "./_VehicleShowroomListingView.astro";
 
 const deps = buildPublicRouteDepsFromAstro(
   Astro.locals,
@@ -26,10 +29,32 @@ const enriched =
   result.kind === "offering_listing"
     ? await enrichPublicOfferingListingResult(result, deps)
     : null;
+
+let publishedVehicleMap: Map<string, VehicleShowroomAttributes> | null = null;
+if (result.kind === "offering_listing" && result.items.length > 0) {
+  const tenantDb =
+    deps.tenantDb ??
+    (deps.tenantStore
+      ? createTenantDb(openTenantStoreStub(deps.tenantStore, result.tenant.id))
+      : null);
+  if (tenantDb) {
+    publishedVehicleMap = await loadFrozenPublishedVehicleMapBySlugs(
+      tenantDb,
+      result.items.map((item) => item.slug),
+    );
+  }
+}
+
+const hideSoldInGrids = Astro.url.searchParams.get("hide_sold") === "1";
 ---
 
 {result.kind === "not_found" ? (
   <PublicNotFoundView result={result} />
 ) : (
-  <OfferingListingView result={result} headProps={enriched?.head ?? null} />
+  <VehicleShowroomListingView
+    result={result}
+    headProps={enriched?.head ?? null}
+    vehicleShowroomMap={publishedVehicleMap}
+    hideSoldInGrids={hideSoldInGrids}
+  />
 )}

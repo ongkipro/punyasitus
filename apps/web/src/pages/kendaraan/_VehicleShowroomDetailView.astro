@@ -1,0 +1,703 @@
+---
+import "../../themes/default/sections/sections.css";
+import "../layanan/_public-pages.css";
+import {
+  buildGatedVehicleCreditEstimateTable,
+  buildVehicleInquiryWhatsAppHref,
+  formatVehicleDateOnlyIndonesian,
+  formatVehicleMileageKm,
+  formatVehiclePriceLabel,
+  normalizeVehicleDisplayModel,
+  toCatalogVehiclePricing,
+  VEHICLE_BODY_TYPE_LABELS,
+  VEHICLE_CATEGORY_LABELS,
+  VEHICLE_CONDITION_LABELS,
+  VEHICLE_FUEL_LABELS,
+  VEHICLE_TRANSMISSION_LABELS,
+  VEHICLE_UNIT_STATUS_BADGE_LABELS,
+  type PartialVehicleDisplayModel,
+  type VehicleShowroomAttributes,
+  type VehicleShowroomUnitStatus,
+} from "@punyasitus/core/catalog/vehicle";
+import {
+  generateSchemaGraph,
+  type SchemaGraphDocument,
+  type SchemaNode,
+} from "@punyasitus/core/schema-generator";
+import PublicSeoHead from "../../components/seo/PublicSeoHead.astro";
+import type {
+  PublicSeoHeadProps,
+  PublishedTaxonomyChipLink,
+} from "../../components/seo/public-seo-context.ts";
+import type { PublicOfferingDetailRenderResult } from "../../core/public-routes.ts";
+import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.astro";
+import Layout from "../../themes/default/Layout.astro";
+import PublicBreadcrumbs from "../layanan/_PublicBreadcrumbs.astro";
+
+export interface Props {
+  readonly result: PublicOfferingDetailRenderResult;
+  readonly headProps?: PublicSeoHeadProps | null;
+  readonly categoryLinks?: readonly PublishedTaxonomyChipLink[];
+  readonly sanitizedDescriptionHtml?: string | null;
+  readonly vehicleShowroom?: VehicleShowroomAttributes | null;
+}
+
+const {
+  result,
+  headProps = null,
+  categoryLinks = [],
+  sanitizedDescriptionHtml = null,
+  vehicleShowroom = null,
+} = Astro.props;
+
+const { descriptor, offering, relatedOfferings } = result;
+const effectiveDescriptionHtml = sanitizedDescriptionHtml ?? offering.descriptionHtml;
+const linkedCategoryNames = new Set(categoryLinks.map((c) => c.name));
+
+const displayModel: PartialVehicleDisplayModel = normalizeVehicleDisplayModel(
+  vehicleShowroom ?? offering.vehicleAttributes,
+  {
+    priceMode: offering.priceMode,
+    negotiable: offering.negotiable,
+    unitStatus: offering.unitStatus,
+  },
+);
+
+const effectiveUnitStatus: VehicleShowroomUnitStatus =
+  vehicleShowroom?.unitStatus ?? offering.unitStatus ?? displayModel.unitStatus;
+const statusBadgeLabel = VEHICLE_UNIT_STATUS_BADGE_LABELS[effectiveUnitStatus];
+
+const sidebarPriceText = vehicleShowroom
+  ? formatVehiclePriceLabel({
+      priceModel: vehicleShowroom.priceModel,
+      priceIdr: vehicleShowroom.priceIdr,
+      minPriceIdr: vehicleShowroom.minPriceIdr,
+      maxPriceIdr: vehicleShowroom.maxPriceIdr,
+      negotiable: vehicleShowroom.negotiable,
+    })
+  : offering.priceText;
+
+// Pure server-rendered BigInt round_half_up static credit table:
+// STRICTLY GATED to publicationStatus === "published" && unitStatus === "available" && priceModel === "fixed" && enabled === true!
+const creditTable = buildGatedVehicleCreditEstimateTable({
+  publicationStatus: "published",
+  unitStatus: effectiveUnitStatus,
+  priceModel: displayModel.priceModel,
+  priceIdr: displayModel.priceIdr,
+  creditEstimate: displayModel.creditEstimate,
+});
+
+const directWaHref =
+  buildVehicleInquiryWhatsAppHref({
+    salesWhatsappOverride: displayModel.salesWhatsappOverride,
+    fallbackPhone: result.shell.business.whatsappE164,
+    vehicleTitle: offering.title,
+    unitStatus: effectiveUnitStatus,
+    canonicalUrl: result.seoMetadata.canonical ?? null,
+  }) ?? (offering.cta.isWhatsApp ? offering.cta.href : null);
+
+const primaryCtaHref = directWaHref ?? offering.cta.href;
+const primaryCtaIsWhatsApp = Boolean(directWaHref);
+const primaryCtaIsExternal = primaryCtaIsWhatsApp || offering.cta.isExternal;
+const primaryCtaLabel = primaryCtaIsWhatsApp
+  ? effectiveUnitStatus === "sold"
+    ? "Tanya Unit Serupa via WhatsApp"
+    : effectiveUnitStatus === "booked"
+      ? "Tanya Ketersediaan via WhatsApp"
+      : "Hubungi Sales via WhatsApp"
+  : offering.cta.label;
+
+// Refresh `#vehicle` node inside Schema.org `@graph` strictly from frozen published `vehicleShowroomV1`
+const baseSchemaGraph: SchemaGraphDocument | null =
+  headProps?.schemaGraph ?? result.schemaGraph ?? null;
+let effectiveSchemaGraph: SchemaGraphDocument | null = baseSchemaGraph;
+
+if (vehicleShowroom && baseSchemaGraph) {
+  const pricing = toCatalogVehiclePricing(vehicleShowroom);
+  const refreshed = generateSchemaGraph({
+    seo: {
+      surface: "public_tenant",
+      routeKind: "offering",
+      pathname: result.currentPath,
+      tenant: {
+        tenantHandle: result.tenant.handle,
+        tenantStatus: result.tenant.status,
+        operatorHold: result.tenant.operatorHold,
+        primaryHost: result.tenant.primaryHost,
+        primaryHostKind: result.tenant.primaryHostKind,
+        primaryHostStatus: result.tenant.primaryHost ? "active" : null,
+        primaryHostSslStatus: result.tenant.primaryHost ? "active" : null,
+        primaryHostVerified: Boolean(result.tenant.primaryHost),
+        verifiedTenantHosts: Array.from(
+          new Set([result.tenant.host, ...(result.tenant.primaryHost ? [result.tenant.primaryHost] : [])]),
+        ),
+        servingHost: result.tenant.host,
+      },
+      siteVisibility: result.shell.site.siteVisibility,
+      resourceState: "published",
+    },
+    tenantId: result.tenant.id,
+    siteName: result.shell.site.title,
+    offering: {
+      offeringType: "vehicle",
+      title: offering.title,
+      summary: offering.summary,
+      priceMode: pricing.priceMode,
+      price: pricing.price,
+      priceMax: pricing.priceMax,
+      negotiable: pricing.negotiable,
+      ctaMode: offering.cta.mode,
+      unitStatus: effectiveUnitStatus,
+      categoryName: offering.categoryNames[0] ?? null,
+      images: [
+        offering.coverImage
+          ? {
+              url: offering.coverImage.url,
+              width: offering.coverImage.width,
+              height: offering.coverImage.height,
+              alt: offering.coverImage.alt,
+            }
+          : null,
+        ...offering.galleryImages.map((img) => ({
+          url: img.url,
+          width: img.width,
+          height: img.height,
+          alt: img.alt,
+        })),
+      ],
+      attributes: vehicleShowroom,
+    },
+  });
+
+  const refreshedVehicleNode = refreshed.nodes.find(
+    (node) =>
+      node["@type"] === "Car" || node["@type"] === "Motorcycle" || node["@type"] === "Vehicle",
+  );
+  if (refreshedVehicleNode) {
+    const nextNodes: SchemaNode[] = baseSchemaGraph["@graph"].map((node) =>
+      node["@type"] === "Car" || node["@type"] === "Motorcycle" || node["@type"] === "Vehicle"
+        ? refreshedVehicleNode
+        : node,
+    );
+    effectiveSchemaGraph = {
+      "@context": baseSchemaGraph["@context"],
+      "@graph": nextNodes,
+    };
+  }
+}
+
+// Build semantic `<dl>` specification rows strictly from present visible facts (zero fabrication!)
+const specRows: Array<{ readonly label: string; readonly value: string; readonly testId?: string }> =
+  [];
+
+if (displayModel.vehicleCategory) {
+  specRows.push({
+    label: "Kategori",
+    value: VEHICLE_CATEGORY_LABELS[displayModel.vehicleCategory],
+    testId: "vehicle-spec-category",
+  });
+}
+if (displayModel.brand) specRows.push({ label: "Merek", value: displayModel.brand });
+if (displayModel.model) specRows.push({ label: "Model", value: displayModel.model });
+if (displayModel.variant) specRows.push({ label: "Varian", value: displayModel.variant });
+if (displayModel.year !== null) specRows.push({ label: "Tahun", value: String(displayModel.year) });
+if (displayModel.condition) {
+  specRows.push({
+    label: "Kondisi",
+    value: VEHICLE_CONDITION_LABELS[displayModel.condition],
+    testId: "vehicle-spec-condition",
+  });
+}
+// REQ-079: mileageKm shown ONLY on used units when actually recorded
+if (displayModel.condition === "used" && displayModel.mileageKm !== null) {
+  specRows.push({
+    label: "Jarak tempuh",
+    value: formatVehicleMileageKm(displayModel.mileageKm),
+    testId: "vehicle-spec-mileage",
+  });
+}
+if (displayModel.transmission) {
+  specRows.push({
+    label: "Transmisi",
+    value: VEHICLE_TRANSMISSION_LABELS[displayModel.transmission],
+  });
+}
+if (displayModel.fuel) {
+  specRows.push({
+    label: "Bahan bakar",
+    value: VEHICLE_FUEL_LABELS[displayModel.fuel],
+  });
+}
+if (displayModel.bodyType) {
+  specRows.push({
+    label: "Tipe bodi",
+    value: VEHICLE_BODY_TYPE_LABELS[displayModel.bodyType],
+  });
+}
+if (displayModel.color) specRows.push({ label: "Warna", value: displayModel.color });
+if (displayModel.seats !== null) {
+  specRows.push({ label: "Kapasitas kursi", value: `${displayModel.seats} penumpang` });
+}
+if (displayModel.engineCc !== null) {
+  specRows.push({
+    label: "Kapasitas mesin",
+    value: `${String(displayModel.engineCc).replace(/\B(?=(\d{3})+(?!\d))/g, ".")} cc`,
+  });
+}
+if (displayModel.location) specRows.push({ label: "Lokasi unit", value: displayModel.location });
+if (displayModel.plateRegion) {
+  specRows.push({ label: "Wilayah pelat", value: displayModel.plateRegion });
+}
+if (displayModel.stnkTaxExpiryDate) {
+  specRows.push({
+    label: "Masa berlaku pajak STNK",
+    value: formatVehicleDateOnlyIndonesian(displayModel.stnkTaxExpiryDate),
+    testId: "vehicle-spec-stnk",
+  });
+}
+if (displayModel.condition === "used" && displayModel.ownershipCount !== null) {
+  specRows.push({
+    label: "Kepemilikan",
+    value: `Tangan ke-${displayModel.ownershipCount}`,
+  });
+}
+if (displayModel.otrPriceNote) {
+  specRows.push({ label: "Catatan harga", value: displayModel.otrPriceNote });
+}
+
+const sidebarEyebrow =
+  displayModel.vehicleCategory && displayModel.condition
+    ? `${VEHICLE_CATEGORY_LABELS[displayModel.vehicleCategory]} \u2022 ${VEHICLE_CONDITION_LABELS[displayModel.condition]}`
+    : displayModel.vehicleCategory
+      ? VEHICLE_CATEGORY_LABELS[displayModel.vehicleCategory]
+      : descriptor.singularLabel;
+
+function statusPillClass(status: VehicleShowroomUnitStatus): string {
+  if (status === "sold") return "ps-vh-detail-status ps-vh-detail-status--sold";
+  if (status === "booked") return "ps-vh-detail-status ps-vh-detail-status--booked";
+  return "ps-vh-detail-status ps-vh-detail-status--available";
+}
+---
+
+<Layout
+  shell={result.shell}
+  pageTitle={result.pageTitle}
+  pageDescription={result.seoMetadata.description || undefined}
+  managedHead={true}
+  currentPath={result.currentPath}
+  initialCookieHeader={Astro.request.headers.get("cookie")}
+>
+  <PublicSeoHead
+    slot="head"
+    metadata={headProps?.metadata ?? result.seoMetadata}
+    schemaGraph={effectiveSchemaGraph}
+    seoAutopilotEnabled={headProps?.seoAutopilotEnabled ?? true}
+    publishedVerificationTokens={headProps?.publishedVerificationTokens ?? null}
+    blogEnabled={headProps?.blogEnabled ?? result.shell.site.blogEnabled}
+    siteName={headProps?.siteName ?? result.shell.site.title}
+    searchAppearance={headProps?.searchAppearance ?? null}
+    templateValues={headProps?.templateValues}
+  />
+
+  <section class="ps-route-hero">
+    <div class="ps-container ps-route-hero-inner">
+      <PublicBreadcrumbs items={result.breadcrumbs} />
+      <div class="ps-offering-badges">
+        <a href={descriptor.prefix} class="ps-badge ps-badge--link">{descriptor.singularLabel}</a>
+        {displayModel.vehicleCategory && (
+          <span class="ps-badge">{VEHICLE_CATEGORY_LABELS[displayModel.vehicleCategory]}</span>
+        )}
+        {displayModel.condition && (
+          <span class="ps-badge">{VEHICLE_CONDITION_LABELS[displayModel.condition]}</span>
+        )}
+        {categoryLinks.length > 0 ? (
+          <>
+            {categoryLinks.map((cat) => (
+              <a href={cat.href} class="ps-badge ps-badge--link">
+                {cat.name}
+              </a>
+            ))}
+            {offering.categoryNames
+              .filter((name) => !linkedCategoryNames.has(name))
+              .map((cat) => (
+                <span class="ps-badge">{cat}</span>
+              ))}
+          </>
+        ) : (
+          offering.categoryNames.map((cat) => <span class="ps-badge">{cat}</span>)
+        )}
+        <span
+          class={statusPillClass(effectiveUnitStatus)}
+          data-testid="vehicle-unit-status"
+          data-unit-status={effectiveUnitStatus}
+        >
+          {statusBadgeLabel}
+        </span>
+      </div>
+      <h1 class="ps-route-title" data-testid="offering-detail-title">{offering.title}</h1>
+      {offering.summary && <p class="ps-route-lead">{offering.summary}</p>}
+    </div>
+  </section>
+
+  <article
+    class="ps-detail-shell"
+    data-testid="offering-detail-vehicle"
+    data-offering-slug={offering.slug}
+    data-unit-status={effectiveUnitStatus}
+  >
+    <div class="ps-container ps-detail-grid">
+      <div class="ps-detail-main">
+        {effectiveUnitStatus === "sold" && (
+          <div class="ps-vh-status-banner ps-vh-status-banner--sold" role="status" data-testid="vehicle-sold-banner">
+            <strong>UNIT TERJUAL</strong>
+            <p>
+              Unit kendaraan ini telah terjual. Halaman ini tetap tersedia sebagai arsip spesifikasi
+              showroom. Hubungi tim sales kami via WhatsApp untuk menanyakan unit serupa yang siap dipesan.
+            </p>
+          </div>
+        )}
+
+        {effectiveUnitStatus === "booked" && (
+          <div class="ps-vh-status-banner ps-vh-status-banner--booked" role="status" data-testid="vehicle-booked-banner">
+            <strong>UNIT BOOKED</strong>
+            <p>
+              Unit ini sedang dalam status pemesanan (booked). Hubungi tim sales kami untuk konfirmasi
+              ketersediaan terbaru atau rekomendasi unit alternatif.
+            </p>
+          </div>
+        )}
+
+        {offering.coverImage && (
+          <figure class="ps-detail-cover">
+            <img
+              src={offering.coverImage.url}
+              alt={offering.coverImage.alt || offering.title}
+              width={offering.coverImage.width}
+              height={offering.coverImage.height}
+              loading="eager"
+              decoding="async"
+            />
+          </figure>
+        )}
+
+        {offering.galleryImages.length > 0 && (
+          <div class="ps-detail-gallery" aria-label="Galeri foto kendaraan" data-testid="offering-gallery">
+            {offering.galleryImages.map((img, idx) => (
+              <figure class="ps-detail-thumb">
+                <img
+                  src={img.url}
+                  alt={img.alt || `${offering.title} \u2014 Foto ${idx + 2}`}
+                  width={img.width}
+                  height={img.height}
+                  loading="lazy"
+                  decoding="async"
+                />
+              </figure>
+            ))}
+          </div>
+        )}
+
+        {specRows.length > 0 && (
+          <section class="ps-detail-block" aria-labelledby="specs-heading" data-testid="offering-specs">
+            <h2 id="specs-heading">Spesifikasi Teknis &amp; Informasi Unit</h2>
+            <dl class="ps-spec-list">
+              {specRows.map((row) => (
+                <div class="ps-spec-row" data-testid={row.testId}>
+                  <dt>{row.label}</dt>
+                  <dd>{row.value}</dd>
+                </div>
+              ))}
+            </dl>
+          </section>
+        )}
+
+        {effectiveDescriptionHtml && (
+          <section class="ps-detail-block" aria-labelledby="desc-heading">
+            <h2 id="desc-heading">Deskripsi Unit</h2>
+            <div class="ps-prose" set:html={effectiveDescriptionHtml} />
+          </section>
+        )}
+
+        {/* Static Server-Rendered Credit-Estimate Table (Pure BigInt round_half_up, ZERO client JS!) */}
+        {creditTable && (
+          <section
+            class="ps-detail-block ps-vh-credit-section"
+            aria-labelledby="credit-heading"
+            data-testid="vehicle-credit-table"
+            data-flat-rate-bps={String(creditTable.flatAnnualRateBps)}
+          >
+            <div class="ps-vh-credit-header">
+              <h2 id="credit-heading">Simulasi Estimasi Cicilan (Statis)</h2>
+              <span class="ps-vh-credit-rate" data-testid="vehicle-credit-rate">
+                Bunga flat indikatif {creditTable.flatAnnualRateLabel}
+              </span>
+            </div>
+
+            <div class="ps-table-wrap">
+              <table class="ps-data-table ps-vh-credit-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Uang Muka (DP)</th>
+                    {creditTable.tenorMonths.map((tenor) => (
+                      <th scope="col">{tenor} Bln</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {creditTable.rows.map((row) => (
+                    <tr data-dp-percent={String(row.dpPercent)}>
+                      <td>{row.dpLabel}</td>
+                      {row.installments.map((inst) => (
+                        <td
+                          data-tenor-months={String(inst.tenorMonths)}
+                          data-monthly-idr={String(inst.monthlyInstallmentIdr)}
+                        >
+                          {inst.monthlyLabel}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <p class="ps-disclaimer" data-testid="vehicle-credit-disclaimer">
+              {creditTable.disclaimer}
+            </p>
+          </section>
+        )}
+      </div>
+
+      {/* Conversion Summary Card (Zero JS, Visible Price + Primary WhatsApp Inquiry CTA) */}
+      <aside class="ps-detail-sidebar" aria-label="Ringkasan penawaran kendaraan" data-testid="offering-summary-card">
+        <div class="ps-vh-sidebar-top">
+          <div class="ps-vh-sidebar-meta">
+            <p class="ps-eyebrow">{sidebarEyebrow}</p>
+            <span class={statusPillClass(effectiveUnitStatus)}>{statusBadgeLabel}</span>
+          </div>
+          <p class="ps-detail-price" data-testid="offering-detail-price">
+            {sidebarPriceText}
+          </p>
+          {offering.originalPriceText && (
+            <p class="ps-detail-note">
+              Harga sebelumnya: <del class="ps-offering-original">{offering.originalPriceText}</del>
+            </p>
+          )}
+          {displayModel.otrPriceNote && (
+            <p class="ps-detail-note">{displayModel.otrPriceNote}</p>
+          )}
+        </div>
+
+        <div class="ps-detail-cta-stack">
+          <a
+            href={primaryCtaHref}
+            class:list={[
+              "ps-btn",
+              primaryCtaIsWhatsApp ? "ps-btn--whatsapp" : "ps-btn--primary",
+            ]}
+            target={primaryCtaIsExternal ? "_blank" : undefined}
+            rel={primaryCtaIsExternal ? "noopener noreferrer" : undefined}
+            data-testid="offering-detail-primary-cta"
+            data-wa-event={primaryCtaIsWhatsApp ? "wa_click" : undefined}
+          >
+            {primaryCtaLabel}
+          </a>
+
+          {offering.fallbackContactHref && (
+            <a href={offering.fallbackContactHref} class="ps-btn ps-btn--secondary">
+              Kontak Langsung
+            </a>
+          )}
+
+          <a href={descriptor.prefix} class="ps-btn ps-btn--secondary">
+            &larr; {descriptor.backLabel}
+          </a>
+        </div>
+
+        {(result.shell.business.weekdayHours || result.shell.business.address) && (
+          <dl class="ps-contact-dl">
+            {result.shell.business.weekdayHours && (
+              <div>
+                <dt>Jam Operasional Showroom</dt>
+                <dd>{result.shell.business.weekdayHours}</dd>
+              </div>
+            )}
+            {result.shell.business.address && (
+              <div>
+                <dt>Lokasi Showroom</dt>
+                <dd>
+                  {[result.shell.business.address, result.shell.business.city]
+                    .filter(Boolean)
+                    .join(", ")}
+                </dd>
+              </div>
+            )}
+          </dl>
+        )}
+      </aside>
+    </div>
+  </article>
+
+  {relatedOfferings.length > 0 && (
+    <section class="ps-related-section" aria-labelledby="related-offerings-heading">
+      <div class="ps-container">
+        <header class="ps-section-header ps-section-header--row">
+          <h2 id="related-offerings-heading" class="ps-section-title">
+            Unit Kendaraan Lainnya
+          </h2>
+          <a href={descriptor.prefix} class="ps-btn ps-btn--secondary">
+            {descriptor.backLabel}
+          </a>
+        </header>
+
+        <div class="ps-archive-grid">
+          {relatedOfferings.map((item) => (
+            <article class="ps-card ps-offering-card" data-offering-slug={item.slug}>
+              <div class="ps-offering-media">
+                {item.coverImage ? (
+                  <img
+                    src={item.coverImage.url}
+                    alt={item.coverImage.alt || item.title}
+                    width={item.coverImage.width}
+                    height={item.coverImage.height}
+                    loading="lazy"
+                    decoding="async"
+                  />
+                ) : (
+                  <div class="ps-offering-media-placeholder">{descriptor.singularLabel}</div>
+                )}
+              </div>
+              <div class="ps-offering-body">
+                <h3 class="ps-card-title">
+                  <a href={item.href} class="ps-offering-title-link">
+                    {item.title}
+                  </a>
+                </h3>
+                {item.summary && <p class="ps-card-desc">{item.summary}</p>}
+                <div class="ps-offering-price-wrap">
+                  <p class="ps-offering-price">{item.priceText}</p>
+                </div>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+
+  {result.floatingWa.phone && (
+    <FloatingWhatsApp
+      slot="floating"
+      shell={result.shell}
+      phone={result.floatingWa.phone}
+      businessName={result.floatingWa.businessName}
+      greetingMessage={result.floatingWa.greetingMessage}
+      operatingHours={result.floatingWa.operatingHours}
+      holidayHours={result.floatingWa.holidayHours}
+      primaryOrigin={result.floatingWa.primaryOrigin}
+      canonicalPath={result.floatingWa.canonicalPath}
+      itemTitle={result.floatingWa.itemTitle}
+      itemPrice={sidebarPriceText}
+    />
+  )}
+</Layout>
+
+<style>
+  .ps-vh-detail-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.2rem 0.65rem;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    line-height: 1.3;
+  }
+
+  .ps-vh-detail-status--available {
+    background-color: #176b51;
+    color: #ffffff;
+  }
+
+  .ps-vh-detail-status--booked {
+    background-color: #fef3c7;
+    color: #854d0e;
+    border: 1px solid #d97706;
+  }
+
+  .ps-vh-detail-status--sold {
+    background-color: #b42318;
+    color: #ffffff;
+  }
+
+  .ps-vh-status-banner {
+    padding: 1rem 1.125rem;
+    border-radius: var(--ps-radius);
+    border: 1px solid var(--ps-border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .ps-vh-status-banner strong {
+    font-size: 0.875rem;
+    letter-spacing: 0.04em;
+  }
+
+  .ps-vh-status-banner p {
+    margin: 0;
+    font-size: 0.9rem;
+    line-height: 1.55;
+  }
+
+  .ps-vh-status-banner--sold {
+    background-color: #fef2f2;
+    border-color: #fecaca;
+    color: #7f1d1d;
+  }
+
+  .ps-vh-status-banner--booked {
+    background-color: #fffbeb;
+    border-color: #fde68a;
+    color: #78350f;
+  }
+
+  .ps-vh-credit-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.5rem 1rem;
+  }
+
+  .ps-vh-credit-rate {
+    font-size: 0.8125rem;
+    font-weight: 600;
+    color: var(--ps-ink-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ps-vh-credit-table {
+    font-size: 0.84375rem;
+  }
+
+  .ps-vh-credit-table th,
+  .ps-vh-credit-table td {
+    padding: 0.6rem 0.625rem;
+  }
+
+  .ps-vh-sidebar-top {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+  }
+
+  .ps-vh-sidebar-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+  }
+</style>

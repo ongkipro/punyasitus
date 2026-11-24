@@ -1,13 +1,16 @@
 ---
 import { env } from "cloudflare:workers";
+import type { VehicleShowroomAttributes } from "@punyasitus/core/catalog/vehicle";
+import { createTenantDb, openTenantStoreStub } from "@punyasitus/db/connections";
 import { enrichPublicOfferingDetailResult } from "../../components/seo/public-seo-context.ts";
 import {
   applyPublicRouteResponseMeta,
   buildPublicRouteDepsFromAstro,
   resolveOfferingDetailRoute,
 } from "../../core/public-routes.ts";
-import OfferingDetailView from "../layanan/_OfferingDetailView.astro";
+import { loadFrozenPublishedVehicleBySlug } from "../dashboard/[handle]/catalog/vehicles/_api-handler.ts";
 import PublicNotFoundView from "../layanan/_PublicNotFoundView.astro";
+import VehicleShowroomDetailView from "./_VehicleShowroomDetailView.astro";
 
 const deps = buildPublicRouteDepsFromAstro(
   Astro.locals,
@@ -30,15 +33,31 @@ const enriched =
   result.kind === "offering_detail"
     ? await enrichPublicOfferingDetailResult(result, deps)
     : null;
+
+let publishedVehicleShowroom: VehicleShowroomAttributes | null = null;
+if (result.kind === "offering_detail") {
+  const tenantDb =
+    deps.tenantDb ??
+    (deps.tenantStore
+      ? createTenantDb(openTenantStoreStub(deps.tenantStore, result.tenant.id))
+      : null);
+  if (tenantDb) {
+    publishedVehicleShowroom = await loadFrozenPublishedVehicleBySlug(
+      tenantDb,
+      result.offering.slug,
+    );
+  }
+}
 ---
 
 {result.kind === "not_found" ? (
   <PublicNotFoundView result={result} />
 ) : (
-  <OfferingDetailView
+  <VehicleShowroomDetailView
     result={result}
     headProps={enriched?.head ?? null}
     categoryLinks={enriched?.categoryLinks ?? []}
     sanitizedDescriptionHtml={enriched?.sanitizedDescriptionHtml ?? null}
+    vehicleShowroom={publishedVehicleShowroom}
   />
 )}

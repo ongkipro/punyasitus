@@ -1,0 +1,589 @@
+---
+import {
+  buildVehicleInquiryWhatsAppHref,
+  filterVehicleGridItems,
+  formatVehicleMileageKm,
+  formatVehiclePriceLabel,
+  VEHICLE_BODY_TYPE_LABELS,
+  VEHICLE_CATEGORY_LABELS,
+  VEHICLE_CONDITION_LABELS,
+  VEHICLE_FUEL_LABELS,
+  VEHICLE_TRANSMISSION_LABELS,
+  VEHICLE_UNIT_STATUS_BADGE_LABELS,
+  type PartialVehicleDisplayModel,
+  type VehicleShowroomAttributes,
+  type VehicleShowroomUnitStatus,
+} from "@punyasitus/core/catalog/vehicle";
+
+/**
+ * Zero-JS HTML-First Vehicle Showroom Grid Section
+ * (`SectionVehiclesGrid.astro`; TASK-079, REQ-079, DESIGN §12).
+ *
+ * Pure server-rendered Astro markup consuming only `--ps-*` theme tokens:
+ * - Zero scripts, zero interactive calculators, fluid 360px..1440px (1/2/3 columns).
+ * - Displays cars and motorcycles truthfully from frozen published attributes; never fabricates
+ *   missing specs on legacy rows.
+ * - Honors `hideSoldInGrids` to exclude `sold` units from grid views while preserving
+ *   indexable `/kendaraan/[slug]` detail pages.
+ */
+
+export interface VehicleShowroomGridItem {
+  readonly slug: string;
+  readonly href?: string;
+  readonly title: string;
+  readonly summary?: string | null;
+  readonly coverImage?: {
+    readonly url: string;
+    readonly alt?: string | null;
+    readonly width?: number;
+    readonly height?: number;
+  } | null;
+  readonly vehicle: VehicleShowroomAttributes | PartialVehicleDisplayModel;
+  readonly unitStatus?: VehicleShowroomUnitStatus;
+  readonly hideSoldInGrids?: boolean;
+  readonly priceTextOverride?: string | null;
+  readonly whatsappHrefOverride?: string | null;
+}
+
+export interface Props {
+  readonly id?: string;
+  readonly eyebrow?: string | null;
+  readonly heading?: string | null;
+  readonly subheading?: string | null;
+  readonly items: readonly VehicleShowroomGridItem[];
+  readonly hideSoldInGrids?: boolean;
+  readonly fallbackWhatsappPhone?: string | null;
+  readonly primaryOrigin?: string;
+  readonly viewAllHref?: string | null;
+  readonly viewAllLabel?: string;
+  readonly emptyHeading?: string;
+  readonly emptyBody?: string;
+  readonly surfaceTone?: "surface" | "muted";
+  readonly embedded?: boolean;
+  readonly isFirstSection?: boolean;
+}
+
+const {
+  id = "vehicle-showroom-grid",
+  eyebrow = "Showroom Kendaraan",
+  heading = "Pilihan Unit Kendaraan",
+  subheading = null,
+  items = [],
+  hideSoldInGrids = false,
+  fallbackWhatsappPhone = null,
+  primaryOrigin = "https://situsku.click",
+  viewAllHref = null,
+  viewAllLabel = "Lihat Semua Kendaraan",
+  emptyHeading = "Belum ada unit kendaraan yang tersedia",
+  emptyBody = "Daftar unit showroom akan ditampilkan di sini setelah diterbitkan.",
+  surfaceTone = "surface",
+  embedded = false,
+  isFirstSection = false,
+} = Astro.props;
+
+const normalizedItems = items.map((entry) => ({
+  ...entry,
+  unitStatus: entry.unitStatus ?? entry.vehicle.unitStatus,
+  hideSoldInGrids: entry.hideSoldInGrids ?? entry.vehicle.hideSoldInGrids,
+}));
+
+const visibleItems = filterVehicleGridItems(normalizedItems, { hideSoldInGrids });
+const hiddenSoldCount = normalizedItems.length - visibleItems.length;
+const headingId = `${id}-heading`;
+
+function statusBadgeModifier(status: VehicleShowroomUnitStatus): string {
+  if (status === "sold") return "ps-vh-status ps-vh-status--sold";
+  if (status === "booked") return "ps-vh-status ps-vh-status--booked";
+  return "ps-vh-status ps-vh-status--available";
+}
+
+function buildDetailHref(item: VehicleShowroomGridItem): string {
+  if (item.href && item.href.startsWith("/") && !item.href.startsWith("//")) {
+    return item.href;
+  }
+  return `/kendaraan/${encodeURIComponent(item.slug)}`;
+}
+
+function buildCanonicalUrl(detailHref: string): string | null {
+  if (!primaryOrigin || !/^https:\/\//i.test(primaryOrigin)) return null;
+  return `${primaryOrigin.replace(/\/+$/, "")}${detailHref}`;
+}
+---
+
+<section
+  id={id}
+  class:list={[
+    "ps-vh-section",
+    !embedded && "ps-section",
+    !embedded && surfaceTone === "muted" && "ps-section--muted",
+  ]}
+  data-testid="section-vehicles-grid"
+  data-hide-sold={hideSoldInGrids ? "true" : "false"}
+  data-visible-count={String(visibleItems.length)}
+  data-hidden-sold-count={String(hiddenSoldCount)}
+  aria-labelledby={heading ? headingId : undefined}
+>
+  <div class:list={[!embedded && "ps-container", "ps-vh-inner"]}>
+    {(heading || viewAllHref) && (
+      <header class="ps-vh-header">
+        <div class="ps-vh-header-copy">
+          {eyebrow && <p class="ps-eyebrow">{eyebrow}</p>}
+          {heading &&
+            (isFirstSection ? (
+              <h1 id={headingId} class="ps-section-title">
+                {heading}
+              </h1>
+            ) : (
+              <h2 id={headingId} class="ps-section-title">
+                {heading}
+              </h2>
+            ))}
+          {subheading && <p class="ps-section-subtitle">{subheading}</p>}
+        </div>
+        {viewAllHref && (
+          <a href={viewAllHref} class="ps-btn ps-btn--secondary ps-vh-viewall">
+            {viewAllLabel}
+          </a>
+        )}
+      </header>
+    )}
+
+    {visibleItems.length > 0 ? (
+      <div class="ps-vh-grid" data-testid="vehicles-grid-list">
+        {visibleItems.map((item) => {
+          const v = item.vehicle;
+          const unitStatus = item.unitStatus;
+          const detailHref = buildDetailHref(item);
+          const priceLabel =
+            item.priceTextOverride ??
+            formatVehiclePriceLabel({
+              priceModel: v.priceModel,
+              priceIdr: v.priceIdr,
+              minPriceIdr: v.minPriceIdr,
+              maxPriceIdr: v.maxPriceIdr,
+              negotiable: false,
+            });
+          const waHref =
+            item.whatsappHrefOverride ??
+            buildVehicleInquiryWhatsAppHref({
+              salesWhatsappOverride: v.salesWhatsappOverride,
+              fallbackPhone: fallbackWhatsappPhone,
+              vehicleTitle: item.title,
+              unitStatus,
+              canonicalUrl: buildCanonicalUrl(detailHref),
+            });
+          const categoryLabel = v.vehicleCategory
+            ? VEHICLE_CATEGORY_LABELS[v.vehicleCategory]
+            : null;
+          const conditionLabel = v.condition ? VEHICLE_CONDITION_LABELS[v.condition] : null;
+          const statusLabel = VEHICLE_UNIT_STATUS_BADGE_LABELS[unitStatus];
+          const transLabel = v.transmission ? VEHICLE_TRANSMISSION_LABELS[v.transmission] : null;
+          const fuelLabel = v.fuel ? VEHICLE_FUEL_LABELS[v.fuel] : null;
+          const bodyLabel = v.bodyType ? VEHICLE_BODY_TYPE_LABELS[v.bodyType] : null;
+          const mileageLabel =
+            v.condition === "used" && typeof v.mileageKm === "number"
+              ? formatVehicleMileageKm(v.mileageKm)
+              : null;
+          const hasSpecChips = Boolean(v.year || transLabel || fuelLabel || mileageLabel);
+          const placeholderHeading = [v.brand, v.model].filter(Boolean).join(" ") || item.title;
+
+          return (
+            <article
+              class:list={["ps-vh-card", unitStatus === "sold" && "ps-vh-card--sold"]}
+              data-testid="vehicle-grid-card"
+              data-vehicle-slug={item.slug}
+              data-vehicle-category={v.vehicleCategory ?? undefined}
+              data-vehicle-condition={v.condition ?? undefined}
+              data-vehicle-status={unitStatus}
+            >
+              <a href={detailHref} class="ps-vh-media-link" tabindex="-1" aria-hidden="true">
+                <div class="ps-vh-media">
+                  {item.coverImage ? (
+                    <img
+                      src={item.coverImage.url}
+                      alt={item.coverImage.alt || item.title}
+                      width={item.coverImage.width ?? 900}
+                      height={item.coverImage.height ?? 600}
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  ) : (
+                    <div class="ps-vh-media-placeholder">
+                      <span class="ps-vh-media-tag">{categoryLabel ?? "Kendaraan"}</span>
+                      <span class="ps-vh-media-brand">{placeholderHeading}</span>
+                    </div>
+                  )}
+                  <span
+                    class={statusBadgeModifier(unitStatus)}
+                    data-testid="vehicle-card-status-badge"
+                  >
+                    {statusLabel}
+                  </span>
+                </div>
+              </a>
+
+              <div class="ps-vh-body">
+                {(categoryLabel || conditionLabel || bodyLabel) && (
+                  <div class="ps-vh-badges">
+                    {categoryLabel && <span class="ps-vh-chip">{categoryLabel}</span>}
+                    {conditionLabel && (
+                      <span class="ps-vh-chip ps-vh-chip--condition">{conditionLabel}</span>
+                    )}
+                    {bodyLabel && <span class="ps-vh-chip">{bodyLabel}</span>}
+                  </div>
+                )}
+
+                <h3 class="ps-vh-title">
+                  <a href={detailHref} class="ps-vh-title-link" data-testid="vehicle-card-link">
+                    {item.title}
+                  </a>
+                </h3>
+
+                {hasSpecChips && (
+                  <ul class="ps-vh-specs" aria-label="Spesifikasi ringkas">
+                    {v.year && <li data-testid="vehicle-card-year">{v.year}</li>}
+                    {transLabel && <li>{transLabel}</li>}
+                    {fuelLabel && <li>{fuelLabel}</li>}
+                    {mileageLabel && <li data-testid="vehicle-card-mileage">{mileageLabel}</li>}
+                  </ul>
+                )}
+
+                {v.location && <p class="ps-vh-location">{v.location}</p>}
+
+                <div class="ps-vh-price-row">
+                  <p class="ps-vh-price" data-testid="vehicle-card-price">
+                    {priceLabel}
+                  </p>
+                  {v.negotiable && v.priceModel !== "on_request" && (
+                    <span class="ps-vh-nego" data-testid="vehicle-card-nego">
+                      Nego
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              <div class="ps-vh-footer">
+                <a
+                  href={detailHref}
+                  class="ps-btn ps-btn--secondary ps-vh-action"
+                  data-testid="vehicle-card-detail-btn"
+                >
+                  Lihat Detail
+                </a>
+                {waHref && (
+                  <a
+                    href={waHref}
+                    class="ps-btn ps-btn--whatsapp ps-vh-action"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    data-testid="vehicle-card-wa-btn"
+                    data-wa-event="wa_click"
+                  >
+                    {unitStatus === "sold" ? "Tanya Unit Serupa" : "WhatsApp"}
+                  </a>
+                )}
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    ) : (
+      <div class="ps-vh-empty" data-testid="vehicles-grid-empty">
+        <h3 class="ps-vh-empty-title">{emptyHeading}</h3>
+        <p class="ps-vh-empty-body">{emptyBody}</p>
+      </div>
+    )}
+  </div>
+</section>
+
+<style>
+  .ps-vh-inner {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    min-width: 0;
+  }
+
+  .ps-vh-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .ps-vh-header-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    min-width: 0;
+  }
+
+  .ps-vh-viewall {
+    min-height: 44px;
+    flex-shrink: 0;
+  }
+
+  .ps-vh-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: clamp(1rem, 2vw, 1.5rem);
+  }
+
+  .ps-vh-card {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-lg);
+    background-color: var(--ps-surface);
+    overflow: hidden;
+    min-width: 0;
+  }
+
+  .ps-vh-card--sold {
+    border-color: var(--ps-border);
+  }
+
+  .ps-vh-media-link {
+    display: block;
+    text-decoration: none;
+  }
+
+  .ps-vh-media {
+    position: relative;
+    aspect-ratio: 3 / 2;
+    background-color: var(--ps-surface-muted);
+    overflow: hidden;
+    border-bottom: 1px solid var(--ps-border);
+  }
+
+  .ps-vh-media img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .ps-vh-card--sold .ps-vh-media img {
+    filter: grayscale(25%);
+  }
+
+  .ps-vh-media-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 1rem;
+    text-align: center;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-vh-media-tag {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ps-brand-primary);
+  }
+
+  .ps-vh-media-brand {
+    font-size: 0.9375rem;
+    font-weight: 600;
+    color: var(--ps-ink);
+  }
+
+  .ps-vh-status {
+    position: absolute;
+    top: 0.75rem;
+    left: 0.75rem;
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.65rem;
+    border-radius: 4px;
+    font-size: 0.725rem;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    line-height: 1.2;
+  }
+
+  .ps-vh-status--available {
+    background-color: var(--ps-brand-primary, #176b51);
+    color: var(--ps-brand-on-primary, #ffffff);
+  }
+
+  .ps-vh-status--booked {
+    background-color: var(--ps-warning-soft, #fef3c7);
+    color: var(--ps-warning, #854d0e);
+    border: 1px solid var(--ps-warning-border, #d97706);
+  }
+
+  .ps-vh-status--sold {
+    background-color: var(--ps-destructive, #b42318);
+    color: var(--ps-destructive-foreground, #ffffff);
+  }
+
+  .ps-vh-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1rem 1.125rem;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .ps-vh-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+
+  .ps-vh-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid var(--ps-border);
+    background-color: var(--ps-surface-muted);
+    color: var(--ps-ink-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .ps-vh-chip--condition {
+    color: var(--ps-ink);
+  }
+
+  .ps-vh-title {
+    margin: 0;
+    font-size: 1.05rem;
+    line-height: 1.35;
+    color: var(--ps-ink);
+  }
+
+  .ps-vh-title-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    color: inherit;
+    text-decoration: none;
+    overflow-wrap: anywhere;
+  }
+
+  .ps-vh-title-link:hover,
+  .ps-vh-title-link:focus-visible {
+    color: var(--ps-brand-primary);
+    text-decoration: underline;
+  }
+
+  .ps-vh-specs {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 0.65rem;
+    font-size: 0.8125rem;
+    color: var(--ps-ink-muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .ps-vh-specs li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+  }
+
+  .ps-vh-specs li + li::before {
+    content: "\2022";
+    opacity: 0.55;
+  }
+
+  .ps-vh-location {
+    margin: 0;
+    font-size: 0.8125rem;
+    color: var(--ps-ink-muted);
+  }
+
+  .ps-vh-price-row {
+    margin-top: auto;
+    padding-top: 0.45rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.45rem;
+  }
+
+  .ps-vh-price {
+    margin: 0;
+    font-size: clamp(1.0625rem, 1rem + 0.3vw, 1.2rem);
+    font-weight: 800;
+    color: var(--ps-brand-primary);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.3;
+  }
+
+  .ps-vh-nego {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.45rem;
+    border-radius: 4px;
+    border: 1px solid var(--ps-brand-primary);
+    color: var(--ps-brand-primary);
+    font-size: 0.725rem;
+    font-weight: 700;
+  }
+
+  .ps-vh-footer {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+    gap: 0.5rem;
+    padding: 0.875rem 1.125rem 1.125rem;
+    border-top: 1px solid var(--ps-border);
+    background-color: var(--ps-surface);
+  }
+
+  .ps-vh-action {
+    min-height: 44px;
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+    font-size: 0.875rem;
+  }
+
+  .ps-vh-empty {
+    padding: 2rem 1.5rem;
+    border: 1px solid var(--ps-border);
+    border-radius: var(--ps-radius-lg);
+    background-color: var(--ps-surface);
+    text-align: center;
+  }
+
+  .ps-vh-empty-title {
+    margin: 0 0 0.4rem;
+    font-size: 1.05rem;
+    color: var(--ps-ink);
+  }
+
+  .ps-vh-empty-body {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--ps-ink-muted);
+  }
+
+  @media (min-width: 768px) {
+    .ps-vh-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .ps-vh-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+  }
+</style>

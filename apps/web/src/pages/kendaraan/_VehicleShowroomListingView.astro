@@ -1,0 +1,173 @@
+---
+import "../../themes/default/sections/sections.css";
+import "../layanan/_public-pages.css";
+import {
+  normalizeVehicleDisplayModel,
+  type VehicleShowroomAttributes,
+} from "@punyasitus/core/catalog/vehicle";
+import PublicSeoHead from "../../components/seo/PublicSeoHead.astro";
+import type { PublicSeoHeadProps } from "../../components/seo/public-seo-context.ts";
+import type { PublicOfferingListingRenderResult } from "../../core/public-routes.ts";
+import FloatingWhatsApp from "../../themes/default/components/FloatingWhatsApp.astro";
+import Layout from "../../themes/default/Layout.astro";
+import SectionVehiclesGrid, {
+  type VehicleShowroomGridItem,
+} from "../../themes/default/sections/SectionVehiclesGrid.astro";
+import PublicBreadcrumbs from "../layanan/_PublicBreadcrumbs.astro";
+import PublicPagination from "../layanan/_PublicPagination.astro";
+
+export interface Props {
+  readonly result: PublicOfferingListingRenderResult;
+  readonly headProps?: PublicSeoHeadProps | null;
+  readonly vehicleShowroomMap?: ReadonlyMap<string, VehicleShowroomAttributes> | null;
+  readonly hideSoldInGrids?: boolean;
+}
+
+const {
+  result,
+  headProps = null,
+  vehicleShowroomMap = null,
+  hideSoldInGrids = false,
+} = Astro.props;
+const { descriptor, items, pagination } = result;
+
+const gridItems: VehicleShowroomGridItem[] = items.map((item): VehicleShowroomGridItem => {
+  // Frozen published `vehicleShowroomV1` ALWAYS wins over live columns for `unitStatus`,
+  // price formatting, `hideSoldInGrids`, and WhatsApp inquiry target so unpublished drafts never leak.
+  const frozen = vehicleShowroomMap?.get(item.slug) ?? null;
+  if (frozen) {
+    return {
+      slug: item.slug,
+      href: item.href,
+      title: item.title,
+      summary: item.summary,
+      coverImage: item.coverImage
+        ? {
+            url: item.coverImage.url,
+            alt: item.coverImage.alt,
+            width: item.coverImage.width,
+            height: item.coverImage.height,
+          }
+        : null,
+      vehicle: frozen,
+      unitStatus: frozen.unitStatus,
+      hideSoldInGrids: frozen.hideSoldInGrids,
+      priceTextOverride: null,
+      whatsappHrefOverride: null,
+    };
+  }
+
+  // Truthful legacy fallback: NEVER fabricate mileageKm, year, color, location, condition, or brand!
+  const partial = normalizeVehicleDisplayModel(null, {
+    priceMode: item.priceMode,
+    negotiable: item.negotiable,
+    unitStatus: item.unitStatus ?? "available",
+  });
+
+  return {
+    slug: item.slug,
+    href: item.href,
+    title: item.title,
+    summary: item.summary,
+    coverImage: item.coverImage
+      ? {
+          url: item.coverImage.url,
+          alt: item.coverImage.alt,
+          width: item.coverImage.width,
+          height: item.coverImage.height,
+        }
+      : null,
+    vehicle: partial,
+    unitStatus: item.unitStatus ?? partial.unitStatus,
+    hideSoldInGrids: false,
+    priceTextOverride: item.priceText,
+    whatsappHrefOverride: item.cta.isWhatsApp ? item.cta.href : null,
+  };
+});
+
+const visibleCount = gridItems.filter((entry) => {
+  if (entry.unitStatus !== "sold") return true;
+  return !hideSoldInGrids && entry.hideSoldInGrids !== true;
+}).length;
+---
+
+<Layout
+  shell={result.shell}
+  pageTitle={result.pageTitle}
+  pageDescription={result.seoMetadata.description || undefined}
+  managedHead={true}
+  currentPath={result.currentPath}
+  initialCookieHeader={Astro.request.headers.get("cookie")}
+>
+  <PublicSeoHead
+    slot="head"
+    metadata={headProps?.metadata ?? result.seoMetadata}
+    schemaGraph={headProps?.schemaGraph ?? result.schemaGraph}
+    seoAutopilotEnabled={headProps?.seoAutopilotEnabled ?? true}
+    publishedVerificationTokens={headProps?.publishedVerificationTokens ?? null}
+    blogEnabled={headProps?.blogEnabled ?? result.shell.site.blogEnabled}
+    siteName={headProps?.siteName ?? result.shell.site.title}
+    searchAppearance={headProps?.searchAppearance ?? null}
+    templateValues={headProps?.templateValues}
+  />
+
+  <section class="ps-route-hero" data-testid="offering-listing-hero-vehicle">
+    <div class="ps-container ps-route-hero-inner">
+      <PublicBreadcrumbs items={result.breadcrumbs} />
+      <h1 class="ps-route-title">{descriptor.listingHeading}</h1>
+      <p class="ps-route-lead">{descriptor.listingDescription}</p>
+    </div>
+  </section>
+
+  <section
+    class="ps-archive-section"
+    data-testid="offering-listing-vehicle"
+    data-offering-type="vehicle"
+  >
+    <div class="ps-container">
+      {gridItems.length > 0 && (
+        <p class="ps-archive-summary" data-testid="vehicle-listing-summary">
+          Menampilkan {visibleCount} unit kendaraan
+          {pagination.totalPages > 1
+            ? ` \u2022 Halaman ${pagination.page} dari ${pagination.totalPages}`
+            : ""}
+        </p>
+      )}
+
+      <SectionVehiclesGrid
+        id="kendaraan-showroom-grid"
+        eyebrow={null}
+        heading={null}
+        items={gridItems}
+        hideSoldInGrids={hideSoldInGrids}
+        fallbackWhatsappPhone={result.shell.business.whatsappE164}
+        primaryOrigin={result.primaryOrigin}
+        emptyHeading={descriptor.emptyHeading}
+        emptyBody={descriptor.emptyBody}
+        embedded={true}
+      />
+
+      {gridItems.length > 0 && (
+        <PublicPagination
+          pagination={pagination}
+          ariaLabel={`Navigasi halaman ${descriptor.pluralLabel}`}
+        />
+      )}
+    </div>
+  </section>
+
+  {result.floatingWa.phone && (
+    <FloatingWhatsApp
+      slot="floating"
+      shell={result.shell}
+      phone={result.floatingWa.phone}
+      businessName={result.floatingWa.businessName}
+      greetingMessage={result.floatingWa.greetingMessage}
+      operatingHours={result.floatingWa.operatingHours}
+      holidayHours={result.floatingWa.holidayHours}
+      primaryOrigin={result.floatingWa.primaryOrigin}
+      canonicalPath={result.floatingWa.canonicalPath}
+      itemTitle={result.floatingWa.itemTitle}
+    />
+  )}
+</Layout>
