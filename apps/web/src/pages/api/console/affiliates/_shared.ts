@@ -46,6 +46,63 @@ import {
 
 export const AFFILIATE_COMPLIANCE_SETTINGS_KEY = "affiliate.payout_compliance" as const;
 
+export const CONSOLE_AFFILIATE_DASHBOARD_MAX_ROWS = 200;
+export const CONSOLE_AFFILIATE_CSV_MAX_ROWS = 5_000;
+export const CONSOLE_AFFILIATE_CSV_MAX_OFFSET = 1_000_000;
+
+export interface BoundedExportPage<T> {
+  readonly rows: readonly T[];
+  readonly rowCount: number;
+  readonly maxRows: number;
+  readonly offset: number;
+  readonly truncated: boolean;
+  readonly nextOffset: number | null;
+}
+
+export function parseConsoleCsvExportOffset(raw: string | null): number {
+  if (!raw) return 0;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return 0;
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) return 0;
+  return Math.min(CONSOLE_AFFILIATE_CSV_MAX_OFFSET, parsed);
+}
+
+export function resolveConsoleCsvMaxRows(
+  rawQueryLimit: string | null,
+  configuredMaxRows?: number,
+): number {
+  const ceiling =
+    typeof configuredMaxRows === "number" && Number.isFinite(configuredMaxRows)
+      ? Math.max(1, Math.min(CONSOLE_AFFILIATE_CSV_MAX_ROWS, Math.trunc(configuredMaxRows)))
+      : CONSOLE_AFFILIATE_CSV_MAX_ROWS;
+  if (!rawQueryLimit) return ceiling;
+  const trimmed = rawQueryLimit.trim();
+  if (!/^\d+$/.test(trimmed)) return ceiling;
+  const parsed = Number.parseInt(trimmed, 10);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) return ceiling;
+  return Math.min(ceiling, parsed);
+}
+
+export function finalizeBoundedExportPage<T>(
+  fetchedPlusOneRows: readonly T[],
+  maxRows: number,
+  offset = 0,
+): BoundedExportPage<T> {
+  const safeMax = Math.max(1, Math.trunc(maxRows));
+  const safeOffset = Math.max(0, Math.trunc(offset));
+  const truncated = fetchedPlusOneRows.length > safeMax;
+  const rows = truncated ? fetchedPlusOneRows.slice(0, safeMax) : fetchedPlusOneRows;
+  return {
+    rows,
+    rowCount: rows.length,
+    maxRows: safeMax,
+    offset: safeOffset,
+    truncated,
+    nextOffset: truncated ? safeOffset + rows.length : null,
+  };
+}
+
 const CSV_FORMULA_PREFIX_RE = /^[\s]*[=+\-@\t\r]/;
 const CSV_LEADING_CONTROL_RE = /^[\t\r]/;
 
@@ -572,6 +629,259 @@ function resolvePublicCode(rawCode: string, approvedCode: string | null): string
   return normalizeAffiliateReferralCode(candidate);
 }
 
+function mapConsoleAffiliateSqlRow(
+  row: ConsoleAffiliateListSqlRow,
+  marketingOrigin: string,
+): ConsoleAffiliateDto {
+  const publicCode = resolvePublicCode(row.referral_code, row.approved_referral_code);
+  const referralLink =
+    row.status === "active" && publicCode
+      ? buildAffiliateReferralLink(publicCode, marketingOrigin)
+      : null;
+  const hasTermsAccepted =
+    typeof row.terms_accepted_at === "number" &&
+    row.terms_accepted_at > 0 &&
+    (row.terms_version?.trim().length ?? 0) > 0;
+
+  return {
+    id: row.id,
+    userId: row.user_id,
+    email: row.profile_email ?? row.user_email ?? "",
+    status: row.status,
+    referralCode: publicCode,
+    referralLink,
+    payoutBankCode: row.payout_bank_code ?? row.payout_method ?? "",
+    payoutAccountHolder: row.payout_account_holder ?? row.payout_account_name ?? "",
+    payoutAccountMasked: row.payout_account_masked ?? row.payout_account_number ?? "",
+    termsVersion: row.terms_version ?? "",
+    termsAcceptedAt:
+      hasTermsAccepted && row.terms_accepted_at
+        ? new Date(row.terms_accepted_at).toISOString()
+        : null,
+    hasTermsAccepted,
+    visitsCount: Number(row.visits_count ?? 0),
+    referralsCount: Number(row.referrals_count ?? 0),
+    payingTenantsCount: Number(row.paying_tenants_count ?? 0),
+    balances: {
+      pendingIdr: Number(row.pending_idr ?? 0),
+      approvedAvailableIdr: Number(row.approved_available_idr ?? 0),
+      batchedIdr: Number(row.batched_idr ?? 0),
+      paidIdr: Number(row.paid_idr ?? 0),
+      reversedIdr: Number(row.reversed_idr ?? 0),
+    },
+    approvedAt: row.approved_at !== null ? new Date(row.approved_at).toISOString() : null,
+    suspendedAt: row.suspended_at !== null ? new Date(row.suspended_at).toISOString() : null,
+    rejectedAt: row.rejected_at !== null ? new Date(row.rejected_at).toISOString() : null,
+    statusReason: row.status_reason ?? null,
+    version: row.version,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+function mapConsoleBatchSqlRow(row: ConsoleBatchListSqlRow): ConsoleAffiliatePayoutBatchDto {
+  const publicCode = resolvePublicCode(row.referral_code, row.approved_referral_code);
+  const affiliateHasTermsAccepted =
+    typeof row.terms_accepted_at === "number" &&
+    row.terms_accepted_at > 0 &&
+    (row.terms_version?.trim().length ?? 0) > 0;
+
+  return {
+    id: row.id,
+    affiliateId: row.affiliate_id,
+    affiliateEmail: row.profile_email ?? row.user_email ?? "",
+    affiliateReferralCode: publicCode,
+    affiliateStatus: row.affiliate_status,
+    affiliateHasTermsAccepted,
+    payoutBankCode: row.payout_bank_code ?? row.payout_method ?? "",
+    payoutAccountHolder: row.payout_account_holder ?? row.payout_account_name ?? "",
+    payoutAccountMasked: row.payout_account_masked ?? row.payout_account_number ?? "",
+    payoutPeriodKey: row.payout_period_key,
+    totalAmountIdr: Number(row.total_amount_idr ?? 0),
+    entryCount: Number(row.entry_count ?? 0),
+    status: row.status,
+    transferReference: row.transfer_reference,
+    paidAt: row.paid_at !== null ? new Date(row.paid_at).toISOString() : null,
+    paidByUserId: row.paid_by_user_id,
+    statusReason: row.status_reason,
+    version: row.version,
+    createdAt: new Date(row.created_at).toISOString(),
+    updatedAt: new Date(row.updated_at).toISOString(),
+  };
+}
+
+async function queryConsoleAffiliateRows(
+  platformDb: D1Database,
+  params: {
+    readonly status?: AffiliateDbStatus;
+    readonly limit: number;
+    readonly offset: number;
+  },
+): Promise<readonly ConsoleAffiliateListSqlRow[]> {
+  const affWhere = params.status ? "WHERE a.status = ?" : "";
+  const affBindings: (string | number)[] = params.status
+    ? [params.status, params.limit, params.offset]
+    : [params.limit, params.offset];
+
+  const affRows = await platformDb
+    .prepare(
+      `SELECT
+         a.id,
+         a.user_id,
+         a.referral_code,
+         a.status,
+         a.payout_method,
+         a.payout_account_name,
+         a.payout_account_number,
+         a.version,
+         a.created_at,
+         a.updated_at,
+         u.email AS user_email,
+         p.email AS profile_email,
+         p.approved_referral_code,
+         p.payout_bank_code,
+         p.payout_account_holder,
+         p.payout_account_masked,
+         p.terms_version,
+         p.terms_accepted_at,
+         p.approved_at,
+         p.suspended_at,
+         p.rejected_at,
+         p.status_reason,
+         COALESCE((SELECT SUM(v.visit_count) FROM affiliate_funnel_visits v WHERE v.affiliate_id = a.id), 0) AS visits_count,
+         COALESCE((SELECT COUNT(*) FROM affiliate_referrals r WHERE r.affiliate_id = a.id), 0) AS referrals_count,
+         COALESCE((SELECT COUNT(DISTINCT e2.tenant_id) FROM affiliate_commission_entries e2 WHERE e2.affiliate_id = a.id AND e2.entry_kind IN ('first_payment', 'renewal') AND e2.status != 'reversed'), 0) AS paying_tenants_count,
+         COALESCE((SELECT SUM(CASE WHEN e.status = 'pending' THEN e.commission_idr ELSE 0 END) FROM affiliate_commission_entries e WHERE e.affiliate_id = a.id), 0) AS pending_idr,
+         COALESCE((SELECT SUM(CASE WHEN e.status = 'approved' AND e.payout_batch_id IS NULL THEN e.commission_idr ELSE 0 END) FROM affiliate_commission_entries e WHERE e.affiliate_id = a.id), 0) AS approved_available_idr,
+         COALESCE((SELECT SUM(CASE WHEN e.status = 'batched' THEN e.commission_idr ELSE 0 END) FROM affiliate_commission_entries e WHERE e.affiliate_id = a.id), 0) AS batched_idr,
+         COALESCE((SELECT SUM(CASE WHEN e.status = 'paid' THEN e.commission_idr ELSE 0 END) FROM affiliate_commission_entries e WHERE e.affiliate_id = a.id), 0) AS paid_idr,
+         COALESCE((SELECT SUM(CASE WHEN e.status = 'reversed' THEN e.commission_idr ELSE 0 END) FROM affiliate_commission_entries e WHERE e.affiliate_id = a.id), 0) AS reversed_idr
+       FROM affiliates a
+       LEFT JOIN users u ON u.id = a.user_id
+       LEFT JOIN affiliate_enrollment_profiles p ON p.affiliate_id = a.id
+       ${affWhere}
+       ORDER BY a.created_at DESC, a.id DESC
+       LIMIT ? OFFSET ?`,
+    )
+    .bind(...affBindings)
+    .all<ConsoleAffiliateListSqlRow>();
+
+  return affRows.results ?? [];
+}
+
+async function queryConsoleBatchRows(
+  platformDb: D1Database,
+  params: {
+    readonly batchStatus?: AffiliatePayoutBatchStatus;
+    readonly limit: number;
+    readonly offset: number;
+  },
+): Promise<readonly ConsoleBatchListSqlRow[]> {
+  const batchWhere = params.batchStatus ? "WHERE b.status = ?" : "";
+  const batchBindings: (string | number)[] = params.batchStatus
+    ? [params.batchStatus, params.limit, params.offset]
+    : [params.limit, params.offset];
+
+  const batchRows = await platformDb
+    .prepare(
+      `SELECT
+         b.id,
+         b.affiliate_id,
+         b.payout_period_key,
+         b.total_amount_idr,
+         b.entry_count,
+         b.status,
+         b.transfer_reference,
+         b.paid_at,
+         b.paid_by_user_id,
+         b.status_reason,
+         b.version,
+         b.created_at,
+         b.updated_at,
+         a.status AS affiliate_status,
+         a.referral_code,
+         p.approved_referral_code,
+         u.email AS user_email,
+         p.email AS profile_email,
+         a.payout_method,
+         a.payout_account_name,
+         a.payout_account_number,
+         p.payout_bank_code,
+         p.payout_account_holder,
+         p.payout_account_masked,
+         p.terms_version,
+         p.terms_accepted_at
+       FROM affiliate_commission_payout_batches b
+       INNER JOIN affiliates a ON a.id = b.affiliate_id
+       LEFT JOIN users u ON u.id = a.user_id
+       LEFT JOIN affiliate_enrollment_profiles p ON p.affiliate_id = a.id
+       ${batchWhere}
+       ORDER BY
+         CASE b.status WHEN 'pending_review' THEN 0 WHEN 'paid' THEN 1 ELSE 2 END ASC,
+         b.payout_period_key DESC,
+         b.created_at DESC,
+         b.id DESC
+       LIMIT ? OFFSET ?`,
+    )
+    .bind(...batchBindings)
+    .all<ConsoleBatchListSqlRow>();
+
+  return batchRows.results ?? [];
+}
+
+/**
+ * Loads a single bounded CSV export page for either affiliates or payout batches,
+ * querying `maxRows + 1` rows so truncation is known authoritatively (SEC-004).
+ */
+export async function loadConsoleAffiliatesCsvExport(
+  platformDb: D1Database,
+  options: {
+    readonly scope: "affiliates" | "batches";
+    readonly status?: AffiliateDbStatus;
+    readonly batchStatus?: AffiliatePayoutBatchStatus;
+    readonly marketingOrigin?: string;
+    readonly maxRows?: number;
+    readonly offset?: number;
+  },
+): Promise<
+  | ({ readonly scope: "affiliates" } & BoundedExportPage<ConsoleAffiliateDto>)
+  | ({ readonly scope: "batches" } & BoundedExportPage<ConsoleAffiliatePayoutBatchDto>)
+> {
+  const marketingOrigin = options.marketingOrigin ?? DEFAULT_AFFILIATE_MARKETING_ORIGIN;
+  const maxRows = Math.max(
+    1,
+    Math.min(CONSOLE_AFFILIATE_CSV_MAX_ROWS, Math.trunc(options.maxRows ?? CONSOLE_AFFILIATE_CSV_MAX_ROWS)),
+  );
+  const offset = Math.max(
+    0,
+    Math.min(CONSOLE_AFFILIATE_CSV_MAX_OFFSET, Math.trunc(options.offset ?? 0)),
+  );
+
+  if (options.scope === "batches") {
+    const rawRows = await queryConsoleBatchRows(platformDb, {
+      batchStatus: options.batchStatus,
+      limit: maxRows + 1,
+      offset,
+    });
+    const mapped = rawRows.map(mapConsoleBatchSqlRow);
+    return {
+      scope: "batches",
+      ...finalizeBoundedExportPage(mapped, maxRows, offset),
+    };
+  }
+
+  const rawRows = await queryConsoleAffiliateRows(platformDb, {
+    status: options.status,
+    limit: maxRows + 1,
+    offset,
+  });
+  const mapped = rawRows.map((row) => mapConsoleAffiliateSqlRow(row, marketingOrigin));
+  return {
+    scope: "affiliates",
+    ...finalizeBoundedExportPage(mapped, maxRows, offset),
+  };
+}
+
 /**
  * Loads the complete Console Affiliates & Payout Batches dataset with optional status filters.
  */
@@ -585,181 +895,21 @@ export async function loadConsoleAffiliatesDashboard(
   } = {},
 ): Promise<ConsoleAffiliatesDashboardData> {
   const marketingOrigin = options.marketingOrigin ?? DEFAULT_AFFILIATE_MARKETING_ORIGIN;
-  const limit = Math.max(1, Math.min(200, Math.trunc(options.limit ?? 100)));
+  const limit = Math.max(
+    1,
+    Math.min(CONSOLE_AFFILIATE_DASHBOARD_MAX_ROWS, Math.trunc(options.limit ?? 100)),
+  );
 
-  const affWhere = options.status ? "WHERE a.status = ?" : "";
-  const affBindings: (string | number)[] = options.status ? [options.status, limit] : [limit];
-
-  const batchWhere = options.batchStatus ? "WHERE b.status = ?" : "";
-  const batchBindings: (string | number)[] = options.batchStatus
-    ? [options.batchStatus, limit]
-    : [limit];
-
-  const [affRows, batchRows, compliance] = await Promise.all([
-    platformDb
-      .prepare(
-        `SELECT
-           a.id,
-           a.user_id,
-           a.referral_code,
-           a.status,
-           a.payout_method,
-           a.payout_account_name,
-           a.payout_account_number,
-           a.version,
-           a.created_at,
-           a.updated_at,
-           u.email AS user_email,
-           p.email AS profile_email,
-           p.approved_referral_code,
-           p.payout_bank_code,
-           p.payout_account_holder,
-           p.payout_account_masked,
-           p.terms_version,
-           p.terms_accepted_at,
-           p.approved_at,
-           p.suspended_at,
-           p.rejected_at,
-           p.status_reason,
-           COALESCE((SELECT SUM(v.visit_count) FROM affiliate_funnel_visits v WHERE v.affiliate_id = a.id), 0) AS visits_count,
-           COALESCE((SELECT COUNT(*) FROM affiliate_referrals r WHERE r.affiliate_id = a.id), 0) AS referrals_count,
-           COALESCE((SELECT COUNT(DISTINCT e2.tenant_id) FROM affiliate_commission_entries e2 WHERE e2.affiliate_id = a.id AND e2.entry_kind IN ('first_payment', 'renewal') AND e2.status != 'reversed'), 0) AS paying_tenants_count,
-           COALESCE((SELECT SUM(CASE WHEN e.status = 'pending' THEN e.commission_idr ELSE 0 END) FROM affiliate_commission_entries e WHERE e.affiliate_id = a.id), 0) AS pending_idr,
-           COALESCE((SELECT SUM(CASE WHEN e.status = 'approved' AND e.payout_batch_id IS NULL THEN e.commission_idr ELSE 0 END) FROM affiliate_commission_entries e WHERE e.affiliate_id = a.id), 0) AS approved_available_idr,
-           COALESCE((SELECT SUM(CASE WHEN e.status = 'batched' THEN e.commission_idr ELSE 0 END) FROM affiliate_commission_entries e WHERE e.affiliate_id = a.id), 0) AS batched_idr,
-           COALESCE((SELECT SUM(CASE WHEN e.status = 'paid' THEN e.commission_idr ELSE 0 END) FROM affiliate_commission_entries e WHERE e.affiliate_id = a.id), 0) AS paid_idr,
-           COALESCE((SELECT SUM(CASE WHEN e.status = 'reversed' THEN e.commission_idr ELSE 0 END) FROM affiliate_commission_entries e WHERE e.affiliate_id = a.id), 0) AS reversed_idr
-         FROM affiliates a
-         LEFT JOIN users u ON u.id = a.user_id
-         LEFT JOIN affiliate_enrollment_profiles p ON p.affiliate_id = a.id
-         ${affWhere}
-         ORDER BY a.created_at DESC, a.id DESC
-         LIMIT ?`,
-      )
-      .bind(...affBindings)
-      .all<ConsoleAffiliateListSqlRow>(),
-    platformDb
-      .prepare(
-        `SELECT
-           b.id,
-           b.affiliate_id,
-           b.payout_period_key,
-           b.total_amount_idr,
-           b.entry_count,
-           b.status,
-           b.transfer_reference,
-           b.paid_at,
-           b.paid_by_user_id,
-           b.status_reason,
-           b.version,
-           b.created_at,
-           b.updated_at,
-           a.status AS affiliate_status,
-           a.referral_code,
-           p.approved_referral_code,
-           u.email AS user_email,
-           p.email AS profile_email,
-           a.payout_method,
-           a.payout_account_name,
-           a.payout_account_number,
-           p.payout_bank_code,
-           p.payout_account_holder,
-           p.payout_account_masked,
-           p.terms_version,
-           p.terms_accepted_at
-         FROM affiliate_commission_payout_batches b
-         INNER JOIN affiliates a ON a.id = b.affiliate_id
-         LEFT JOIN users u ON u.id = a.user_id
-         LEFT JOIN affiliate_enrollment_profiles p ON p.affiliate_id = a.id
-         ${batchWhere}
-         ORDER BY
-           CASE b.status WHEN 'pending_review' THEN 0 WHEN 'paid' THEN 1 ELSE 2 END ASC,
-           b.payout_period_key DESC,
-           b.created_at DESC
-         LIMIT ?`,
-      )
-      .bind(...batchBindings)
-      .all<ConsoleBatchListSqlRow>(),
+  const [affRawRows, batchRawRows, compliance] = await Promise.all([
+    queryConsoleAffiliateRows(platformDb, { status: options.status, limit, offset: 0 }),
+    queryConsoleBatchRows(platformDb, { batchStatus: options.batchStatus, limit, offset: 0 }),
     loadPlatformAffiliateComplianceState(platformDb),
   ]);
 
-  const affiliates: ConsoleAffiliateDto[] = (affRows.results ?? []).map((row) => {
-    const publicCode = resolvePublicCode(row.referral_code, row.approved_referral_code);
-    const referralLink =
-      row.status === "active" && publicCode
-        ? buildAffiliateReferralLink(publicCode, marketingOrigin)
-        : null;
-    const hasTermsAccepted =
-      typeof row.terms_accepted_at === "number" &&
-      row.terms_accepted_at > 0 &&
-      (row.terms_version?.trim().length ?? 0) > 0;
-
-    return {
-      id: row.id,
-      userId: row.user_id,
-      email: row.profile_email ?? row.user_email ?? "",
-      status: row.status,
-      referralCode: publicCode,
-      referralLink,
-      payoutBankCode: row.payout_bank_code ?? row.payout_method ?? "",
-      payoutAccountHolder: row.payout_account_holder ?? row.payout_account_name ?? "",
-      payoutAccountMasked: row.payout_account_masked ?? row.payout_account_number ?? "",
-      termsVersion: row.terms_version ?? "",
-      termsAcceptedAt:
-        hasTermsAccepted && row.terms_accepted_at
-          ? new Date(row.terms_accepted_at).toISOString()
-          : null,
-      hasTermsAccepted,
-      visitsCount: Number(row.visits_count ?? 0),
-      referralsCount: Number(row.referrals_count ?? 0),
-      payingTenantsCount: Number(row.paying_tenants_count ?? 0),
-      balances: {
-        pendingIdr: Number(row.pending_idr ?? 0),
-        approvedAvailableIdr: Number(row.approved_available_idr ?? 0),
-        batchedIdr: Number(row.batched_idr ?? 0),
-        paidIdr: Number(row.paid_idr ?? 0),
-        reversedIdr: Number(row.reversed_idr ?? 0),
-      },
-      approvedAt: row.approved_at !== null ? new Date(row.approved_at).toISOString() : null,
-      suspendedAt: row.suspended_at !== null ? new Date(row.suspended_at).toISOString() : null,
-      rejectedAt: row.rejected_at !== null ? new Date(row.rejected_at).toISOString() : null,
-      statusReason: row.status_reason ?? null,
-      version: row.version,
-      createdAt: new Date(row.created_at).toISOString(),
-      updatedAt: new Date(row.updated_at).toISOString(),
-    };
-  });
-
-  const batches: ConsoleAffiliatePayoutBatchDto[] = (batchRows.results ?? []).map((row) => {
-    const publicCode = resolvePublicCode(row.referral_code, row.approved_referral_code);
-    const affiliateHasTermsAccepted =
-      typeof row.terms_accepted_at === "number" &&
-      row.terms_accepted_at > 0 &&
-      (row.terms_version?.trim().length ?? 0) > 0;
-
-    return {
-      id: row.id,
-      affiliateId: row.affiliate_id,
-      affiliateEmail: row.profile_email ?? row.user_email ?? "",
-      affiliateReferralCode: publicCode,
-      affiliateStatus: row.affiliate_status,
-      affiliateHasTermsAccepted,
-      payoutBankCode: row.payout_bank_code ?? row.payout_method ?? "",
-      payoutAccountHolder: row.payout_account_holder ?? row.payout_account_name ?? "",
-      payoutAccountMasked: row.payout_account_masked ?? row.payout_account_number ?? "",
-      payoutPeriodKey: row.payout_period_key,
-      totalAmountIdr: Number(row.total_amount_idr ?? 0),
-      entryCount: Number(row.entry_count ?? 0),
-      status: row.status,
-      transferReference: row.transfer_reference,
-      paidAt: row.paid_at !== null ? new Date(row.paid_at).toISOString() : null,
-      paidByUserId: row.paid_by_user_id,
-      statusReason: row.status_reason,
-      version: row.version,
-      createdAt: new Date(row.created_at).toISOString(),
-      updatedAt: new Date(row.updated_at).toISOString(),
-    };
-  });
+  const affiliates: ConsoleAffiliateDto[] = affRawRows.map((row) =>
+    mapConsoleAffiliateSqlRow(row, marketingOrigin),
+  );
+  const batches: ConsoleAffiliatePayoutBatchDto[] = batchRawRows.map(mapConsoleBatchSqlRow);
 
   let pendingAffiliates = 0;
   let activeAffiliates = 0;
