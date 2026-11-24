@@ -8,8 +8,10 @@ import {
   SEO_AI_AUTOPILOT_PLUGIN,
   SEO_AI_AUTOPILOT_PLUGIN_ID,
 } from "../../../../packages/plugins/seo-ai-autopilot/index.ts";
-import { LEAD_NOTIFIER_PLUGIN } from "../../../../packages/plugins/lead-notifier/index.ts";
+import { BIO_LINKS_PLUGIN } from "../../../../packages/plugins/bio-links/index.ts";
+import { WA_CS_ROTATOR_PLUGIN } from "../../../../packages/plugins/wa-cs-rotator/index.ts";
 import { WP_IMPORTER_PLUGIN } from "../../../../packages/plugins/wp-importer/index.ts";
+import { LEAD_NOTIFIER_PLUGIN } from "../../../../packages/plugins/lead-notifier/index.ts";
 
 /**
  * Explicit First-Party Modular Plugin Registry (REQ-097, ADR-0010, PLAN §19.7).
@@ -119,13 +121,14 @@ export function createPluginRegistry(
 
 /**
  * Official statically registered first-party plugins compiled into this Worker bundle.
- * Future tasks (TASK-099 `bio-links`/`wa-cs-rotator`, TASK-100 `wp-importer`,
- * TASK-101 `lead-notifier`) register here without touching Frozen Core.
+ * Registered without modifying any Frozen Core CMS package (ADR-0010, REQ-099).
  */
 export const REGISTERED_FIRST_PARTY_PLUGINS: readonly PluginDefinition[] = [
   SEO_AI_AUTOPILOT_PLUGIN,
-  LEAD_NOTIFIER_PLUGIN,
+  BIO_LINKS_PLUGIN,
+  WA_CS_ROTATOR_PLUGIN,
   WP_IMPORTER_PLUGIN,
+  LEAD_NOTIFIER_PLUGIN,
 ] as const;
 
 /**
