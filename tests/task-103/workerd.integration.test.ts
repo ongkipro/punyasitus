@@ -8,6 +8,7 @@ import {
 } from "@punyasitus/auth";
 import { createLocalMailSink } from "@punyasitus/core/email/index";
 import { ensureAbuseModerationSchema } from "@punyasitus/db/abuse/index";
+import { createCatalogOffering } from "@punyasitus/db/catalog/index";
 import {
   applyPlatformMigrations,
   applyTenantMigrations,
@@ -30,11 +31,14 @@ import {
 } from "@punyasitus/db/content-screening/index";
 import { applyEmailClaimsMigration } from "@punyasitus/db/email/index";
 import { createTenantForm } from "@punyasitus/db/forms/index";
+import { saveSiteIdentityDraft } from "@punyasitus/db/identity/index";
+import { createPage } from "@punyasitus/db/pages/index";
 import {
   ensurePlatformOperatorRolesSchema,
   listPlatformAuditEntries,
   PLATFORM_MIGRATIONS,
 } from "@punyasitus/db/platform";
+import { createPost } from "@punyasitus/db/posts/index";
 import { saveDraftResource } from "@punyasitus/db/publication/index";
 import { TENANT_MIGRATIONS } from "@punyasitus/db/tenant";
 import { beforeAll, describe, expect, it } from "vitest";
@@ -48,6 +52,10 @@ import {
   handleConsoleTrustWatchRequest,
 } from "../../apps/web/src/pages/api/console/abuse/_screening-shared.ts";
 import type { ConsoleAbuseRuntimeEnv } from "../../apps/web/src/pages/api/console/abuse/_shared.ts";
+import { handleTenantCatalogOfferingPublishRequest } from "../../apps/web/src/pages/api/tenants/[tenantId]/catalog/[offeringId]/publish.ts";
+import { handleTenantIdentityPublishRequest } from "../../apps/web/src/pages/api/tenants/[tenantId]/identity/publish.ts";
+import { handleTenantPagePublishRequest } from "../../apps/web/src/pages/api/tenants/[tenantId]/pages/[pageId]/publish.ts";
+import { handleTenantPostPublishRequest } from "../../apps/web/src/pages/api/tenants/[tenantId]/posts/[postId]/publish.ts";
 import {
   runDailyTrustWatch,
   type DnsProbePort,
@@ -1316,5 +1324,449 @@ describe("TASK-103 workerd integration — Publish Screening Gate, Operator Rele
       { nowMs },
     );
     expect(ineligibleRes.status).toBe(409);
+  });
+
+  it("SEC-001 / M1-FU-03: enforces publishResourceWithScreening on all 4 direct dashboard publish endpoints (pages, posts, catalog, identity)", async () => {
+    const nowMs = Date.UTC(2026, 10, 24, 5, 0, 0);
+    const tenantId = "01J103DRECTP0BTENANT000008";
+    const ownerUserId = "usr_t103_owner_8";
+    const tenantDb = await seedTenantWithOwner({
+      tenantId,
+      orgId: "org_t103_direct_pub",
+      handle: "toko-direct-pub-103",
+      name: "Toko Direct Publish Screening",
+      ownerUserId,
+      ownerEmail: "owner-direct-pub@toko103.example",
+      nowMs,
+    });
+
+    const sentIndexNowMessages: unknown[] = [];
+    const runtimeEnv = {
+      APP_ENV: "test",
+      PLATFORM_DOMAIN: "punyasitus.com",
+      SAAS_ZONE: "situsku.click",
+      PLATFORM_DB: env.PLATFORM_DB,
+      TENANT_STORE: env.TENANT_STORE as unknown as TenantStoreNamespaceLike,
+      AUTH_SECRET: APP_SECRET,
+      CONSOLE_AUTH_SECRET: CONSOLE_SECRET,
+      JOBS_QUEUE: {
+        async send(msg: unknown) {
+          sentIndexNowMessages.push(msg);
+        },
+      },
+    };
+
+    const makeDashboardPublishReq = (pathname: string, body: Record<string, unknown>) =>
+      new Request(`${APP_ORIGIN}${pathname}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: APP_ORIGIN,
+        },
+        body: JSON.stringify(body),
+      });
+
+    const readCacheVersion = async (): Promise<number> => {
+      const row = await env.PLATFORM_DB.prepare("SELECT cache_version FROM tenants WHERE id = ?")
+        .bind(tenantId)
+        .first<{ readonly cache_version: number }>();
+      return Number(row?.cache_version ?? 0);
+    };
+
+    // ------------------------------------------------------------------
+    // 1. Pages direct dashboard publish: flagged -> 202 held_for_review, clean -> 200 published
+    // ------------------------------------------------------------------
+    const badPage = await createPage(tenantDb, {
+      title: "Promo Slot Gacor Maxwin Hari Ini",
+      slug: "promo-slot-gacor-direct",
+      isHomepage: false,
+      nowMs,
+    });
+    const cacheBeforeBadPage = await readCacheVersion();
+    const badPageRes = await handleTenantPagePublishRequest(
+      tenantId,
+      String(badPage.id),
+      makeDashboardPublishReq(`/api/tenants/${tenantId}/pages/${badPage.id}/publish`, {
+        version: badPage.version,
+      }),
+      runtimeEnv,
+      { authenticatedUser: { id: ownerUserId }, nowMs: nowMs + 100 },
+    );
+    expect(badPageRes.status).toBe(202);
+    expect(badPageRes.headers.get("cache-control")).toContain("no-store");
+    const badPageBody = (await badPageRes.json()) as {
+      outcome: string;
+      held: boolean;
+      status: string;
+      reason: string;
+      reviewId: string;
+      message: string;
+      ownerNotice: { held: boolean; status: string; reason: string; reviewId: string; message: string };
+    };
+    expect(badPageBody.outcome).toBe("held_for_review");
+    expect(badPageBody.held).toBe(true);
+    expect(badPageBody.status).toBe("draft");
+    expect(badPageBody.message).toBe("Konten ditahan untuk ditinjau");
+    expect(badPageBody.ownerNotice.reviewId).toBe(badPageBody.reviewId);
+    // Zero keyword leakage to tenant owner!
+    expect(JSON.stringify(badPageBody).toLowerCase()).not.toContain("slot gacor");
+    expect(JSON.stringify(badPageBody).toLowerCase()).not.toContain("maxwin");
+    expect(await readCacheVersion()).toBe(cacheBeforeBadPage);
+    expect(sentIndexNowMessages.length).toBe(0);
+
+    const badPageRow = await tenantDb
+      .prepare("SELECT status, published_sections_json FROM pages WHERE id = ?")
+      .bind(badPage.id)
+      .first<{ readonly status: string; readonly published_sections_json: string | null }>();
+    expect(badPageRow?.status).toBe("draft");
+    expect(badPageRow?.published_sections_json).toBeNull();
+
+    const badPageReview = await getScreeningReviewById(env.PLATFORM_DB, badPageBody.reviewId);
+    expect(badPageReview?.publishSource).toBe("dashboard");
+    expect(badPageReview?.resourceType).toBe("page");
+    expect(badPageReview?.status).toBe("held_for_review");
+
+    const cleanPage = await createPage(tenantDb, {
+      title: "Tentang Bengkel Nusantara",
+      slug: "tentang-bengkel",
+      isHomepage: false,
+      nowMs: nowMs + 200,
+    });
+    const cleanPageRes = await handleTenantPagePublishRequest(
+      tenantId,
+      String(cleanPage.id),
+      makeDashboardPublishReq(`/api/tenants/${tenantId}/pages/${cleanPage.id}/publish`, {
+        version: cleanPage.version,
+      }),
+      runtimeEnv,
+      { authenticatedUser: { id: ownerUserId }, nowMs: nowMs + 300 },
+    );
+    expect(cleanPageRes.status).toBe(200);
+    const cleanPageJson = (await cleanPageRes.json()) as {
+      status: string;
+      cacheVersion: number;
+      revisionNumber: number;
+    };
+    expect(cleanPageJson.status).toBe("published");
+    expect(cleanPageJson.cacheVersion).toBe(cacheBeforeBadPage + 1);
+    expect(cleanPageJson.revisionNumber).toBe(1);
+
+    // ------------------------------------------------------------------
+    // 2. Posts direct dashboard publish: flagged -> 202 held_for_review, clean -> 200 published
+    // ------------------------------------------------------------------
+    const badPost = await createPost(tenantDb, {
+      title: "Panduan Bisnis Harian",
+      slug: "panduan-bisnis-judol",
+      body: {
+        schemaVersion: 1,
+        blocks: [
+          {
+            type: "paragraph",
+            text: "Kunjungi situs judi online terpercaya https://slotgacor88.xyz sekarang juga.",
+          },
+        ],
+      },
+      nowMs: nowMs + 400,
+    });
+    const cacheBeforeBadPost = await readCacheVersion();
+    const sentBeforeBadPost = sentIndexNowMessages.length;
+    const badPostRes = await handleTenantPostPublishRequest(
+      tenantId,
+      String(badPost.id),
+      makeDashboardPublishReq(`/api/tenants/${tenantId}/posts/${badPost.id}/publish`, {
+        version: badPost.version,
+      }),
+      runtimeEnv,
+      { authenticatedUser: { id: ownerUserId }, nowMs: nowMs + 500 },
+    );
+    expect(badPostRes.status).toBe(202);
+    expect(badPostRes.headers.get("cache-control")).toContain("no-store");
+    const badPostBody = (await badPostRes.json()) as {
+      outcome: string;
+      held: boolean;
+      status: string;
+      reviewId: string;
+      message: string;
+    };
+    expect(badPostBody.outcome).toBe("held_for_review");
+    expect(badPostBody.held).toBe(true);
+    expect(badPostBody.status).toBe("draft");
+    expect(badPostBody.message).toBe("Konten ditahan untuk ditinjau");
+    expect(JSON.stringify(badPostBody).toLowerCase()).not.toContain("judi online");
+    expect(JSON.stringify(badPostBody).toLowerCase()).not.toContain("slotgacor88");
+    expect(await readCacheVersion()).toBe(cacheBeforeBadPost);
+    expect(sentIndexNowMessages.length).toBe(sentBeforeBadPost);
+
+    const badPostRow = await tenantDb
+      .prepare("SELECT status, published_body_json FROM posts WHERE id = ?")
+      .bind(badPost.id)
+      .first<{ readonly status: string; readonly published_body_json: string | null }>();
+    expect(badPostRow?.status).toBe("draft");
+    expect(badPostRow?.published_body_json).toBeNull();
+
+    const badPostReview = await getScreeningReviewById(env.PLATFORM_DB, badPostBody.reviewId);
+    expect(badPostReview?.publishSource).toBe("dashboard");
+    expect(badPostReview?.resourceType).toBe("post");
+
+    const cleanPost = await createPost(tenantDb, {
+      title: "Tips Merawat Mesin Mobil Harian",
+      slug: "tips-merawat-mesin-mobil",
+      body: {
+        schemaVersion: 1,
+        blocks: [{ type: "paragraph", text: "Ganti oli mesin secara berkala setiap 5.000 km." }],
+      },
+      nowMs: nowMs + 600,
+    });
+    const cleanPostRes = await handleTenantPostPublishRequest(
+      tenantId,
+      String(cleanPost.id),
+      makeDashboardPublishReq(`/api/tenants/${tenantId}/posts/${cleanPost.id}/publish`, {
+        version: cleanPost.version,
+      }),
+      runtimeEnv,
+      { authenticatedUser: { id: ownerUserId }, nowMs: nowMs + 700 },
+    );
+    expect(cleanPostRes.status).toBe(200);
+    const cleanPostJson = (await cleanPostRes.json()) as {
+      status: string;
+      cacheVersion: number;
+      substantiveChanged: boolean;
+    };
+    expect(cleanPostJson.status).toBe("published");
+    expect(cleanPostJson.cacheVersion).toBe(cacheBeforeBadPost + 1);
+    expect(cleanPostJson.substantiveChanged).toBe(true);
+
+    // ------------------------------------------------------------------
+    // 3. Catalog offering direct dashboard publish: flagged -> 202 held_for_review, clean -> 200 published
+    // ------------------------------------------------------------------
+    const badOffering = await createCatalogOffering(
+      tenantDb,
+      {
+        offeringType: "product",
+        title: "Paket Promo Togel Online Resmi",
+        slug: "paket-promo-togel-online",
+        summary: "Bonus besar setiap hari",
+        priceMode: "fixed",
+        price: 100_000,
+        ctaMode: "inquiry",
+        attributes: {},
+      },
+      { nowMs: nowMs + 800 },
+    );
+    const cacheBeforeBadOff = await readCacheVersion();
+    const sentBeforeBadOff = sentIndexNowMessages.length;
+    const badOffRes = await handleTenantCatalogOfferingPublishRequest(
+      tenantId,
+      String(badOffering.id),
+      makeDashboardPublishReq(`/api/tenants/${tenantId}/catalog/${badOffering.id}/publish`, {
+        version: badOffering.version,
+      }),
+      runtimeEnv,
+      { authenticatedUser: { id: ownerUserId }, nowMs: nowMs + 900 },
+    );
+    expect(badOffRes.status).toBe(202);
+    expect(badOffRes.headers.get("cache-control")).toContain("no-store");
+    const badOffBody = (await badOffRes.json()) as {
+      outcome: string;
+      held: boolean;
+      status: string;
+      reviewId: string;
+      message: string;
+    };
+    expect(badOffBody.outcome).toBe("held_for_review");
+    expect(badOffBody.held).toBe(true);
+    expect(badOffBody.status).toBe("draft");
+    expect(badOffBody.message).toBe("Konten ditahan untuk ditinjau");
+    expect(JSON.stringify(badOffBody).toLowerCase()).not.toContain("togel");
+    expect(await readCacheVersion()).toBe(cacheBeforeBadOff);
+    expect(sentIndexNowMessages.length).toBe(sentBeforeBadOff);
+
+    const badOffRow = await tenantDb
+      .prepare("SELECT status, published_snapshot_json FROM offerings WHERE id = ?")
+      .bind(badOffering.id)
+      .first<{ readonly status: string; readonly published_snapshot_json: string | null }>();
+    expect(badOffRow?.status).toBe("draft");
+    expect(badOffRow?.published_snapshot_json).toBeNull();
+
+    const badOffReview = await getScreeningReviewById(env.PLATFORM_DB, badOffBody.reviewId);
+    expect(badOffReview?.publishSource).toBe("dashboard");
+    expect(badOffReview?.resourceType).toBe("offering");
+
+    const cleanOffering = await createCatalogOffering(
+      tenantDb,
+      {
+        offeringType: "product",
+        title: "Kopi Arabika Gayo 250g",
+        slug: "kopi-arabika-gayo-250g",
+        summary: "Biji kopi sangrai medium dari dataran tinggi Gayo.",
+        priceMode: "fixed",
+        price: 95_000,
+        ctaMode: "inquiry",
+        attributes: {},
+      },
+      { nowMs: nowMs + 1_000 },
+    );
+    const cleanOffRes = await handleTenantCatalogOfferingPublishRequest(
+      tenantId,
+      String(cleanOffering.id),
+      makeDashboardPublishReq(`/api/tenants/${tenantId}/catalog/${cleanOffering.id}/publish`, {
+        version: cleanOffering.version,
+      }),
+      runtimeEnv,
+      { authenticatedUser: { id: ownerUserId }, nowMs: nowMs + 1_100 },
+    );
+    expect(cleanOffRes.status).toBe(200);
+    const cleanOffJson = (await cleanOffRes.json()) as {
+      status: string;
+      cacheVersion: number;
+      revisionNumber: number;
+    };
+    expect(cleanOffJson.status).toBe("published");
+    expect(cleanOffJson.cacheVersion).toBe(cacheBeforeBadOff + 1);
+    expect(cleanOffJson.revisionNumber).toBe(1);
+
+    // ------------------------------------------------------------------
+    // 4. Identity direct dashboard publish:
+    //    (a) Flagged `site_settings` -> held (neither table published)
+    //    (b) Clean `site_settings` + flagged `business_profile` -> held (neither table published)
+    //    (c) Both clean -> 200 published cleanly
+    // ------------------------------------------------------------------
+    const badSiteIdentity = await saveSiteIdentityDraft(tenantDb, {
+      siteSettings: {
+        siteTitle: "Agen Slot Gacor 88 Resmi",
+        tagline: "Portal informasi",
+        timezone: "Asia/Jakarta",
+        locale: "id-ID",
+        activeThemeId: "compro",
+      },
+      businessProfile: {
+        businessName: "PT Kopi Nusantara Sejahtera",
+        businessCategory: "CafeOrCoffeeShop",
+        description: "Kopi spesialti pilihan.",
+      },
+      nowMs: nowMs + 1_200,
+    });
+    const cacheBeforeBadSiteId = await readCacheVersion();
+    const badSiteIdRes = await handleTenantIdentityPublishRequest(
+      tenantId,
+      makeDashboardPublishReq(`/api/tenants/${tenantId}/identity/publish`, {
+        expectedVersion: badSiteIdentity.version,
+      }),
+      runtimeEnv,
+      { authenticatedUser: { id: ownerUserId }, nowMs: nowMs + 1_300 },
+    );
+    expect(badSiteIdRes.status).toBe(202);
+    expect(badSiteIdRes.headers.get("cache-control")).toContain("no-store");
+    const badSiteIdBody = (await badSiteIdRes.json()) as {
+      outcome: string;
+      held: boolean;
+      reviewId: string;
+      message: string;
+    };
+    expect(badSiteIdBody.outcome).toBe("held_for_review");
+    expect(badSiteIdBody.held).toBe(true);
+    expect(badSiteIdBody.message).toBe("Konten ditahan untuk ditinjau");
+    expect(JSON.stringify(badSiteIdBody).toLowerCase()).not.toContain("slot gacor");
+    expect(await readCacheVersion()).toBe(cacheBeforeBadSiteId);
+
+    const unpublishedIdentityRowsA = await Promise.all([
+      tenantDb
+        .prepare("SELECT published_json FROM site_settings WHERE id = 1")
+        .first<{ readonly published_json: string | null }>(),
+      tenantDb
+        .prepare("SELECT published_json FROM business_profile WHERE id = 1")
+        .first<{ readonly published_json: string | null }>(),
+    ]);
+    expect(unpublishedIdentityRowsA[0]?.published_json).toBeNull();
+    expect(unpublishedIdentityRowsA[1]?.published_json).toBeNull();
+
+    // (b) Clean site_settings + flagged business_profile -> MUST hold both!
+    const badProfileIdentity = await saveSiteIdentityDraft(tenantDb, {
+      expectedVersion: badSiteIdentity.version,
+      siteSettings: {
+        siteTitle: "Kopi Nusantara Sejahtera",
+        tagline: "Kopi lokal terbaik",
+        timezone: "Asia/Jakarta",
+        locale: "id-ID",
+        activeThemeId: "compro",
+      },
+      businessProfile: {
+        businessName: "Kopi Nusantara",
+        businessCategory: "CafeOrCoffeeShop",
+        description: "Daftar situs judi bola sbobet resmi terpercaya.",
+      },
+      nowMs: nowMs + 1_400,
+    });
+    const badProfileIdRes = await handleTenantIdentityPublishRequest(
+      tenantId,
+      makeDashboardPublishReq(`/api/tenants/${tenantId}/identity/publish`, {
+        expectedVersion: badProfileIdentity.version,
+      }),
+      runtimeEnv,
+      { authenticatedUser: { id: ownerUserId }, nowMs: nowMs + 1_500 },
+    );
+    expect(badProfileIdRes.status).toBe(202);
+    expect(badProfileIdRes.headers.get("cache-control")).toContain("no-store");
+    const badProfileIdBody = (await badProfileIdRes.json()) as {
+      outcome: string;
+      held: boolean;
+      reviewId: string;
+      message: string;
+    };
+    expect(badProfileIdBody.outcome).toBe("held_for_review");
+    expect(badProfileIdBody.held).toBe(true);
+    expect(JSON.stringify(badProfileIdBody).toLowerCase()).not.toContain("sbobet");
+    expect(await readCacheVersion()).toBe(cacheBeforeBadSiteId);
+
+    const badProfileReview = await getScreeningReviewById(env.PLATFORM_DB, badProfileIdBody.reviewId);
+    expect(badProfileReview?.publishSource).toBe("dashboard");
+    expect(badProfileReview?.resourceType).toBe("business_profile");
+
+    const unpublishedIdentityRowsB = await Promise.all([
+      tenantDb
+        .prepare("SELECT published_json FROM site_settings WHERE id = 1")
+        .first<{ readonly published_json: string | null }>(),
+      tenantDb
+        .prepare("SELECT published_json FROM business_profile WHERE id = 1")
+        .first<{ readonly published_json: string | null }>(),
+    ]);
+    expect(unpublishedIdentityRowsB[0]?.published_json).toBeNull();
+    expect(unpublishedIdentityRowsB[1]?.published_json).toBeNull();
+
+    // (c) Both clean -> publishes 200 cleanly!
+    const cleanIdentity = await saveSiteIdentityDraft(tenantDb, {
+      expectedVersion: badProfileIdentity.version,
+      siteSettings: {
+        siteTitle: "Kopi Nusantara Sejahtera",
+        tagline: "Kopi lokal terbaik",
+        timezone: "Asia/Jakarta",
+        locale: "id-ID",
+        activeThemeId: "compro",
+      },
+      businessProfile: {
+        businessName: "PT Kopi Nusantara Sejahtera",
+        businessCategory: "CafeOrCoffeeShop",
+        description: "Kopi spesialti pilihan langsung dari petani Nusantara.",
+      },
+      nowMs: nowMs + 1_600,
+    });
+    const cleanIdRes = await handleTenantIdentityPublishRequest(
+      tenantId,
+      makeDashboardPublishReq(`/api/tenants/${tenantId}/identity/publish`, {
+        expectedVersion: cleanIdentity.version,
+      }),
+      runtimeEnv,
+      { authenticatedUser: { id: ownerUserId }, nowMs: nowMs + 1_700 },
+    );
+    expect(cleanIdRes.status).toBe(200);
+    const cleanIdJson = (await cleanIdRes.json()) as {
+      cacheVersion: number;
+      hasUnpublishedChanges: boolean;
+      published: { siteSettings: { siteTitle: string }; businessProfile: { businessName: string } };
+    };
+    expect(cleanIdJson.hasUnpublishedChanges).toBe(false);
+    expect(cleanIdJson.published.siteSettings.siteTitle).toBe("Kopi Nusantara Sejahtera");
+    expect(cleanIdJson.published.businessProfile.businessName).toBe("PT Kopi Nusantara Sejahtera");
+    expect(cleanIdJson.cacheVersion).toBeGreaterThan(cacheBeforeBadSiteId);
   });
 });

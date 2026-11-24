@@ -1,4 +1,8 @@
 import { env } from "cloudflare:workers";
+import {
+  ContentScreeningError,
+  publishResourceWithScreening,
+} from "@punyasitus/db/content-screening/index";
 import { publishPost } from "@punyasitus/db/posts/index";
 import type { APIRoute } from "astro";
 import {
@@ -108,15 +112,44 @@ export async function handleTenantPostPublishRequest(
   const { member, platformDb, tenantDb } = auth.ctx;
 
   try {
-    const result = await publishPost(platformDb, tenantDb, {
+    const gateOutcome = await publishResourceWithScreening(platformDb, tenantDb, {
       tenantId: member.tenantId,
-      organizationId: member.organizationId,
-      postId: parsedId.id,
+      resourceType: "post",
+      resourceId: parsedId.id,
       expectedVersion: versionCheck.expectedVersion!,
-      confirmSlugChange: parsedBody.body.confirmSlugChange as boolean | undefined,
+      publishSource: "dashboard",
       actorUserId: member.userId,
       nowMs: options.nowMs,
+      executePublish: () =>
+        publishPost(platformDb, tenantDb, {
+          tenantId: member.tenantId,
+          organizationId: member.organizationId,
+          postId: parsedId.id,
+          expectedVersion: versionCheck.expectedVersion!,
+          confirmSlugChange: parsedBody.body.confirmSlugChange as boolean | undefined,
+          actorUserId: member.userId,
+          nowMs: options.nowMs,
+        }),
     });
+
+    if (gateOutcome.outcome === "held_for_review") {
+      return blogJsonResponse(
+        202,
+        {
+          outcome: "held_for_review",
+          held: true,
+          status: gateOutcome.ownerNotice.status,
+          reason: gateOutcome.ownerNotice.reason,
+          reviewId: gateOutcome.reviewId,
+          message: gateOutcome.ownerNotice.message,
+          ownerNotice: gateOutcome.ownerNotice,
+          requestId,
+        },
+        { "Cache-Control": "private, no-store" },
+      );
+    }
+
+    const result = gateOutcome.published;
 
     if (runtimeEnv.JOBS_QUEUE) {
       const publicPath = `/blog/${result.post.slug}`;
@@ -148,6 +181,23 @@ export async function handleTenantPostPublishRequest(
       contentFingerprint: result.contentFingerprint,
     });
   } catch (err) {
+    if (err instanceof ContentScreeningError) {
+      if (err.code === "STALE_VERSION") {
+        return blogErrorResponse(409, "STALE_VERSION", err.message, requestId, [
+          { field: "version", code: "STALE_VERSION", message: err.message },
+        ]);
+      }
+      if (err.code === "NOT_FOUND") {
+        return blogErrorResponse(404, "NOT_FOUND", err.message, requestId);
+      }
+      if (err.code === "TOO_MANY_PENDING_REVIEWS") {
+        return blogErrorResponse(429, "RATE_LIMITED", err.message, requestId);
+      }
+      if (err.code === "VALIDATION_ERROR") {
+        return blogErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
+      }
+      return blogErrorResponse(503, "SERVICE_UNAVAILABLE", err.message, requestId);
+    }
     return mapBlogDomainErrorToResponse(err, requestId);
   }
 }

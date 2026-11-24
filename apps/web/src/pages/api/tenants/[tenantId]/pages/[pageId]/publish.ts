@@ -1,4 +1,8 @@
 import { env } from "cloudflare:workers";
+import {
+  ContentScreeningError,
+  publishResourceWithScreening,
+} from "@punyasitus/db/content-screening/index";
 import { publishPage } from "@punyasitus/db/pages/index";
 import type { APIRoute } from "astro";
 import {
@@ -108,14 +112,43 @@ export async function handleTenantPagePublishRequest(
   const { member, platformDb, tenantDb } = auth.ctx;
 
   try {
-    const result = await publishPage(platformDb, tenantDb, {
+    const gateOutcome = await publishResourceWithScreening(platformDb, tenantDb, {
       tenantId: member.tenantId,
-      pageId: parsedId.pageId,
+      resourceType: "page",
+      resourceId: parsedId.pageId,
       expectedVersion: versionCheck.expectedVersion!,
-      confirmSlugChange: parsedBody.body.confirmSlugChange as boolean | undefined,
+      publishSource: "dashboard",
       actorUserId: member.userId,
       nowMs: options.nowMs,
+      executePublish: () =>
+        publishPage(platformDb, tenantDb, {
+          tenantId: member.tenantId,
+          pageId: parsedId.pageId,
+          expectedVersion: versionCheck.expectedVersion!,
+          confirmSlugChange: parsedBody.body.confirmSlugChange as boolean | undefined,
+          actorUserId: member.userId,
+          nowMs: options.nowMs,
+        }),
     });
+
+    if (gateOutcome.outcome === "held_for_review") {
+      return pageJsonResponse(
+        202,
+        {
+          outcome: "held_for_review",
+          held: true,
+          status: gateOutcome.ownerNotice.status,
+          reason: gateOutcome.ownerNotice.reason,
+          reviewId: gateOutcome.reviewId,
+          message: gateOutcome.ownerNotice.message,
+          ownerNotice: gateOutcome.ownerNotice,
+          requestId,
+        },
+        { "Cache-Control": "private, no-store" },
+      );
+    }
+
+    const result = gateOutcome.published;
 
     if (runtimeEnv.JOBS_QUEUE) {
       const publicPath = result.page.isHomepage ? "/" : `/${result.page.slug}`;
@@ -145,6 +178,23 @@ export async function handleTenantPagePublishRequest(
       revisionNumber: result.revisionNumber,
     });
   } catch (err) {
+    if (err instanceof ContentScreeningError) {
+      if (err.code === "STALE_VERSION") {
+        return pageErrorResponse(409, "STALE_VERSION", err.message, requestId, [
+          { field: "version", code: "STALE_VERSION", message: err.message },
+        ]);
+      }
+      if (err.code === "NOT_FOUND") {
+        return pageErrorResponse(404, "NOT_FOUND", err.message, requestId);
+      }
+      if (err.code === "TOO_MANY_PENDING_REVIEWS") {
+        return pageErrorResponse(429, "RATE_LIMITED", err.message, requestId);
+      }
+      if (err.code === "VALIDATION_ERROR") {
+        return pageErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
+      }
+      return pageErrorResponse(503, "SERVICE_UNAVAILABLE", err.message, requestId);
+    }
     return mapPageDomainErrorToResponse(err, requestId);
   }
 }

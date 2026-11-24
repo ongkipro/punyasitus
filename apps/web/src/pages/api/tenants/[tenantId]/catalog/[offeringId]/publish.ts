@@ -1,6 +1,10 @@
 import { env } from "cloudflare:workers";
 import type { OfferingType } from "@punyasitus/core/schemas/common";
-import { publishCatalogOffering } from "@punyasitus/db/catalog/index";
+import { getCatalogOfferingById, publishCatalogOffering } from "@punyasitus/db/catalog/index";
+import {
+  ContentScreeningError,
+  publishResourceWithScreening,
+} from "@punyasitus/db/content-screening/index";
 import type { APIRoute } from "astro";
 import {
   enqueueIndexNowPublishPing,
@@ -116,13 +120,58 @@ export async function handleTenantCatalogOfferingPublishRequest(
       return versionCheck.response;
     }
 
-    const result = await publishCatalogOffering(platformDb, tenantDb, {
+    // Load rich per-type attributes & CTA draft extras alongside canonical offering snapshot
+    // so screening inspects every publishable field (including tour/vehicle/service attributes).
+    const existingOffering = await getCatalogOfferingById(tenantDb, offeringId);
+    const extraSnapshots = existingOffering
+      ? [
+          {
+            attributes: existingOffering.attributes,
+            ctaLabel: existingOffering.ctaLabel,
+            whatsappTemplate: existingOffering.whatsappTemplate,
+            badges: existingOffering.badges,
+            externalUrl: existingOffering.externalUrl,
+          },
+        ]
+      : undefined;
+
+    const gateOutcome = await publishResourceWithScreening(platformDb, tenantDb, {
       tenantId: member.tenantId,
-      offeringId,
+      resourceType: "offering",
+      resourceId: offeringId,
       expectedVersion: versionCheck.expectedVersion!,
+      publishSource: "dashboard",
       actorUserId: member.userId,
+      extraSnapshots,
       nowMs: options.nowMs,
+      executePublish: () =>
+        publishCatalogOffering(platformDb, tenantDb, {
+          tenantId: member.tenantId,
+          offeringId,
+          expectedVersion: versionCheck.expectedVersion!,
+          actorUserId: member.userId,
+          nowMs: options.nowMs,
+        }),
     });
+
+    if (gateOutcome.outcome === "held_for_review") {
+      return catalogJsonResponse(
+        202,
+        {
+          outcome: "held_for_review",
+          held: true,
+          status: gateOutcome.ownerNotice.status,
+          reason: gateOutcome.ownerNotice.reason,
+          reviewId: gateOutcome.reviewId,
+          message: gateOutcome.ownerNotice.message,
+          ownerNotice: gateOutcome.ownerNotice,
+          requestId,
+        },
+        { "Cache-Control": "private, no-store" },
+      );
+    }
+
+    const result = gateOutcome.published;
 
     if (runtimeEnv.JOBS_QUEUE) {
       const prefix = OFFERING_PUBLIC_PREFIX[result.offering.offeringType];
@@ -153,6 +202,23 @@ export async function handleTenantCatalogOfferingPublishRequest(
       revisionNumber: result.revisionNumber,
     });
   } catch (err) {
+    if (err instanceof ContentScreeningError) {
+      if (err.code === "STALE_VERSION") {
+        return catalogErrorResponse(409, "STALE_VERSION", err.message, requestId, [
+          { field: "version", code: "STALE_VERSION", message: err.message },
+        ]);
+      }
+      if (err.code === "NOT_FOUND") {
+        return catalogErrorResponse(404, "NOT_FOUND", err.message, requestId);
+      }
+      if (err.code === "TOO_MANY_PENDING_REVIEWS") {
+        return catalogErrorResponse(429, "RATE_LIMITED", err.message, requestId);
+      }
+      if (err.code === "VALIDATION_ERROR") {
+        return catalogErrorResponse(422, "VALIDATION_ERROR", err.message, requestId, err.fields);
+      }
+      return catalogErrorResponse(503, "SERVICE_UNAVAILABLE", err.message, requestId);
+    }
     return mapCatalogDomainErrorToResponse(err, requestId);
   }
 }
