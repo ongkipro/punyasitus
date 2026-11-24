@@ -1,0 +1,114 @@
+---
+import { env } from "cloudflare:workers";
+import { listCatalogOfferings } from "@punyasitus/db/catalog/index";
+import { resolveCmsAdminServerContext } from "@/components/admin/editor/cms-server-context";
+import DashboardLayout from "@/layouts/DashboardLayout.astro";
+import { loadLosslessDraftVehicleMap } from "./_api-handler";
+import {
+  evaluateVehiclesSsrGate,
+  serviceUnavailableVehiclesSsrResponse,
+  VEHICLES_SSR_SECURITY_HEADERS,
+} from "./_ssr-gate";
+import {
+  VehicleShowroomManagerClient,
+  type VehicleCatalogItemDto,
+} from "./_VehicleShowroomManagerClient";
+
+// Verify operator_hold fail-closed from PLATFORM_DB before any TenantStore read
+let operatorHold = false;
+const preAuthMember = Astro.locals.authorizedTenantMember;
+if (preAuthMember) {
+  if (!env.PLATFORM_DB) {
+    return serviceUnavailableVehiclesSsrResponse();
+  }
+  try {
+    const holdRow = await env.PLATFORM_DB.prepare(
+      "SELECT operator_hold FROM tenants WHERE id = ? LIMIT 1",
+    )
+      .bind(preAuthMember.tenantId)
+      .first<{ readonly operator_hold: number | null }>();
+    operatorHold = Number(holdRow?.operator_hold ?? 0) === 1;
+  } catch {
+    return serviceUnavailableVehiclesSsrResponse();
+  }
+}
+
+const gate = evaluateVehiclesSsrGate({
+  rawHandle: Astro.params.handle,
+  surface: Astro.locals.surface,
+  isLocalLoopback: Astro.locals.isLocalLoopback,
+  isLocalEnv: env.APP_ENV === "local",
+  authUser: Astro.locals.authUser,
+  authorized: preAuthMember,
+  operatorHold,
+});
+
+if (!gate.ok) {
+  return gate.response;
+}
+
+const resolved = await resolveCmsAdminServerContext(Astro);
+if (!resolved.ok) {
+  return resolved.response;
+}
+
+Astro.response.headers.set("Cache-Control", VEHICLES_SSR_SECURITY_HEADERS["Cache-Control"]);
+Astro.response.headers.set("X-Robots-Tag", VEHICLES_SSR_SECURITY_HEADERS["X-Robots-Tag"]);
+
+const { ctx } = resolved;
+const result = await listCatalogOfferings(ctx.tenantDb, {
+  offeringType: "vehicle",
+  limit: 50,
+});
+
+const losslessVehicleMap = await loadLosslessDraftVehicleMap(
+  ctx.tenantDb,
+  result.items.map((item) => item.id),
+);
+
+const initialVehicles: VehicleCatalogItemDto[] = result.items.map((item) => ({
+  id: item.id,
+  slug: item.slug,
+  publicPath: item.publicPath,
+  title: item.title,
+  summary: item.summary ?? "",
+  priceMode: item.priceMode,
+  price: item.price,
+  priceMax: item.priceMax,
+  negotiable: item.negotiable,
+  unitStatus: item.unitStatus ?? "available",
+  status: item.status,
+  version: item.version,
+  attributes:
+    (losslessVehicleMap.get(item.id) as Record<string, unknown> | undefined) ??
+    (item.attributes as Record<string, unknown>) ??
+    {},
+}));
+---
+
+<DashboardLayout
+  title={`Showroom Kendaraan — ${ctx.workspaceName}`}
+  surface="dashboard"
+  workspaceName={ctx.workspaceName}
+  workspaceSubtitle={ctx.workspaceSubtitle}
+  activeNavId="offering"
+  basePath={ctx.basePath}
+  offeringLabel={ctx.offeringLabel}
+  lifecycleStatus={ctx.lifecycleStatus}
+  lifecycleDaysRemaining={ctx.lifecycleDaysRemaining}
+  lifecycleReason={ctx.lifecycleReason}
+  publicSiteHref={ctx.publicSiteHref}
+  userDisplayName={ctx.userDisplayName}
+  userRoleLabel={ctx.permissions.roleLabel}
+>
+  <VehicleShowroomManagerClient
+    client:load
+    tenantId={ctx.tenantId}
+    handle={ctx.handle}
+    basePath={ctx.basePath}
+    permissions={ctx.permissions}
+    canWriteVehicles={gate.canWriteVehicles}
+    canPublishVehicles={gate.canPublishVehicles}
+    initialVehicles={initialVehicles}
+  />
+</DashboardLayout>

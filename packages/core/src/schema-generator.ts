@@ -17,6 +17,7 @@ import type {
 } from "./catalog/index.ts";
 import type { ServiceConsultationAttributes } from "./catalog/service.ts";
 import type { TravelPackageAttributes } from "./catalog/travel.ts";
+import type { VehicleShowroomAttributes } from "./catalog/vehicle.ts";
 import type {
   BusinessProfileSnapshot,
   OfferingSnapshot,
@@ -349,7 +350,9 @@ export type SchemaOfferingAttributesInput = Partial<
     ProductAttributes &
     Omit<TourAttributes, "itinerary" | "departures"> &
     Omit<TravelPackageAttributes, "itinerary" | "departures"> &
-    VehicleAttributes & {
+    Omit<VehicleAttributes, "bodyType" | "mileageKm" | "seats" | "engineCc" | "ownershipCount"> &
+    Omit<VehicleShowroomAttributes, "bodyType"> & {
+      readonly bodyType?: string;
       readonly vehicleYear?: number;
       readonly itinerary?: readonly SchemaTourItineraryItemInput[];
       readonly departures?: readonly SchemaTourDepartureItemInput[];
@@ -495,6 +498,7 @@ const CAR_BODY_TYPES = new Set<string>([
   "pickup",
   "double_cabin",
   "crossover",
+  "city_car",
 ]);
 
 const PRODUCT_STOCK_AVAILABILITY: Readonly<Record<string, string>> = {
@@ -504,10 +508,12 @@ const PRODUCT_STOCK_AVAILABILITY: Readonly<Record<string, string>> = {
   out_of_stock: "https://schema.org/OutOfStock",
 };
 
-const VEHICLE_UNIT_AVAILABILITY: Readonly<Record<CatalogVehicleUnitStatus, string>> = {
+// REQ-079: `available` -> InStock, `sold` -> SoldOut, `booked` -> OMIT availability completely
+// (NEVER emit unsupported `https://schema.org/Reserved` or `InStock` on booked units).
+const VEHICLE_UNIT_AVAILABILITY: Readonly<Record<CatalogVehicleUnitStatus, string | null>> = {
   available: "https://schema.org/InStock",
-  booked: "https://schema.org/LimitedAvailability",
-  sold: "https://schema.org/OutOfStock",
+  booked: null,
+  sold: "https://schema.org/SoldOut",
 };
 
 const VEHICLE_TRANSMISSION_LABELS: Readonly<Record<string, string>> = {
@@ -523,6 +529,25 @@ const VEHICLE_FUEL_LABELS: Readonly<Record<string, string>> = {
   diesel: "Diesel",
   hybrid: "Hybrid",
   listrik: "Electric",
+};
+
+const VEHICLE_SCHEMA_BODY_TYPE_LABELS: Readonly<Record<string, string>> = {
+  mpv: "MPV",
+  suv: "SUV",
+  sedan: "Sedan",
+  hatchback: "Hatchback",
+  crossover: "Crossover",
+  double_cabin: "Double Cabin",
+  pickup: "Pickup",
+  city_car: "City Car",
+  niaga: "Niaga",
+  matic: "Skutik / Matic",
+  bebek: "Motor Bebek",
+  sport: "Sport",
+  naked: "Naked Bike",
+  trail: "Trail / Dual Sport",
+  electric: "Motor Listrik",
+  other: "Lainnya",
 };
 
 const ISO_DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -2168,7 +2193,12 @@ function buildOfferingNode(params: {
         typeof attrs.bodyType === "string"
           ? sanitizeSeoText(attrs.bodyType, { maxLength: 40 }).toLowerCase()
           : "";
-      const vehicleSchemaType = CAR_BODY_TYPES.has(bodyType) ? "Car" : "Vehicle";
+      const vehicleSchemaType =
+        attrs.vehicleCategory === "motorcycle"
+          ? "Motorcycle"
+          : attrs.vehicleCategory === "car" || CAR_BODY_TYPES.has(bodyType)
+            ? "Car"
+            : "Vehicle";
 
       const brandName =
         typeof attrs.brand === "string" ? sanitizeSeoText(attrs.brand, { maxLength: 80 }) : "";
@@ -2180,7 +2210,7 @@ function buildOfferingNode(params: {
       const modelDate =
         typeof rawYear === "number" &&
         Number.isSafeInteger(rawYear) &&
-        rawYear >= 1980 &&
+        rawYear >= 1950 &&
         rawYear <= 2100
           ? String(rawYear)
           : null;
@@ -2192,7 +2222,7 @@ function buildOfferingNode(params: {
             ? "https://schema.org/UsedCondition"
             : null;
 
-      // REQ-079: mileage applies to used vehicles only (never emit positive mileage for new units)
+      // REQ-079: mileage applies to used vehicles only (never emit mileage for new units)
       const mileageFromOdometer =
         attrs.condition !== "new" &&
         typeof attrs.mileageKm === "number" &&
@@ -2209,8 +2239,13 @@ function buildOfferingNode(params: {
         typeof attrs.transmission === "string"
           ? (VEHICLE_TRANSMISSION_LABELS[attrs.transmission] ?? null)
           : null;
-      const fuelType =
-        typeof attrs.fuelType === "string" ? (VEHICLE_FUEL_LABELS[attrs.fuelType] ?? null) : null;
+      const rawFuel =
+        typeof attrs.fuel === "string"
+          ? attrs.fuel
+          : typeof attrs.fuelType === "string"
+            ? attrs.fuelType
+            : null;
+      const fuelType = rawFuel ? (VEHICLE_FUEL_LABELS[rawFuel] ?? null) : null;
       const color =
         typeof attrs.color === "string" ? sanitizeSeoText(attrs.color, { maxLength: 60 }) : "";
       const seats =
@@ -2236,15 +2271,32 @@ function buildOfferingNode(params: {
         ? (VEHICLE_UNIT_AVAILABILITY[effectiveUnitStatus] ?? null)
         : null;
 
+      const effectivePriceMode: CatalogPriceMode | null | undefined =
+        offering.priceMode ?? attrs.priceModel ?? null;
+      const effectivePrice: number | null | undefined =
+        offering.price ??
+        (effectivePriceMode === "range" ? attrs.minPriceIdr : attrs.priceIdr) ??
+        null;
+      const effectivePriceMax: number | null | undefined =
+        offering.priceMax ?? (effectivePriceMode === "range" ? attrs.maxPriceIdr : null) ?? null;
+
       // No invented Offer for on_request or inquiry; never emit financing/credit structured data (REQ-079)
       const offers = buildHonestOffer({
-        priceMode: offering.priceMode,
-        price: offering.price,
-        priceMax: offering.priceMax,
+        priceMode: effectivePriceMode,
+        price: effectivePrice,
+        priceMax: effectivePriceMax,
         ctaMode: offering.ctaMode,
         canonicalUrl: params.canonicalUrl,
         availability,
       });
+
+      // Human-readable bodyType label for snake_case classes and structured vehicleShowroomV1
+      // while preserving legacy lowercase tokens (e.g., "mpv") when vehicleCategory is absent.
+      const bodyTypeLabel = bodyType
+        ? attrs.vehicleCategory || bodyType.includes("_")
+          ? (VEHICLE_SCHEMA_BODY_TYPE_LABELS[bodyType] ?? bodyType)
+          : bodyType
+        : "";
 
       return {
         "@type": vehicleSchemaType,
@@ -2261,7 +2313,7 @@ function buildOfferingNode(params: {
         ...(mileageFromOdometer ? { mileageFromOdometer } : {}),
         ...(transmission ? { vehicleTransmission: transmission } : {}),
         ...(fuelType ? { fuelType } : {}),
-        ...(bodyType ? { bodyType } : {}),
+        ...(bodyTypeLabel ? { bodyType: bodyTypeLabel } : {}),
         ...(color ? { color } : {}),
         ...(seats !== null ? { vehicleSeatingCapacity: seats } : {}),
         ...(engineCc !== null
