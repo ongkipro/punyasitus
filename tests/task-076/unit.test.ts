@@ -5,6 +5,7 @@ import {
   buildGoogleConsentModeUpdate,
   buildGtmNoscriptUrl,
   buildGtmScriptUrl,
+  buildPlatformSurfaceCspHeader,
   buildPsExternalClickEvent,
   buildPsLeadSubmittedEvent,
   buildPsPageViewEvent,
@@ -24,6 +25,7 @@ import {
   parseStoredAnalyticsSettings,
   PUNYASITUS_GTM_CONTAINER_TEMPLATE,
   resolveEffectivePublicAnalyticsConfig,
+  rotateCspNonceInHtmlScripts,
   sanitizeDestinationHost,
   selectPublicCspProfile,
   serializeGtmContainerTemplateJson,
@@ -493,7 +495,7 @@ describe("TASK-076 Unit Tests — Easy GTM Setup, Consent Mode v2, ps_* DataLaye
       ).toBe("strict");
     });
 
-    it("strict CSP excludes GTM/GA4/Meta/TikTok while BOTH strict & gtm-relaxed preserve Turnstile and YouTube-nocookie without unsafe-inline in relaxed script-src", () => {
+    it("strict CSP excludes GTM/GA4/Meta/TikTok and unsafe-inline while strict, platform, & gtm-relaxed preserve Turnstile and nonced scripts", () => {
       const strict = buildStrictPublicCspHeader();
       expect(strict).not.toContain("googletagmanager.com");
       expect(strict).not.toContain("connect.facebook.net");
@@ -501,11 +503,33 @@ describe("TASK-076 Unit Tests — Easy GTM Setup, Consent Mode v2, ps_* DataLaye
 
       const strictScriptSrc = strict.split(";").find((d) => d.trim().startsWith("script-src")) ?? "";
       const strictFrameSrc = strict.split(";").find((d) => d.trim().startsWith("frame-src")) ?? "";
+      expect(strictScriptSrc).not.toContain("'unsafe-inline'");
       expect(strictScriptSrc).toContain("https://challenges.cloudflare.com");
       expect(strictFrameSrc).toContain("https://challenges.cloudflare.com");
       expect(strictFrameSrc).toContain("https://www.youtube-nocookie.com");
 
       const nonce = generateCspNonce();
+      const strictNonced = buildStrictPublicCspHeader(nonce);
+      const strictNoncedScriptSrc =
+        strictNonced.split(";").find((d) => d.trim().startsWith("script-src")) ?? "";
+      expect(strictNoncedScriptSrc).toContain(`'nonce-${nonce}'`);
+      expect(strictNoncedScriptSrc).not.toContain("'unsafe-inline'");
+      expect(strictNoncedScriptSrc).toContain("https://challenges.cloudflare.com");
+      expect(() => buildStrictPublicCspHeader("bad")).toThrow(/Invalid CSP nonce/);
+
+      const platformCsp = buildPlatformSurfaceCspHeader(nonce);
+      const platformScriptSrc =
+        platformCsp.split(";").find((d) => d.trim().startsWith("script-src")) ?? "";
+      expect(platformCsp).toContain("frame-ancestors 'self'");
+      expect(platformCsp).toContain("base-uri 'self'");
+      expect(platformCsp).toContain("object-src 'none'");
+      expect(platformCsp).toContain("img-src 'self' data: blob: https:");
+      expect(platformCsp).toContain("connect-src 'self' https:");
+      expect(platformScriptSrc).toContain(`'nonce-${nonce}'`);
+      expect(platformScriptSrc).not.toContain("'unsafe-inline'");
+      expect(platformScriptSrc).toContain("https://challenges.cloudflare.com");
+      expect(platformCsp).not.toContain("googletagmanager.com");
+
       const relaxed = buildRelaxedGtmCspHeader(nonce);
       expect(relaxed).toContain(`'nonce-${nonce}'`);
       expect(relaxed).toContain("https://www.googletagmanager.com");
@@ -520,12 +544,20 @@ describe("TASK-076 Unit Tests — Easy GTM Setup, Consent Mode v2, ps_* DataLaye
       expect(frameSrcPart).toContain("https://challenges.cloudflare.com");
       expect(frameSrcPart).toContain("https://www.youtube-nocookie.com");
 
-      const sampleHtml = `<head><script type="application/json">{"a":1}</script><script>console.log(1)</script><script src="/app.js"></script><script nonce="keep">x()</script></head>`;
+      const sampleHtml = `<head><script type="application/json">{"a":1}</script><script>console.log(1)</script><script data-src="x" data-nonce="y">console.log(2)</script><script src="/app.js"></script><script nonce="keep">x()</script></head>`;
       const patched = injectNonceIntoInlineHtmlScripts(sampleHtml, nonce);
       expect(patched).toContain('<script type="application/json">{"a":1}</script>');
       expect(patched).toContain(`<script nonce="${nonce}">console.log(1)</script>`);
+      expect(patched).toContain(`<script nonce="${nonce}" data-src="x" data-nonce="y">console.log(2)</script>`);
       expect(patched).toContain('<script src="/app.js"></script>');
       expect(patched).toContain('<script nonce="keep">x()</script>');
+
+      const freshNonce = generateCspNonce();
+      const rotated = rotateCspNonceInHtmlScripts(patched, nonce, freshNonce);
+      expect(rotated).toContain(`<script nonce="${freshNonce}">console.log(1)</script>`);
+      expect(rotated).toContain(`<script nonce="${freshNonce}" data-src="x" data-nonce="y">console.log(2)</script>`);
+      expect(rotated).toContain('<script nonce="keep">x()</script>');
+      expect(rotated).not.toContain(`nonce="${nonce}"`);
     });
 
     it("triggers exactly one loop-guarded reload on first-visit consent for a strict-CSP GTM page", () => {

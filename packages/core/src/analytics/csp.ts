@@ -91,22 +91,58 @@ export function isValidCspNonce(value: unknown): value is string {
 }
 
 /**
- * Strict CSP profile for non-GTM tenants, pre-consent public pages, admin, console, and fallback HTML.
- * Deliberately excludes all GTM / GA4 / Meta / TikTok origins while preserving Cloudflare Turnstile
- * (`challenges.cloudflare.com`) and privacy-enhanced YouTube embeds (`www.youtube-nocookie.com`).
+ * Strict CSP profile for non-GTM tenants, pre-consent public pages, and fallback HTML.
+ * Deliberately excludes all GTM / GA4 / Meta / TikTok origins and NEVER emits `'unsafe-inline'`
+ * in `script-src`, while preserving Cloudflare Turnstile (`challenges.cloudflare.com`),
+ * privacy-enhanced YouTube embeds (`www.youtube-nocookie.com`), and per-response nonces.
  */
-export function buildStrictPublicCspHeader(): string {
+export function buildStrictPublicCspHeader(nonce?: string): string {
+  if (nonce !== undefined && !isValidCspNonce(nonce)) {
+    throw new Error("Invalid CSP nonce: must be 16-64 base64/url-safe characters.");
+  }
+
+  const scriptSources = nonce
+    ? ["'self'", `'nonce-${nonce}'`, FIRST_PARTY_PLATFORM_ORIGINS.turnstile]
+    : ["'self'", FIRST_PARTY_PLATFORM_ORIGINS.turnstile];
+
   return [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'self'",
-    `script-src 'self' 'unsafe-inline' ${FIRST_PARTY_PLATFORM_ORIGINS.turnstile}`,
+    `script-src ${scriptSources.join(" ")}`,
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: https:",
+    "media-src 'self' https:",
     `connect-src 'self' ${FIRST_PARTY_PLATFORM_ORIGINS.turnstile}`,
     "font-src 'self' data:",
     `frame-src 'self' ${FIRST_PARTY_PLATFORM_ORIGINS.turnstile} ${FIRST_PARTY_PLATFORM_ORIGINS.youtubeNoCookie} https://www.google.com https://maps.google.com`,
+  ].join("; ");
+}
+
+/**
+ * Strict per-response nonced CSP profile for platform HTML surfaces (`marketing`, `app`, `console`).
+ * Enforces `frame-ancestors 'self'`, `base-uri 'self'`, `object-src 'none'`, and zero `'unsafe-inline'`
+ * in `script-src`, while supporting Turnstile, React/Astro island hydration via nonce, local blob
+ * image/video previews for admin media uploads, and HTTPS API connections.
+ */
+export function buildPlatformSurfaceCspHeader(nonce: string): string {
+  if (!isValidCspNonce(nonce)) {
+    throw new Error("Invalid CSP nonce: must be 16-64 base64/url-safe characters.");
+  }
+
+  return [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'self'",
+    `script-src 'self' 'nonce-${nonce}' ${FIRST_PARTY_PLATFORM_ORIGINS.turnstile}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob: https:",
+    "connect-src 'self' https:",
+    "font-src 'self' data:",
+    `frame-src 'self' ${FIRST_PARTY_PLATFORM_ORIGINS.turnstile}`,
   ].join("; ");
 }
 
@@ -212,20 +248,43 @@ const SCRIPT_OPEN_TAG_RE = /<script\b([^>]*)>/gi;
 /**
  * Attaches `nonce="<nonce>"` to executable inline `<script>` tags in first-party SSR HTML
  * (skipping `<script src="...">`, inert `<script type="application/json">` / `application/ld+json`,
- * and tags that already carry a `nonce=` attribute).
+ * and tags that already carry a `nonce=` attribute, without confusing `data-src=`/`data-nonce=`).
  */
 export function injectNonceIntoInlineHtmlScripts(html: string, nonce: string): string {
   if (!isValidCspNonce(nonce)) return html;
   return html.replace(SCRIPT_OPEN_TAG_RE, (fullMatch, attrs: string) => {
-    if (/\bnonce\s*=/i.test(attrs)) return fullMatch;
-    if (/\bsrc\s*=/i.test(attrs)) return fullMatch;
+    if (/(?:^|\s)nonce\s*=/i.test(attrs)) return fullMatch;
+    if (/(?:^|\s)src\s*=/i.test(attrs)) return fullMatch;
     if (
-      /\btype\s*=\s*(?:"application\/(?:ld\+)?json"|'application\/(?:ld\+)?json'|application\/(?:ld\+)?json\b)/i.test(
+      /(?:^|\s)type\s*=\s*(?:"application\/(?:ld\+)?json"|'application\/(?:ld\+)?json'|application\/(?:ld\+)?json\b)/i.test(
         attrs,
       )
     ) {
       return fullMatch;
     }
     return `<script nonce="${nonce}"${attrs}>`;
+  });
+}
+
+/**
+ * Rotates an existing CSP `nonce="..."` attribute on `<script>` tags from `previousNonce`
+ * to a fresh per-response cryptographic `freshNonce` (e.g., when serving warm edge-cached HTML).
+ */
+export function rotateCspNonceInHtmlScripts(
+  html: string,
+  previousNonce: string,
+  freshNonce: string,
+): string {
+  if (!isValidCspNonce(previousNonce) || !isValidCspNonce(freshNonce)) return html;
+  return html.replace(SCRIPT_OPEN_TAG_RE, (fullMatch, attrs: string) => {
+    if (!/(?:^|\s)nonce\s*=/i.test(attrs)) return fullMatch;
+    return fullMatch.replace(
+      /((?:^|\s)nonce\s*=\s*)(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+))/i,
+      (attrMatch, prefix: string, dq?: string, sq?: string, bare?: string) => {
+        const current = dq ?? sq ?? bare ?? "";
+        if (current !== previousNonce) return attrMatch;
+        return `${prefix}"${freshNonce}"`;
+      },
+    );
   });
 }

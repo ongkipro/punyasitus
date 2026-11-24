@@ -438,30 +438,45 @@ describe("TASK-076 Workerd Integration — Tenant GTM RBAC, Risk Ack, Mutual Exc
       primaryHostKind: "subdomain" as const,
     };
 
-    // 1. Public page BEFORE consent -> strict CSP, zero GTM origins
+    // 1. Public page BEFORE consent -> strict nonced CSP, zero GTM origins, zero 'unsafe-inline' in script-src, baseline security headers
+    const preConsentLocals = {
+      surface: "tenant" as const,
+      host: `${alpha.handle}.situsku.click`,
+      isLocalLoopback: false,
+      tenant: baseTenant,
+      tenantDb: alphaDb,
+      authUser: null,
+      authSession: null,
+      authorizedTenantMember: null,
+      cspNonce: null as string | null,
+      cspProfile: "strict" as "strict" | "gtm-relaxed",
+    };
     const preConsentRes = await executePublicCspMiddleware(
       {
         request: new Request(`https://${alpha.handle}.situsku.click/`),
-        locals: {
-          surface: "tenant",
-          host: `${alpha.handle}.situsku.click`,
-          isLocalLoopback: false,
-          tenant: baseTenant,
-          tenantDb: alphaDb,
-          authUser: null,
-          authSession: null,
-          authorizedTenantMember: null,
-        },
+        locals: preConsentLocals,
       },
       async () => new Response(publicHtml, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }),
       { PLATFORM_DB: env.PLATFORM_DB, APP_ENV: "test" },
     );
     expect(preConsentRes.headers.get("X-PunyaSitus-CSP-Profile")).toBe("strict");
+    expect(preConsentRes.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(preConsentRes.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+    expect(preConsentRes.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
     const strictCsp = preConsentRes.headers.get("Content-Security-Policy") ?? "";
+    const strictScriptDirective =
+      strictCsp.split(";").find((d) => d.trim().startsWith("script-src")) ?? "";
     expect(strictCsp).not.toContain("googletagmanager.com");
+    expect(strictScriptDirective).not.toContain("'unsafe-inline'");
+    expect(preConsentLocals.cspNonce).toBeTruthy();
+    expect(strictScriptDirective).toContain(`'nonce-${preConsentLocals.cspNonce}'`);
     // Finding #2: strict CSP preserves Turnstile (script-src + frame-src) and YouTube-nocookie (frame-src)
     expect(strictCsp).toContain("https://challenges.cloudflare.com");
     expect(strictCsp).toContain("https://www.youtube-nocookie.com");
+    const preConsentBody = await preConsentRes.text();
+    expect(preConsentBody).toContain(
+      `<script nonce="${preConsentLocals.cspNonce}">window.__inlineRan=true;</script>`,
+    );
 
     // 2. Public page AFTER analytics consent -> relaxed GTM CSP with fresh per-response nonce & nonced inline scripts
     const consentCookie = serializeConsentCookie({
@@ -506,12 +521,56 @@ describe("TASK-076 Workerd Integration — Tenant GTM RBAC, Risk Ack, Mutual Exc
     const body1 = await postConsentRes1.text();
     expect(body1).toContain(`<script nonce="${locals1.cspNonce}">window.__inlineRan=true;</script>`);
 
-    // 2b. Non-tenant `app` HTML surface keeps X-PunyaSitus-CSP-Profile: strict without clobbering app CSP
+    // 2b. SEC-003: Non-tenant `app` HTML surface receives strict nonced platform CSP + baseline security headers (NEVER gtm-relaxed)
+    const appLocals = {
+      surface: "app" as const,
+      host: "app.punyasitus.com",
+      isLocalLoopback: false,
+      tenant: null,
+      tenantDb: null,
+      authUser: null,
+      authSession: null,
+      authorizedTenantMember: null,
+      cspNonce: null as string | null,
+      cspProfile: "strict" as "strict" | "gtm-relaxed",
+    };
     const appSurfaceRes = await executePublicCspMiddleware(
       {
         request: new Request(`${APP_ORIGIN}/dashboard/${alpha.handle}/settings/analytics`, {
           headers: { Cookie: consentCookie },
         }),
+        locals: appLocals,
+      },
+      async () =>
+        new Response("<html><body><script>window.__appHydrate=true;</script>app</body></html>", {
+          status: 200,
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        }),
+      { PLATFORM_DB: env.PLATFORM_DB, APP_ENV: "test" },
+    );
+    expect(appSurfaceRes.headers.get("X-PunyaSitus-CSP-Profile")).toBe("strict");
+    expect(appSurfaceRes.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(appSurfaceRes.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+    expect(appSurfaceRes.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+    const appCsp = appSurfaceRes.headers.get("Content-Security-Policy") ?? "";
+    const appScriptSrc = appCsp.split(";").find((d) => d.trim().startsWith("script-src")) ?? "";
+    expect(appCsp).toContain("frame-ancestors 'self'");
+    expect(appCsp).toContain("base-uri 'self'");
+    expect(appCsp).toContain("object-src 'none'");
+    expect(appCsp).toContain("img-src 'self' data: blob: https:");
+    expect(appCsp).toContain("connect-src 'self' https:");
+    expect(appCsp).not.toContain("googletagmanager.com");
+    expect(appLocals.cspNonce).toBeTruthy();
+    expect(appScriptSrc).toContain(`'nonce-${appLocals.cspNonce}'`);
+    expect(appScriptSrc).not.toContain("'unsafe-inline'");
+    const appHtml = await appSurfaceRes.text();
+    expect(appHtml).toContain(`<script nonce="${appLocals.cspNonce}">window.__appHydrate=true;</script>`);
+
+    // 2b-ii. SEC-003: JSON API responses receive X-Content-Type-Options: nosniff without HTML CSP/XFO headers,
+    //        and downstream stricter headers (e.g., X-Frame-Options: DENY) are preserved untouched.
+    const jsonApiRes = await executePublicCspMiddleware(
+      {
+        request: new Request(`${APP_ORIGIN}/api/health`),
         locals: {
           surface: "app",
           host: "app.punyasitus.com",
@@ -523,11 +582,46 @@ describe("TASK-076 Workerd Integration — Tenant GTM RBAC, Risk Ack, Mutual Exc
           authorizedTenantMember: null,
         },
       },
-      async () => new Response("<html><body>app</body></html>", { status: 200, headers: { "Content-Type": "text/html; charset=utf-8" } }),
+      async () =>
+        new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json; charset=utf-8" },
+        }),
       { PLATFORM_DB: env.PLATFORM_DB, APP_ENV: "test" },
     );
-    expect(appSurfaceRes.headers.get("X-PunyaSitus-CSP-Profile")).toBe("strict");
-    expect(appSurfaceRes.headers.get("Content-Security-Policy")).toBeNull();
+    expect(jsonApiRes.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(jsonApiRes.headers.get("Content-Security-Policy")).toBeNull();
+
+    const denyFrameRes = await executePublicCspMiddleware(
+      {
+        request: new Request(`${APP_ORIGIN}/auth/consent`),
+        locals: {
+          surface: "app",
+          host: "app.punyasitus.com",
+          isLocalLoopback: false,
+          tenant: null,
+          tenantDb: null,
+          authUser: null,
+          authSession: null,
+          authorizedTenantMember: null,
+        },
+      },
+      async () =>
+        new Response("<html><body>consent</body></html>", {
+          status: 200,
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Security-Policy": "frame-ancestors 'none'",
+            "X-Frame-Options": "DENY",
+            "Referrer-Policy": "no-referrer",
+          },
+        }),
+      { PLATFORM_DB: env.PLATFORM_DB, APP_ENV: "test" },
+    );
+    expect(denyFrameRes.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(denyFrameRes.headers.get("X-Frame-Options")).toBe("DENY");
+    expect(denyFrameRes.headers.get("Referrer-Policy")).toBe("no-referrer");
+    expect(denyFrameRes.headers.get("Content-Security-Policy")).toBe("frame-ancestors 'none'");
 
     // 2c. Warm edge cache regression (Finding #3): anonymous visitor warms strict cache,
     //     consented visitor MUST bypass warm anonymous cache and get gtm-relaxed + fresh nonce!
@@ -592,6 +686,8 @@ describe("TASK-076 Workerd Integration — Tenant GTM RBAC, Risk Ack, Mutual Exc
             headers: {
               "Content-Type": "text/html; charset=utf-8",
               "Cache-Control": "public, max-age=60, s-maxage=300",
+              "Content-Length": String(publicHtml.length),
+              ETag: '"stale-etag-1"',
             },
           });
         },
@@ -600,16 +696,79 @@ describe("TASK-076 Workerd Integration — Tenant GTM RBAC, Risk Ack, Mutual Exc
       ).then((response) => ({ response, locals }));
     };
 
-    // Visitor 1 (no consent) -> warms anonymous edge cache with strict CSP
+    // Visitor 1 (no consent) -> warms anonymous edge cache with strict CSP + fresh nonce (clears stale Content-Length/ETag)
     const warm1 = await runPublicReq();
     expect(warm1.response.headers.get("X-PunyaSitus-CSP-Profile")).toBe("strict");
+    expect(warm1.response.headers.get("Content-Length")).toBeNull();
+    expect(warm1.response.headers.get("ETag")).toBeNull();
+    const warm1Csp = warm1.response.headers.get("Content-Security-Policy") ?? "";
+    const coldMissNonce = warm1Csp.match(/'nonce-([^']+)'/)?.[1];
+    expect(coldMissNonce).toBeTruthy();
+    const warm1Body = await warm1.response.text();
+    expect(warm1Body).toContain(`<script nonce="${coldMissNonce}">window.__inlineRan=true;</script>`);
     expect(innerRenderCount).toBe(1);
 
-    // Visitor 1 repeat (no consent) -> served directly from warm anonymous cache (no re-render)
+    // Visitor 1 repeat (no consent) -> served directly from warm anonymous cache with ROTATED fresh per-response nonce!
     const warmHit = await runPublicReq();
     expect(warmHit.response.headers.get("X-PunyaSitus-CSP-Profile")).toBe("strict");
     expect(warmHit.response.headers.get("X-PunyaSitus-Cache")).toBe("HIT");
+    expect(warmHit.response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(warmHit.response.headers.get("Content-Length")).toBeNull();
+    expect(warmHit.response.headers.get("ETag")).toBeNull();
+    const warmHitCsp = warmHit.response.headers.get("Content-Security-Policy") ?? "";
+    const warmHitNonce = warmHitCsp.match(/'nonce-([^']+)'/)?.[1];
+    expect(warmHitNonce).toBeTruthy();
+    expect(warmHitNonce).not.toBe(coldMissNonce);
+    const warmHitBody = await warmHit.response.text();
+    expect(warmHitBody).toContain(`<script nonce="${warmHitNonce}">window.__inlineRan=true;</script>`);
+    expect(warmHitBody).not.toContain(`nonce="${coldMissNonce}"`);
     expect(innerRenderCount).toBe(1);
+
+    // Early state-page 404 & redirect returned by executeTenantMiddleware still receive X-Content-Type-Options: nosniff
+    const unknownHostStateRes = await executeTenantWithConsentAwareCspMiddleware(
+      {
+        request: new Request("https://unknown-r3-check.situsku.click/"),
+        locals: {
+          surface: "unknown",
+          host: "unknown-r3-check.situsku.click",
+          isLocalLoopback: false,
+          tenant: null,
+          tenantDb: null,
+          authUser: null,
+          authSession: null,
+          authorizedTenantMember: null,
+        },
+      },
+      async () => new Response("unreachable", { status: 200 }),
+      tenantMiddlewareEnv,
+      { cache: memoryCache, nowMs: BASE_NOW_MS + 6500 },
+    );
+    expect(unknownHostStateRes.status).toBe(404);
+    expect(unknownHostStateRes.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(unknownHostStateRes.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
+    expect(unknownHostStateRes.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
+    expect(unknownHostStateRes.headers.get("Content-Security-Policy")).toBe("default-src 'none'");
+
+    const wwwRedirectRes = await executeTenantWithConsentAwareCspMiddleware(
+      {
+        request: new Request("https://www.punyasitus.com/harga"),
+        locals: {
+          surface: "unknown",
+          host: "www.punyasitus.com",
+          isLocalLoopback: false,
+          tenant: null,
+          tenantDb: null,
+          authUser: null,
+          authSession: null,
+          authorizedTenantMember: null,
+        },
+      },
+      async () => new Response("unreachable", { status: 200 }),
+      tenantMiddlewareEnv,
+      { cache: memoryCache, nowMs: BASE_NOW_MS + 6500 },
+    );
+    expect(wwwRedirectRes.status).toBe(308);
+    expect(wwwRedirectRes.headers.get("X-Content-Type-Options")).toBe("nosniff");
 
     // Visitor 2 (consented analytics=true) -> BYPASSES warm anonymous cache, gets gtm-relaxed + fresh nonce!
     const consentedLive1 = await runPublicReq(consentCookie);

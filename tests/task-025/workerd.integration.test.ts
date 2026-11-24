@@ -700,6 +700,148 @@ describe("TASK-025 workerd integration: Better Auth sessions, organizations, RBA
     );
     expect(formContentTypeAttack.status).toBe(403);
 
+    // 2b. SEC-002 (M1-FU-07): Binary streaming media upload PUT allows non-JSON Content-Type
+    //     ONLY with exact admin Origin, while missing/wrong Origin still returns 403 and
+    //     non-upload `/api/tenants/**` mutations still require `Content-Type: application/json`.
+    const validImageStreamUpload = await executeAuthMiddleware(
+      {
+        request: new Request(`${APP_ORIGIN}/api/tenants/toko-maju/media/upload/intent_img_01`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "image/png",
+            Origin: APP_ORIGIN,
+            Cookie: memberUser.cookie,
+          },
+          body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        }),
+        locals: makeLocals("app"),
+      },
+      async () => new Response("stream-reached", { status: 200 }),
+      authEnv,
+    );
+    expect(validImageStreamUpload.status).toBe(200);
+    expect(await validImageStreamUpload.text()).toBe("stream-reached");
+
+    const validVideoStreamUpload = await executeAuthMiddleware(
+      {
+        request: new Request(`${APP_ORIGIN}/api/tenants/toko-maju/media/video/upload/intent_vid_01`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "video/mp4",
+            Origin: APP_ORIGIN,
+            Cookie: memberUser.cookie,
+          },
+          body: new Uint8Array([0x00, 0x00, 0x00, 0x18]),
+        }),
+        locals: makeLocals("app"),
+      },
+      async () => new Response("video-stream-reached", { status: 200 }),
+      authEnv,
+    );
+    expect(validVideoStreamUpload.status).toBe(200);
+    expect(await validVideoStreamUpload.text()).toBe("video-stream-reached");
+
+    const missingOriginStreamUpload = await executeAuthMiddleware(
+      {
+        request: new Request(`${APP_ORIGIN}/api/tenants/toko-maju/media/upload/intent_img_01`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "image/png",
+            Cookie: memberUser.cookie,
+          },
+          body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        }),
+        locals: makeLocals("app"),
+      },
+      async () => new Response("should not reach", { status: 200 }),
+      authEnv,
+    );
+    expect(missingOriginStreamUpload.status).toBe(403);
+
+    const wrongOriginStreamUpload = await executeAuthMiddleware(
+      {
+        request: new Request(`${APP_ORIGIN}/api/tenants/toko-maju/media/upload/intent_img_01`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "image/png",
+            Origin: "https://toko-maju.situsku.click",
+            Cookie: memberUser.cookie,
+          },
+          body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        }),
+        locals: makeLocals("app"),
+      },
+      async () => new Response("should not reach", { status: 200 }),
+      authEnv,
+    );
+    expect(wrongOriginStreamUpload.status).toBe(403);
+
+    const nonJsonPagesMutation = await executeAuthMiddleware(
+      {
+        request: new Request(`${APP_ORIGIN}/api/tenants/toko-maju/pages`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "image/png",
+            Origin: APP_ORIGIN,
+            Cookie: memberUser.cookie,
+          },
+          body: new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        }),
+        locals: makeLocals("app"),
+      },
+      async () => new Response("should not reach", { status: 200 }),
+      authEnv,
+    );
+    expect(nonJsonPagesMutation.status).toBe(403);
+
+    // 2c. SEC-005: Central middleware CSRF protection covers /api/agency, /api/affiliate, /api/onboarding
+    for (const protectedPath of ["/api/agency/enroll", "/api/affiliate/overview", "/api/onboarding/provision"]) {
+      const badOriginRes = await executeAuthMiddleware(
+        {
+          request: createAdminJsonRequest(`${APP_ORIGIN}${protectedPath}`, "POST", {
+            cookie: memberUser.cookie,
+            origin: "https://toko-maju.situsku.click",
+            body: {},
+          }),
+          locals: makeLocals("app"),
+        },
+        async () => new Response("should not reach", { status: 200 }),
+        authEnv,
+      );
+      expect(badOriginRes.status, `Wrong Origin on ${protectedPath} must return 403`).toBe(403);
+
+      const badContentTypeRes = await executeAuthMiddleware(
+        {
+          request: createAdminJsonRequest(`${APP_ORIGIN}${protectedPath}`, "POST", {
+            cookie: memberUser.cookie,
+            origin: APP_ORIGIN,
+            contentType: "text/plain",
+            body: {},
+          }),
+          locals: makeLocals("app"),
+        },
+        async () => new Response("should not reach", { status: 200 }),
+        authEnv,
+      );
+      expect(badContentTypeRes.status, `Non-JSON Content-Type on ${protectedPath} must return 403`).toBe(403);
+
+      // Positive same-origin JSON POST passes central middleware CSRF cleanly
+      const validSameOriginRes = await executeAuthMiddleware(
+        {
+          request: createAdminJsonRequest(`${APP_ORIGIN}${protectedPath}`, "POST", {
+            cookie: memberUser.cookie,
+            origin: APP_ORIGIN,
+            body: {},
+          }),
+          locals: makeLocals("app"),
+        },
+        async () => new Response("same-origin-ok", { status: 200 }),
+        authEnv,
+      );
+      expect(validSameOriginRes.status, `Valid same-origin JSON POST on ${protectedPath} must pass CSRF`).toBe(200);
+      expect(await validSameOriginRes.text()).toBe("same-origin-ok");
+    }
+
     // 3. Session cookies are NEVER accepted on /mcp or /oauth2/token
     for (const mcpPath of ["/mcp", "/oauth2/token", "/oauth2/register", "/.well-known/oauth-authorization-server"]) {
       const mcpRes = await executeAuthMiddleware(

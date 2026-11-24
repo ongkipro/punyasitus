@@ -45,10 +45,16 @@ const CSRF_PROTECTED_API_PREFIXES = [
   "/api/tenants",
   "/api/account",
   "/api/auth",
+  "/api/agency",
+  "/api/affiliate",
   "/api/affiliates",
+  "/api/onboarding",
   "/api/console",
   "/auth/consent",
 ] as const;
+
+const TENANT_MEDIA_STREAM_UPLOAD_RE =
+  /^\/api\/tenants\/[^/]+\/media\/(?:video\/)?upload\/[^/]+$/i;
 
 const DASHBOARD_HANDLE_RE = /^\/dashboard\/([^/]+)(?:\/(.*))?$/i;
 const DASHBOARD_INVITATION_ACCEPT_RE =
@@ -309,6 +315,54 @@ export function extractDashboardHandle(pathname: string): string | null {
   return raw && raw.length > 0 ? raw : null;
 }
 
+function normalizeExactOrigin(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed.toLowerCase() === "null") return null;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return null;
+    if (parsed.username || parsed.password) return null;
+    if (parsed.pathname !== "/" || parsed.search || parsed.hash) return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
+function assertAdminOriginOnly(
+  request: Request,
+  expectedAdminOrigin: string,
+): { readonly ok: true } | { readonly ok: false; readonly status: 403; readonly code: "FORBIDDEN"; readonly reason: string } {
+  const normalizedExpected = normalizeExactOrigin(expectedAdminOrigin);
+  if (!normalizedExpected) {
+    return {
+      ok: false,
+      status: 403,
+      code: "FORBIDDEN",
+      reason: "Expected admin origin is invalid",
+    };
+  }
+  const rawOrigin = request.headers.get("origin");
+  if (!rawOrigin) {
+    return {
+      ok: false,
+      status: 403,
+      code: "FORBIDDEN",
+      reason: "Missing Origin header on state-changing admin request",
+    };
+  }
+  const normalizedOrigin = normalizeExactOrigin(rawOrigin);
+  if (!normalizedOrigin || normalizedOrigin !== normalizedExpected) {
+    return {
+      ok: false,
+      status: 403,
+      code: "FORBIDDEN",
+      reason: `Origin "${rawOrigin}" does not match expected admin origin "${normalizedExpected}"`,
+    };
+  }
+  return { ok: true };
+}
+
 export async function executeAuthMiddleware(
   context: AuthMiddlewareContext,
   next: () => Promise<Response>,
@@ -384,7 +438,11 @@ export async function executeAuthMiddleware(
     if (!expectedAdminOrigin) {
       return jsonAuthError(404, "NOT_FOUND", "Endpoint tidak ditemukan.");
     }
-    const csrfResult = assertAdminCsrfAndOrigin(context.request, expectedAdminOrigin);
+    const isBinaryMediaStreamUpload =
+      method === "PUT" && TENANT_MEDIA_STREAM_UPLOAD_RE.test(pathnameLower);
+    const csrfResult = isBinaryMediaStreamUpload
+      ? assertAdminOriginOnly(context.request, expectedAdminOrigin)
+      : assertAdminCsrfAndOrigin(context.request, expectedAdminOrigin);
     if (!csrfResult.ok) {
       return jsonAuthError(csrfResult.status, csrfResult.code, csrfResult.reason);
     }

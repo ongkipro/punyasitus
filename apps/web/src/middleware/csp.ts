@@ -1,10 +1,12 @@
 import {
+  buildPlatformSurfaceCspHeader,
   buildRelaxedGtmCspHeader,
   buildStrictPublicCspHeader,
   generateCspNonce,
   injectNonceIntoInlineHtmlScripts,
   parseStoredAnalyticsSettings,
   resolveEffectivePublicAnalyticsConfig,
+  rotateCspNonceInHtmlScripts,
   selectPublicCspProfile,
   type PublicCspProfile,
 } from "@punyasitus/core/analytics/config";
@@ -152,6 +154,75 @@ async function isTenantGtmActiveForRequest(
   }
 }
 
+const BASELINE_REFERRER_POLICY = "strict-origin-when-cross-origin";
+const BASELINE_X_FRAME_OPTIONS = "SAMEORIGIN";
+const CSP_NONCE_TOKEN_RE = /'nonce-([A-Za-z0-9+/=_-]{16,64})'/;
+
+function isWebSocketUpgradeResponse(response: Response): boolean {
+  return (
+    response.status === 101 ||
+    Boolean((response as Response & { readonly webSocket?: unknown }).webSocket)
+  );
+}
+
+function setBaselineSecurityHeadersOn(headers: Headers, isHtml: boolean): void {
+  if (!headers.has("X-Content-Type-Options")) {
+    headers.set("X-Content-Type-Options", "nosniff");
+  }
+  if (isHtml) {
+    if (!headers.has("Referrer-Policy")) {
+      headers.set("Referrer-Policy", BASELINE_REFERRER_POLICY);
+    }
+    if (!headers.has("X-Frame-Options")) {
+      headers.set("X-Frame-Options", BASELINE_X_FRAME_OPTIONS);
+    }
+  }
+}
+
+function buildRewrittenHtmlResponse(
+  response: Response,
+  headers: Headers,
+  rewrittenHtml: string | null,
+  isHeadRequest: boolean,
+): Response {
+  headers.delete("content-length");
+  headers.delete("etag");
+  return new Response(isHeadRequest ? null : rewrittenHtml, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+/**
+ * Ensures baseline HTTP security headers are present on every response (HTML, JSON API,
+ * redirects, and error/state pages) without overriding stricter downstream headers or
+ * breaking WebSocket 101 upgrade responses.
+ */
+export function applyBaselineSecurityHeaders(response: Response): Response {
+  if (isWebSocketUpgradeResponse(response)) {
+    return response;
+  }
+
+  const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+  const isHtml = contentType.includes("text/html");
+  const needsNoSniff = !response.headers.has("X-Content-Type-Options");
+  const needsReferrer = isHtml && !response.headers.has("Referrer-Policy");
+  const needsFrameOptions = isHtml && !response.headers.has("X-Frame-Options");
+
+  if (!needsNoSniff && !needsReferrer && !needsFrameOptions) {
+    return response;
+  }
+
+  const headers = new Headers(response.headers);
+  setBaselineSecurityHeadersOn(headers, isHtml);
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 export async function executePublicCspMiddleware(
   context: AuthMiddlewareContext & {
     readonly locals: AuthMiddlewareContext["locals"] & {
@@ -174,6 +245,7 @@ export async function executePublicCspMiddleware(
   }
 
   const surface = context.locals.surface;
+  const isHeadRequest = context.request.method.toUpperCase() === "HEAD";
   const isTenantPublicCandidate =
     surface === "tenant" &&
     context.locals.tenant !== null &&
@@ -195,6 +267,10 @@ export async function executePublicCspMiddleware(
   }
 
   const response = await next();
+  if (isWebSocketUpgradeResponse(response)) {
+    return response;
+  }
+
   const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
   const isHtml = contentType.includes("text/html");
 
@@ -202,6 +278,7 @@ export async function executePublicCspMiddleware(
   const existingCsp = response.headers.get("content-security-policy");
   if (existingCsp) {
     const headers = new Headers(response.headers);
+    setBaselineSecurityHeadersOn(headers, isHtml);
     if (!headers.has("X-PunyaSitus-CSP-Profile")) {
       headers.set("X-PunyaSitus-CSP-Profile", "strict");
     }
@@ -213,20 +290,27 @@ export async function executePublicCspMiddleware(
   }
 
   if (!isHtml) {
-    return response;
+    return applyBaselineSecurityHeaders(response);
   }
 
-  // Scope public strict / gtm-relaxed CSP headers to public tenant HTML responses only,
-  // so app/console/marketing surfaces never have R2 presigned uploads, blob previews, or
-  // dashboard scripts constrained by the public storefront policy (while NEVER receiving gtm-relaxed).
+  // Non-tenant HTML surfaces (`marketing`, `app`, `console`, `unknown`):
+  // emit strict nonced platform CSP (never `gtm-relaxed`, zero `'unsafe-inline'` in `script-src`)
+  // and inject per-response nonce into inline `<script>` tags for clean Astro/React hydration.
   if (surface !== "tenant") {
+    const platformNonce = generateCspNonce();
+    context.locals.cspNonce = platformNonce;
     const headers = new Headers(response.headers);
+    setBaselineSecurityHeadersOn(headers, true);
+    headers.set("Content-Security-Policy", buildPlatformSurfaceCspHeader(platformNonce));
     headers.set("X-PunyaSitus-CSP-Profile", "strict");
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
+
+    if (isHeadRequest) {
+      return buildRewrittenHtmlResponse(response, headers, null, true);
+    }
+
+    const rawHtml = await response.text();
+    const noncedHtml = injectNonceIntoInlineHtmlScripts(rawHtml, platformNonce);
+    return buildRewrittenHtmlResponse(response, headers, noncedHtml, false);
   }
 
   const finalProfile = selectPublicCspProfile({
@@ -239,6 +323,8 @@ export async function executePublicCspMiddleware(
   });
 
   const headers = new Headers(response.headers);
+  setBaselineSecurityHeadersOn(headers, true);
+
   if (finalProfile === "gtm-relaxed" && generatedNonce) {
     const allowExtraTestOrigins =
       runtimeEnv.APP_ENV === "local" || runtimeEnv.APP_ENV === "test";
@@ -253,29 +339,38 @@ export async function executePublicCspMiddleware(
     headers.set("Vary", "Cookie");
     headers.set("Cache-Control", "private, no-store");
 
+    if (isHeadRequest) {
+      return buildRewrittenHtmlResponse(response, headers, null, true);
+    }
+
     const rawHtml = await response.text();
     const noncedHtml = injectNonceIntoInlineHtmlScripts(rawHtml, generatedNonce);
-    return new Response(noncedHtml, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
+    return buildRewrittenHtmlResponse(response, headers, noncedHtml, false);
   }
 
-  headers.set("Content-Security-Policy", buildStrictPublicCspHeader());
+  const strictNonce = generateCspNonce();
+  context.locals.cspNonce = strictNonce;
+  headers.set("Content-Security-Policy", buildStrictPublicCspHeader(strictNonce));
   headers.set("X-PunyaSitus-CSP-Profile", "strict");
-  return new Response(response.body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
+
+  if (isHeadRequest) {
+    return buildRewrittenHtmlResponse(response, headers, null, true);
+  }
+
+  const rawHtml = await response.text();
+  const noncedHtml = injectNonceIntoInlineHtmlScripts(rawHtml, strictNonce);
+  return buildRewrittenHtmlResponse(response, headers, noncedHtml, false);
 }
 
 /**
  * Full composed tenant + consent-aware edge-cache bypass + public CSP middleware runner.
  * Used both by `apps/web/src/middleware/index.ts` and `workerd` warm-cache integration tests.
+ *
+ * Ensures warm edge-cache HITs of strict tenant HTML rotate the cached CSP nonce to a fresh
+ * per-response cryptographic nonce in both the `Content-Security-Policy` header and inline
+ * `<script>` tags so no nonce is ever reused across HTTP responses.
  */
-export function executeTenantWithConsentAwareCspMiddleware(
+export async function executeTenantWithConsentAwareCspMiddleware(
   context: AuthMiddlewareContext & {
     readonly locals: AuthMiddlewareContext["locals"] & {
       cspNonce?: string | null;
@@ -287,7 +382,7 @@ export function executeTenantWithConsentAwareCspMiddleware(
   options: RequestGateOptions & CspMiddlewareOptions & { readonly cache?: Cache } = {},
 ): Promise<Response> {
   const effectiveCache = resolveConsentAwareEdgeCache(context.request, options.cache);
-  return executeTenantMiddleware(
+  const response = await executeTenantMiddleware(
     context,
     () =>
       executePublicCspMiddleware(
@@ -305,4 +400,39 @@ export function executeTenantWithConsentAwareCspMiddleware(
       ...(effectiveCache ? { cache: effectiveCache } : {}),
     },
   );
+
+  if (isWebSocketUpgradeResponse(response)) {
+    return response;
+  }
+
+  const contentType = (response.headers.get("content-type") ?? "").toLowerCase();
+  const isHtml = contentType.includes("text/html");
+  const isWarmCacheHit = response.headers.get("X-PunyaSitus-Cache") === "HIT";
+  const existingCsp = response.headers.get("Content-Security-Policy");
+
+  if (isWarmCacheHit && isHtml && existingCsp) {
+    const nonceMatch = CSP_NONCE_TOKEN_RE.exec(existingCsp);
+    const cachedNonce = nonceMatch?.[1];
+    if (cachedNonce) {
+      const freshNonce = generateCspNonce();
+      context.locals.cspNonce = freshNonce;
+      const headers = new Headers(response.headers);
+      setBaselineSecurityHeadersOn(headers, true);
+      headers.set(
+        "Content-Security-Policy",
+        existingCsp.replace(`'nonce-${cachedNonce}'`, `'nonce-${freshNonce}'`),
+      );
+
+      const isHeadRequest = context.request.method.toUpperCase() === "HEAD";
+      if (isHeadRequest) {
+        return buildRewrittenHtmlResponse(response, headers, null, true);
+      }
+
+      const cachedHtml = await response.text();
+      const rotatedHtml = rotateCspNonceInHtmlScripts(cachedHtml, cachedNonce, freshNonce);
+      return buildRewrittenHtmlResponse(response, headers, rotatedHtml, false);
+    }
+  }
+
+  return applyBaselineSecurityHeaders(response);
 }
