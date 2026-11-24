@@ -2,26 +2,28 @@
 
 Updated: 2026-11-24
 Status: Active
-State: IMPLEMENTING
+State: INTEGRATING
 Review-Risk: R3
 Independent-Review: PASS
 Primary-Worker: agy-supervisor
 Independent-Reviewer: pi-claude-sonnet-5-5
-Independent-Review-Head: b3b6f6f
+Independent-Review-Head: 65439cb
 
 ## Now
 
-**107 / 110 roadmap tasks (97.3% total; 85 / 85 = 100.0% Phase 1 M1 + 22 / 22 = 100.0% Wave 7 M2 landed!) completed, visually verified (360px/1440px Playwright), independently cross-family reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, checkpointed, and pushed to `origin/main` (`b3b6f6f`):**
-- **Wave 0–6 (85/85 — 100% M1):** All 85 M1 tasks including `TASK-063` Integration Checkpoint M1 (`086b018`, plus additive M2 migration forward-compatibility `36e9f2a`).
-- **Wave 7 (22/22 — 100% M2):** All 22 M2 tasks landed: AI Writing (`TASK-074`, `platform/0029`), Insights (`TASK-072`, `tenant/0022`), Tenant MCP + OAuth 2.1 (`TASK-075`, `platform/0030`), Google Maps Review + GBP (`TASK-073`), Agency Portal (`TASK-083`, `platform/0028`), AI Draft Onboarding (`TASK-109`), Revision History (`TASK-064`, `tenant/0023`), Monthly Owner Report (`TASK-110`), Offline Gerai Multi-Outlet (`TASK-019`), WA Support Entry Point (`TASK-105`), Affiliate Enrollment & Attribution (`TASK-084`, `platform/0031`), Preferred Schedule Inquiries (`TASK-071`, `tenant/0024`), Travel & Umrah DEC-042 (`TASK-020`), Affiliate Commission Ledger & Payout Batches (`TASK-085`, `platform/0032`), Professional Services (`TASK-035`), Affiliate Portal & Console Payouts (`TASK-086`), Plugin Store & AutoLaris Add-ons (`TASK-098`, `platform/0033`), Vehicle Showroom `/kendaraan` (`TASK-079`), Vertical Starter Presets M2 (`TASK-066`), Official Seed Plugins `lead-notifier` (`TASK-101`), `wp-importer` (`TASK-100`), and `bio-links` + `wa-cs-rotator` (`TASK-099`) — all 5 official plugins registered in `plugin-registry.ts` with zero Frozen Core edits.
-- **Clean Mainline (`b3b6f6f`):** `107/107` unit test files (`1,076/1,076` tests PASS), `0` typecheck errors, `spec:check` + `lint` + `delivery-ledger verify` PASS.
+**109 / 110 roadmap tasks (99.1% total — 100.0% of all M1 + M2 Launch Scope! 85 / 85 Phase 1 M1 + 22 / 22 Wave 7 M2 + 2 / 2 Wave 8 Security & Release Gates landed!) completed, visually verified (360px/768px/1440px Playwright), independently cross-family reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, checkpointed, and pushed to `origin/main` (`65439cb`):**
+- **Wave 0–6 (85/85 — 100% M1):** Complete core multi-tenant SaaS platform (`TASK-063` M1 Integration Checkpoint `086b018`).
+- **Wave 7 (22/22 — 100% M2):** Complete M2 verticals, AI writing/onboarding, Insights, Tenant MCP + OAuth 2.1, Agency Portal, Affiliate program, Plugin Store, Vehicle Showroom, M2 Vertical Presets, and all 5 Frozen-Core official plugins (`seo-ai-autopilot`, `bio-links`, `wa-cs-rotator`, `wp-importer`, `lead-notifier`).
+- **Wave 8 (2/2 — 100% Security & Release Gates):**
+  - `TASK-078` (`5faaa13`, R3): Pre-Launch Security Assurance — OWASP ASVS 5.0 L2 control-group checklist, 375-route + 16-MCP-tool + 5-plugin surface enumeration, real `workerd` positive+negative BOLA & mutation suite, hardened `.github/workflows/security.yml` (`actionlint` PASS), local built-Worker DAST report (`DEC-032` approved by `pi-claude-sonnet-5-5`), and honest findings register (`SEC-001..SEC-006`).
+  - `TASK-038` (`65439cb`, R3): Full Production Release Gate (M1 + M2) — 109-task static release gate, 5-run mobile performance lab (`LCP p50 512ms`, `JS 3.52 KiB`), multi-browser & 12-route No-JS M1+M2 E2E gate, standalone SQLite + real `workerd` product-code backup/restore & `DEC-022` tombstone replay proof (`RTO 27ms`), `.github/workflows/release-gate.yml` (Chromium/Firefox/WebKit), valid `RELEASE.md` (`release-manifest` VALID, `rollback-check` PASS), and updated `ARCHITECTURE.md` & `docs/operations/release-checklist.md`.
+- **Clean Mainline (`65439cb`):** `110/110` unit test files (`1,097/1,097` tests PASS), `0` typecheck errors across `750` files, `spec:check` + `lint` + `actionlint` (4/4 workflows) + `delivery-ledger verify` PASS.
 
 ## Next
 
-1. **Wave 8 — Final 2 Launch Gate Tasks:**
-   - **`TASK-078` (R3):** Pre-Launch Security Assurance — OWASP ASVS 5.0 Level 2 checklist, exhaustive cross-tenant BOLA suite (every tenant API route, MCP tool, and public route), OWASP ZAP baseline CI workflow (`security.yml`), and full scan report + independent R3 review.
-   - **`TASK-038` (R3):** Full Production Release Gate (M1 + M2) — Chromium/Firefox/WebKit matrix at 360/768/1440, PLAN §9 performance lab, executed backup/restore rehearsal, `RELEASE.md`, and `production-gate` (keeping `EXT-*` live/legal gates explicitly `UNVERIFIED` until owner authorizes live staging).
-2. **`TASK-062`** (Owner Redirect Manager & 404 Monitor) remains explicitly deferred to Release 1.1 per `DEC-035 C16`.
+1. **Pre-Live Hardening Reopens (before live staging/production deploy):** Resolve open tracked findings in their owning task paths: `SEC-001` (`M1-FU-03` publish-screening wiring), `SEC-002` (`M1-FU-07` binary media upload middleware CSRF), `SEC-003`/`SEC-006` (baseline HTML/JSON security headers & CSP nonce/hash), `SEC-004` (console affiliate CSV step-up), and `M1-FU-08` (cold mobile `.ps-floating-dock` CLS `0.1118 -> <= 0.10`, then remove `--allow-tracked-cls-deviation=M1-FU-08`).
+2. **External Staging, Provider & Legal Gates (`EXT-01..EXT-10`):** Execute only with explicit owner authorization against live Cloudflare Workers Paid, SaaS zone (`situsku.click` DCV/O2O/Trust+), Google OAuth, Cloudflare Email Sending (`notif.punyasitus.com`), AutoLaris relay, Indonesian legal/PSE/UU PDP review (`DEC-047`), and staging ZAP full scan.
+3. **Release 1.1 (`TASK-062`):** Owner Redirect Manager & 404 Monitor remains explicitly deferred to Release 1.1 per `DEC-035 C16`.
 
 ## Blockers
 
