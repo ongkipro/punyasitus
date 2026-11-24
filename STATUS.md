@@ -7,22 +7,21 @@ Review-Risk: R3
 Independent-Review: PASS
 Primary-Worker: agy-supervisor
 Independent-Reviewer: pi-claude-sonnet-5-5
-Independent-Review-Head: 65439cb
+Independent-Review-Head: 5a5ad9c
 
 ## Now
 
-**109 / 110 roadmap tasks (99.1% total — 100.0% of all M1 + M2 Launch Scope! 85 / 85 Phase 1 M1 + 22 / 22 Wave 7 M2 + 2 / 2 Wave 8 Security & Release Gates landed!) completed, visually verified (360px/768px/1440px Playwright), independently cross-family reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, checkpointed, and pushed to `origin/main` (`65439cb`):**
+**109 / 110 roadmap tasks (99.1% total — 100.0% of all M1 + M2 Launch Scope!) + Pre-Live Security & CLS Hardening Batch (`SEC-001..SEC-006`, `M1-FU-03`/`07`/`08`) completed, visually verified (360px/768px/1440px Playwright), independently cross-family reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, checkpointed, and pushed to `origin/main` (`5a5ad9c`):**
 - **Wave 0–6 (85/85 — 100% M1):** Complete core multi-tenant SaaS platform (`TASK-063` M1 Integration Checkpoint `086b018`).
 - **Wave 7 (22/22 — 100% M2):** Complete M2 verticals, AI writing/onboarding, Insights, Tenant MCP + OAuth 2.1, Agency Portal, Affiliate program, Plugin Store, Vehicle Showroom, M2 Vertical Presets, and all 5 Frozen-Core official plugins (`seo-ai-autopilot`, `bio-links`, `wa-cs-rotator`, `wp-importer`, `lead-notifier`).
-- **Wave 8 (2/2 — 100% Security & Release Gates):**
-  - `TASK-078` (`5faaa13`, R3): Pre-Launch Security Assurance — OWASP ASVS 5.0 L2 control-group checklist, 375-route + 16-MCP-tool + 5-plugin surface enumeration, real `workerd` positive+negative BOLA & mutation suite, hardened `.github/workflows/security.yml` (`actionlint` PASS), local built-Worker DAST report (`DEC-032` approved by `pi-claude-sonnet-5-5`), and honest findings register (`SEC-001..SEC-006`).
-  - `TASK-038` (`65439cb`, R3): Full Production Release Gate (M1 + M2) — 109-task static release gate, 5-run mobile performance lab (`LCP p50 512ms`, `JS 3.52 KiB`), multi-browser & 12-route No-JS M1+M2 E2E gate, standalone SQLite + real `workerd` product-code backup/restore & `DEC-022` tombstone replay proof (`RTO 27ms`), `.github/workflows/release-gate.yml` (Chromium/Firefox/WebKit), valid `RELEASE.md` (`release-manifest` VALID, `rollback-check` PASS), and updated `ARCHITECTURE.md` & `docs/operations/release-checklist.md`.
-- **Clean Mainline (`65439cb`):** `110/110` unit test files (`1,097/1,097` tests PASS), `0` typecheck errors across `750` files, `spec:check` + `lint` + `actionlint` (4/4 workflows) + `delivery-ledger verify` PASS.
+- **Wave 8 (2/2 — 100% Security & Release Gates):** `TASK-078` (`5faaa13`, R3 — OWASP ASVS 5.0 L2, 375-route surface enumeration, `workerd` BOLA suite, hardened `.github/workflows/security.yml`) and `TASK-038` (`65439cb`, R3 — Full Production Release Gate M1+M2, 5-run mobile lab, 12-route No-JS + Schema.org E2E gate, standalone SQLite + `workerd` product-code backup/restore & `DEC-022` tombstone replay proof, `.github/workflows/release-gate.yml`, valid `RELEASE.md`).
+- **Pre-Live Hardening Complete (`5cb5de1`, `1da5819`, `04e885a`, `5a5ad9c`):** Resolved all 6 tracked security findings (`SEC-001` dashboard publish screening on `pages`/`posts`/`catalog`/`identity`, `SEC-002` exact-`Origin` streaming media upload CSRF, `SEC-003` baseline HTML & JSON `nosniff`/`Referrer-Policy`/`X-Frame-Options`/platform CSP, `SEC-004` console affiliate CSV 2FA step-up + truncation headers, `SEC-005` central `/api/agency`+`/api/affiliate`+`/api/onboarding` CSRF prefixes, `SEC-006` per-response 128-bit CSP nonces with zero `'unsafe-inline'` in `script-src` + warm cache-HIT nonce rotation) and `M1-FU-08` (compositor-only `FloatingWhatsApp` transform eliminating cold mobile CLS `0.1118 -> 0.0000`). **Waiver permanently removed from CI & `tests/task-038/e2e.mjs`!**
+- **Clean Mainline (`5a5ad9c`):** `110/110` unit test files (`1,098/1,098` tests PASS), `0` typecheck errors across `750` files, `0` built-Worker DAST header/CSP alerts (`run-security-suite.mjs` `PASS`), strict zero-waiver 5-run mobile lab `CLS p50=0 / p95=0 / max=0`, `LCP p50=508ms`, `JS 3.52 KiB`, `spec:check` + `lint` + `actionlint` (4/4 workflows) + `release-manifest` `VALID` + `rollback-check` `PASS`.
 
 ## Next
 
-1. **Pre-Live Hardening Reopens (before live staging/production deploy):** Resolve open tracked findings in their owning task paths: `SEC-001` (`M1-FU-03` publish-screening wiring), `SEC-002` (`M1-FU-07` binary media upload middleware CSRF), `SEC-003`/`SEC-006` (baseline HTML/JSON security headers & CSP nonce/hash), `SEC-004` (console affiliate CSV step-up), and `M1-FU-08` (cold mobile `.ps-floating-dock` CLS `0.1118 -> <= 0.10`, then remove `--allow-tracked-cls-deviation=M1-FU-08`).
-2. **External Staging, Provider & Legal Gates (`EXT-01..EXT-10`):** Execute only with explicit owner authorization against live Cloudflare Workers Paid, SaaS zone (`situsku.click` DCV/O2O/Trust+), Google OAuth, Cloudflare Email Sending (`notif.punyasitus.com`), AutoLaris relay, Indonesian legal/PSE/UU PDP review (`DEC-047`), and staging ZAP full scan.
+1. **External Staging, Provider & Legal Gates (`EXT-01..EXT-10` — ONLY remaining pre-launch gates):** Execute only with explicit owner authorization against live Cloudflare Workers Paid, SaaS zone (`situsku.click` DCV/O2O/Trust+), Google OAuth, Cloudflare Email Sending (`notif.punyasitus.com`), AutoLaris relay, Indonesian legal/PSE/UU PDP review (`DEC-047`), CI Firefox/WebKit matrix run, and staging ZAP full scan.
+2. **Optional Pre-Staging Polish (Non-Blocking):** `M1-FU-01`, `M1-FU-02`, `M1-FU-04`, `M1-FU-05`, `M1-FU-06`, and secondary publish routes noted in `docs/security/findings-register.md` §1.1.
 3. **Release 1.1 (`TASK-062`):** Owner Redirect Manager & 404 Monitor remains explicitly deferred to Release 1.1 per `DEC-035 C16`.
 
 ## Blockers
