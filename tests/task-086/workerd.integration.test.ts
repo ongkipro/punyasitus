@@ -1093,7 +1093,7 @@ describe("TASK-086: Affiliate Self-Service Portal & Console Payout Management (w
     );
     expect(suspendRes.status).toBe(200);
 
-    // 13. Safe CSV exports escape formula-injection characters!
+    // 13. Safe CSV exports (with fresh 2FA step-up) escape formula-injection characters & emit export headers!
     const affCsvRes = await handleConsoleAffiliatesListRequest(
       new Request(`${CONSOLE_ORIGIN}/api/console/affiliates?format=csv&export=affiliates`, {
         headers: { Cookie: superOp.cookieHeader },
@@ -1103,6 +1103,11 @@ describe("TASK-086: Affiliate Self-Service Portal & Console Payout Management (w
     );
     expect(affCsvRes.status).toBe(200);
     expect(affCsvRes.headers.get("content-type")).toContain("text/csv");
+    expect(affCsvRes.headers.get("x-export-row-count")).toBe("1");
+    expect(affCsvRes.headers.get("x-export-max-rows")).toBe("5000");
+    expect(affCsvRes.headers.get("x-export-truncated")).toBe("false");
+    expect(affCsvRes.headers.get("x-export-offset")).toBe("0");
+    expect(affCsvRes.headers.get("x-export-next-offset")).toBeNull();
     const affCsvText = await affCsvRes.text();
     expect(affCsvText).toContain("'=CMD|' /C calc'!A0");
     expect(affCsvText).not.toContain(",=CMD|");
@@ -1115,11 +1120,16 @@ describe("TASK-086: Affiliate Self-Service Portal & Console Payout Management (w
       { nowMs: PAYOUT_DEC_15_MS },
     );
     expect(batchCsvRes.status).toBe(200);
+    expect(batchCsvRes.headers.get("x-export-row-count")).toBe("1");
+    expect(batchCsvRes.headers.get("x-export-max-rows")).toBe("5000");
+    expect(batchCsvRes.headers.get("x-export-truncated")).toBe("false");
+    expect(batchCsvRes.headers.get("x-export-offset")).toBe("0");
+    expect(batchCsvRes.headers.get("x-export-next-offset")).toBeNull();
     const batchCsvText = await batchCsvRes.text();
     expect(batchCsvText).toContain("'+TRF-BCA-20261215-999");
     expect(batchCsvText).toContain("'=CMD|' /C calc'!A0");
 
-    // 14. Verify platform_audit recorded approve, compliance, paid, suspend, and csv exports
+    // 14. Verify platform_audit recorded approve, compliance, paid, suspend, and csv exports with truncation metadata
     const auditLogs = await listPlatformAuditEntries(env.PLATFORM_DB, { limit: 50 });
     const actions = auditLogs.map((a) => a.action);
     expect(actions).toContain("console.affiliate.approve");
@@ -1127,6 +1137,20 @@ describe("TASK-086: Affiliate Self-Service Portal & Console Payout Management (w
     expect(actions).toContain("affiliate.payout_batch.paid");
     expect(actions).toContain("console.affiliate.suspend");
     expect(actions).toContain("console.affiliates.export_csv");
+    const csvAudits = auditLogs.filter(
+      (a) => a.action === "console.affiliates.export_csv" && a.outcome === "success",
+    );
+    expect(csvAudits.length).toBeGreaterThanOrEqual(2);
+    for (const entry of csvAudits) {
+      const meta = JSON.parse(entry.metadataJson ?? "{}") as {
+        readonly truncated?: boolean;
+        readonly maxRows?: number;
+        readonly rowCount?: number;
+      };
+      expect(meta.truncated).toBe(false);
+      expect(meta.maxRows).toBe(5_000);
+      expect(meta.rowCount).toBe(1);
+    }
 
     // 15. Even when platform REQ-095 is resolved, an affiliate missing `terms_accepted_at` is STILL blocked (422)
     const noTermsUser = await createSurfaceSession({
@@ -1174,5 +1198,240 @@ describe("TASK-086: Affiliate Self-Service Portal & Console Payout Management (w
     };
     expect(noTermsBody.code).toBe("AFFILIATE_COMPLIANCE_INCOMPLETE");
     expect(noTermsBody.missing).toContain("affiliate_terms_not_accepted");
+  });
+
+  it("SEC-004: requires recent 2FA step-up for CSV export while keeping JSON listing readable, and emits truncation headers + offset pagination", async () => {
+    const op = await createSurfaceSession({
+      surface: "console",
+      email: "op-sec004@example.com",
+      name: "Operator SEC-004",
+      nowMs: BASE_NOW_MS,
+    });
+    await grantConsoleOperator({
+      userId: op.userId,
+      sessionId: op.sessionId,
+      role: "platform_superadmin",
+      verifiedAtMs: BASE_NOW_MS,
+      nowMs: BASE_NOW_MS,
+    });
+
+    // Seed 3 active affiliates & 3 payout batches so we can prove truncation at maxRows=2 and complete offset pagination
+    const seededAffiliateIds: string[] = [];
+    const seededBatchIds: string[] = [];
+    for (let i = 1; i <= 3; i += 1) {
+      const affUser = await createSurfaceSession({
+        surface: "app",
+        email: `sec004-aff-${i}@example.com`,
+        name: `Mitra SEC004 ${i}`,
+        nowMs: BASE_NOW_MS + i * 1_000,
+      });
+      const applied = await applyForAffiliateAccount(env.PLATFORM_DB, {
+        userId: affUser.userId,
+        payload: {
+          payoutBankCode: "BCA",
+          payoutAccountNumber: `880000000${i}`,
+          payoutAccountHolder: `Pemegang Rekening ${i}`,
+          termsAccepted: true,
+          termsVersion: "2026-11-v1",
+        },
+        nowMs: BASE_NOW_MS + i * 1_000,
+      });
+      const approved = await approveAffiliate(env.PLATFORM_DB, {
+        affiliateId: applied.affiliate.id,
+        actorUserId: op.userId,
+        reason: `Menyetujui mitra ${i} untuk pengujian SEC-004 CSV export.`,
+        referralCode: `SEC004A${i}`,
+        expectedVersion: applied.affiliate.version,
+        nowMs: BASE_NOW_MS + i * 1_000,
+      });
+      seededAffiliateIds.push(approved.affiliate.id);
+
+      const batchId = `bat_sec004_${i}`;
+      seededBatchIds.push(batchId);
+      await env.PLATFORM_DB.prepare(
+        `INSERT INTO affiliate_commission_payout_batches (
+           id, affiliate_id, payout_period_key, total_amount_idr, entry_count,
+           status, version, created_at, updated_at
+         ) VALUES (?, ?, '2026-12-15', ?, 1, 'pending_review', 1, ?, ?)`,
+      )
+        .bind(batchId, approved.affiliate.id, 100_000 + i * 10_000, BASE_NOW_MS + i * 1_000, BASE_NOW_MS + i * 1_000)
+        .run();
+    }
+
+    // 1. Stale 2FA (> 10 minutes): read-only JSON dashboard STILL works (200),
+    //    but CSV exports MUST be rejected with 403 REAUTH_REQUIRED, ZERO CSV data, and ZERO success audit!
+    const staleNowMs = BASE_NOW_MS + 11 * 60 * 1_000;
+
+    const jsonWhileStale = await handleConsoleAffiliatesListRequest(
+      new Request(`${CONSOLE_ORIGIN}/api/console/affiliates`, {
+        headers: { Cookie: op.cookieHeader },
+      }),
+      buildConsoleEnv(),
+      { nowMs: staleNowMs },
+    );
+    expect(jsonWhileStale.status).toBe(200);
+    const jsonData = (await jsonWhileStale.json()) as {
+      readonly success: boolean;
+      readonly affiliates: readonly unknown[];
+      readonly batches: readonly unknown[];
+    };
+    expect(jsonData.success).toBe(true);
+    expect(jsonData.affiliates).toHaveLength(3);
+    expect(jsonData.batches).toHaveLength(3);
+
+    const deniedAffCsv = await handleConsoleAffiliatesListRequest(
+      new Request(`${CONSOLE_ORIGIN}/api/console/affiliates?format=csv&export=affiliates`, {
+        headers: { Cookie: op.cookieHeader },
+      }),
+      buildConsoleEnv(),
+      { nowMs: staleNowMs },
+    );
+    expect(deniedAffCsv.status).toBe(403);
+    expect(deniedAffCsv.headers.get("content-type")).toContain("application/json");
+    const deniedAffText = await deniedAffCsv.text();
+    expect(deniedAffText).not.toContain("affiliate_id,email");
+    expect(deniedAffText).not.toContain("sec004-aff-1@example.com");
+    expect(deniedAffText).not.toContain("Pemegang Rekening");
+    const deniedAffBody = JSON.parse(deniedAffText) as {
+      readonly code: string;
+      readonly reasonCode?: string;
+    };
+    expect(deniedAffBody.code).toBe("REAUTH_REQUIRED");
+    expect(deniedAffBody.reasonCode).toBe("RECENT_SECOND_FACTOR_REQUIRED");
+
+    const deniedBatchCsv = await handleConsoleAffiliatesListRequest(
+      new Request(`${CONSOLE_ORIGIN}/api/console/affiliates?format=csv&export=batches`, {
+        headers: { Cookie: op.cookieHeader },
+      }),
+      buildConsoleEnv(),
+      { nowMs: staleNowMs },
+    );
+    expect(deniedBatchCsv.status).toBe(403);
+    const deniedBatchText = await deniedBatchCsv.text();
+    expect(deniedBatchText).not.toContain("batch_id,payout_period_key");
+    expect(deniedBatchText).not.toContain("bat_sec004_1");
+
+    const auditsAfterDenied = await listPlatformAuditEntries(env.PLATFORM_DB, {
+      action: "console.affiliates.export_csv",
+      actorUserId: op.userId,
+      limit: 20,
+    });
+    expect(auditsAfterDenied.filter((a) => a.outcome === "success")).toHaveLength(0);
+    expect(auditsAfterDenied.filter((a) => a.outcome === "denied").length).toBeGreaterThanOrEqual(2);
+
+    // 2. Fresh 2FA step-up: full CSV export under default 5,000 cap emits X-Export-Truncated: false
+    const freshNowMs = BASE_NOW_MS + 2 * 60 * 1_000;
+    const fullAffCsvRes = await handleConsoleAffiliatesListRequest(
+      new Request(`${CONSOLE_ORIGIN}/api/console/affiliates?format=csv&export=affiliates`, {
+        headers: { Cookie: op.cookieHeader },
+      }),
+      buildConsoleEnv(),
+      { nowMs: freshNowMs },
+    );
+    expect(fullAffCsvRes.status).toBe(200);
+    expect(fullAffCsvRes.headers.get("x-export-row-count")).toBe("3");
+    expect(fullAffCsvRes.headers.get("x-export-max-rows")).toBe("5000");
+    expect(fullAffCsvRes.headers.get("x-export-truncated")).toBe("false");
+    expect(fullAffCsvRes.headers.get("x-export-offset")).toBe("0");
+    expect(fullAffCsvRes.headers.get("x-export-next-offset")).toBeNull();
+
+    // 3. Bounded export where total rows (3) > maxRows (2): emits X-Export-Truncated: true,
+    //    records truncated=true & maxRows=2 in audit metadata, and paginates completely with ?offset=2!
+    const page1AffRes = await handleConsoleAffiliatesListRequest(
+      new Request(`${CONSOLE_ORIGIN}/api/console/affiliates?format=csv&export=affiliates`, {
+        headers: { Cookie: op.cookieHeader },
+      }),
+      buildConsoleEnv(),
+      { nowMs: freshNowMs, csvMaxRows: 2 },
+    );
+    expect(page1AffRes.status).toBe(200);
+    expect(page1AffRes.headers.get("x-export-row-count")).toBe("2");
+    expect(page1AffRes.headers.get("x-export-max-rows")).toBe("2");
+    expect(page1AffRes.headers.get("x-export-truncated")).toBe("true");
+    expect(page1AffRes.headers.get("x-export-offset")).toBe("0");
+    expect(page1AffRes.headers.get("x-export-next-offset")).toBe("2");
+    const page1AffLines = (await page1AffRes.text()).trim().split("\r\n");
+    expect(page1AffLines).toHaveLength(3); // 1 header + 2 data rows
+
+    const page2AffRes = await handleConsoleAffiliatesListRequest(
+      new Request(`${CONSOLE_ORIGIN}/api/console/affiliates?format=csv&export=affiliates&offset=2`, {
+        headers: { Cookie: op.cookieHeader },
+      }),
+      buildConsoleEnv(),
+      { nowMs: freshNowMs, csvMaxRows: 2 },
+    );
+    expect(page2AffRes.status).toBe(200);
+    expect(page2AffRes.headers.get("x-export-row-count")).toBe("1");
+    expect(page2AffRes.headers.get("x-export-max-rows")).toBe("2");
+    expect(page2AffRes.headers.get("x-export-truncated")).toBe("false");
+    expect(page2AffRes.headers.get("x-export-offset")).toBe("2");
+    expect(page2AffRes.headers.get("x-export-next-offset")).toBeNull();
+    const page2AffLines = (await page2AffRes.text()).trim().split("\r\n");
+    expect(page2AffLines).toHaveLength(2); // 1 header + 1 remaining row
+
+    const exportedAffIds = new Set([
+      ...page1AffLines.slice(1).map((line) => line.split(",")[0]),
+      ...page2AffLines.slice(1).map((line) => line.split(",")[0]),
+    ]);
+    expect(exportedAffIds).toEqual(new Set(seededAffiliateIds));
+
+    // 4. Same authoritative truncation + offset pagination for payout batches CSV (?limit=2&offset=...)
+    const page1BatchRes = await handleConsoleAffiliatesListRequest(
+      new Request(`${CONSOLE_ORIGIN}/api/console/affiliates?format=csv&export=batches&limit=2`, {
+        headers: { Cookie: op.cookieHeader },
+      }),
+      buildConsoleEnv(),
+      { nowMs: freshNowMs },
+    );
+    expect(page1BatchRes.status).toBe(200);
+    expect(page1BatchRes.headers.get("x-export-row-count")).toBe("2");
+    expect(page1BatchRes.headers.get("x-export-max-rows")).toBe("2");
+    expect(page1BatchRes.headers.get("x-export-truncated")).toBe("true");
+    expect(page1BatchRes.headers.get("x-export-offset")).toBe("0");
+    expect(page1BatchRes.headers.get("x-export-next-offset")).toBe("2");
+    const page1BatchLines = (await page1BatchRes.text()).trim().split("\r\n");
+    expect(page1BatchLines).toHaveLength(3);
+
+    const page2BatchRes = await handleConsoleAffiliatesListRequest(
+      new Request(
+        `${CONSOLE_ORIGIN}/api/console/affiliates?format=csv&export=batches&limit=2&offset=2`,
+        { headers: { Cookie: op.cookieHeader } },
+      ),
+      buildConsoleEnv(),
+      { nowMs: freshNowMs },
+    );
+    expect(page2BatchRes.status).toBe(200);
+    expect(page2BatchRes.headers.get("x-export-row-count")).toBe("1");
+    expect(page2BatchRes.headers.get("x-export-max-rows")).toBe("2");
+    expect(page2BatchRes.headers.get("x-export-truncated")).toBe("false");
+    expect(page2BatchRes.headers.get("x-export-offset")).toBe("2");
+    expect(page2BatchRes.headers.get("x-export-next-offset")).toBeNull();
+    const page2BatchLines = (await page2BatchRes.text()).trim().split("\r\n");
+    expect(page2BatchLines).toHaveLength(2);
+
+    const exportedBatchIds = new Set([
+      ...page1BatchLines.slice(1).map((line) => line.split(",")[0]),
+      ...page2BatchLines.slice(1).map((line) => line.split(",")[0]),
+    ]);
+    expect(exportedBatchIds).toEqual(new Set(seededBatchIds));
+
+    // 5. Verify audit metadata explicitly recorded truncated=true & maxRows=2 for truncated exports
+    const allCsvSuccessAudits = (
+      await listPlatformAuditEntries(env.PLATFORM_DB, {
+        action: "console.affiliates.export_csv",
+        actorUserId: op.userId,
+        limit: 20,
+      })
+    ).filter((a) => a.outcome === "success");
+    const truncatedAudits = allCsvSuccessAudits
+      .map((a) => JSON.parse(a.metadataJson ?? "{}") as Record<string, unknown>)
+      .filter((m) => m.truncated === true);
+    expect(truncatedAudits).toHaveLength(2); // page 1 affiliates + page 1 batches
+    for (const meta of truncatedAudits) {
+      expect(meta.maxRows).toBe(2);
+      expect(meta.rowCount).toBe(2);
+      expect(meta.offset).toBe(0);
+      expect(meta.nextOffset).toBe(2);
+    }
   });
 });

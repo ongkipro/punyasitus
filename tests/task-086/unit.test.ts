@@ -7,6 +7,10 @@ import {
   maskReferredTenantHandle,
 } from "../../apps/web/src/pages/api/affiliate/_shared.ts";
 import {
+  CONSOLE_AFFILIATE_CSV_MAX_ROWS,
+  finalizeBoundedExportPage,
+  parseConsoleCsvExportOffset,
+  resolveConsoleCsvMaxRows,
   sanitizeCsvCell,
   serializeConsoleAffiliatesCsv,
   serializeConsolePayoutBatchesCsv,
@@ -209,6 +213,57 @@ describe("TASK-086: Spreadsheet formula-injection-safe CSV export", () => {
     expect(batchCsv).toContain("'@SUM(A1)");
     expect(batchCsv).toContain("'-TRF-2026-01");
     expect(batchCsv).toContain("'+Transfer selesai");
+  });
+
+  it("SEC-004: computes authoritative CSV truncation, row counts, maxRows bounds, and offset pagination", () => {
+    expect(CONSOLE_AFFILIATE_CSV_MAX_ROWS).toBe(5_000);
+
+    // Offset parsing bounds and invalid input handling
+    expect(parseConsoleCsvExportOffset(null)).toBe(0);
+    expect(parseConsoleCsvExportOffset("")).toBe(0);
+    expect(parseConsoleCsvExportOffset("-10")).toBe(0);
+    expect(parseConsoleCsvExportOffset("abc")).toBe(0);
+    expect(parseConsoleCsvExportOffset("5000")).toBe(5_000);
+    expect(parseConsoleCsvExportOffset("999999999")).toBe(1_000_000);
+
+    // Max rows resolution (bounded to configured ceiling and 5,000 hard cap)
+    expect(resolveConsoleCsvMaxRows(null)).toBe(5_000);
+    expect(resolveConsoleCsvMaxRows("10000")).toBe(5_000);
+    expect(resolveConsoleCsvMaxRows("250")).toBe(250);
+    expect(resolveConsoleCsvMaxRows("0")).toBe(5_000);
+    expect(resolveConsoleCsvMaxRows("-5")).toBe(5_000);
+    expect(resolveConsoleCsvMaxRows("10", 3)).toBe(3);
+    expect(resolveConsoleCsvMaxRows("2", 3)).toBe(2);
+
+    // Under cap -> truncated: false
+    expect(finalizeBoundedExportPage(["a", "b"], 5, 0)).toEqual({
+      rows: ["a", "b"],
+      rowCount: 2,
+      maxRows: 5,
+      offset: 0,
+      truncated: false,
+      nextOffset: null,
+    });
+
+    // Exact cap (limit+1 query returned exact maxRows) -> truncated: false
+    expect(finalizeBoundedExportPage(["a", "b", "c"], 3, 0)).toEqual({
+      rows: ["a", "b", "c"],
+      rowCount: 3,
+      maxRows: 3,
+      offset: 0,
+      truncated: false,
+      nextOffset: null,
+    });
+
+    // Exceeds cap (limit+1 query returned maxRows+1) -> truncated: true + nextOffset
+    expect(finalizeBoundedExportPage(["a", "b", "c", "d"], 3, 10)).toEqual({
+      rows: ["a", "b", "c"],
+      rowCount: 3,
+      maxRows: 3,
+      offset: 10,
+      truncated: true,
+      nextOffset: 13,
+    });
   });
 });
 

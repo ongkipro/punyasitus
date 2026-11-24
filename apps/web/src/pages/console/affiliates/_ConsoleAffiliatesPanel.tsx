@@ -138,6 +138,10 @@ export function ConsoleAffiliatesPanel({
 
   const [errorMsg, setErrorMsg] = React.useState<string | null>(null);
   const [successMsg, setSuccessMsg] = React.useState<string | null>(null);
+  const [exportWarning, setExportWarning] = React.useState<string | null>(null);
+  const [exportingScope, setExportingScope] = React.useState<"affiliates" | "batches" | null>(
+    null,
+  );
 
   const filteredAffiliates = React.useMemo(
     () =>
@@ -349,6 +353,69 @@ export function ConsoleAffiliatesPanel({
     }
   }
 
+  async function handleCsvExport(scope: "affiliates" | "batches") {
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    setExportWarning(null);
+    setExportingScope(scope);
+    try {
+      const res = await fetch(`/api/console/affiliates?format=csv&export=${scope}`, {
+        method: "GET",
+        credentials: "same-origin",
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as {
+          readonly message?: string;
+          readonly error?: { readonly message?: string };
+        };
+        setErrorMsg(
+          data.message ??
+            data.error?.message ??
+            "Ekspor CSV ditolak. Pastikan 2FA step-up aktif dalam 10 menit terakhir.",
+        );
+        return;
+      }
+
+      const blob = await res.blob();
+      const disposition = res.headers.get("content-disposition") ?? "";
+      const filenameMatch = /filename="([^"]+)"/.exec(disposition);
+      const fallbackName =
+        scope === "batches"
+          ? "punyasitus-affiliate-payout-batches.csv"
+          : "punyasitus-affiliates.csv";
+      const filename = filenameMatch?.[1] ?? fallbackName;
+
+      const objectUrl = URL.createObjectURL(blob);
+      try {
+        const link = document.createElement("a");
+        link.href = objectUrl;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+
+      const rowCount = res.headers.get("x-export-row-count") ?? "0";
+      const maxRows = res.headers.get("x-export-max-rows") ?? "5000";
+      const truncated = res.headers.get("x-export-truncated") === "true";
+      const nextOffset = res.headers.get("x-export-next-offset");
+
+      if (truncated) {
+        setExportWarning(
+          `Ekspor CSV terpotong pada batas ${rowCount}/${maxRows} baris. Gunakan parameter ?offset=${nextOffset ?? rowCount} untuk mengunduh sisa data agar tidak ada payout terlewat.`,
+        );
+      } else {
+        setSuccessMsg(`Berhasil mengekspor ${rowCount} baris CSV (${filename}).`);
+      }
+    } catch {
+      setErrorMsg("Koneksi gagal saat mengekspor data CSV afiliasi.");
+    } finally {
+      setExportingScope(null);
+    }
+  }
+
   const filterOptions: readonly { readonly id: StatusFilter; readonly label: string }[] = [
     { id: "all", label: "Semua" },
     { id: "pending", label: "Menunggu" },
@@ -362,12 +429,20 @@ export function ConsoleAffiliatesPanel({
       {!stepUpFresh && (
         <Alert variant="warning" data-testid="console-affiliates-stepup-warning">
           <Clock className="size-4" aria-hidden="true" />
-          <AlertTitle>Verifikasi ulang 2FA diperlukan untuk mutasi</AlertTitle>
+          <AlertTitle>Verifikasi ulang 2FA diperlukan untuk mutasi &amp; ekspor CSV</AlertTitle>
           <AlertDescription>
-            Anda dapat meninjau daftar afiliasi, batch payout, dan mengekspor CSV, tetapi
-            persetujuan/penangguhan akun serta penandaan transfer payout mewajibkan 2FA step-up
+            Anda dapat meninjau daftar afiliasi dan batch payout, tetapi ekspor CSV payout,
+            persetujuan/penangguhan akun, serta penandaan transfer payout mewajibkan 2FA step-up
             dalam 10 menit terakhir.
           </AlertDescription>
+        </Alert>
+      )}
+
+      {exportWarning && (
+        <Alert variant="warning" data-testid="console-affiliates-export-truncated">
+          <Clock className="size-4" aria-hidden="true" />
+          <AlertTitle>Hasil ekspor CSV terpotong</AlertTitle>
+          <AlertDescription>{exportWarning}</AlertDescription>
         </Alert>
       )}
 
@@ -646,26 +721,28 @@ export function ConsoleAffiliatesPanel({
           </div>
           <div className="flex flex-wrap gap-2">
             <Button
+              type="button"
               variant="outline"
               size="sm"
               className="min-h-11 md:min-h-9"
               data-testid="console-export-affiliates-csv"
-              render={
-                <a href="/api/console/affiliates?format=csv&export=affiliates" download />
-              }
+              disabled={exportingScope !== null}
+              onClick={() => handleCsvExport("affiliates")}
             >
               <Download className="size-4" aria-hidden="true" />
-              Ekspor CSV Afiliasi
+              {exportingScope === "affiliates" ? "Mengekspor..." : "Ekspor CSV Afiliasi"}
             </Button>
             <Button
+              type="button"
               variant="outline"
               size="sm"
               className="min-h-11 md:min-h-9"
               data-testid="console-export-batches-csv"
-              render={<a href="/api/console/affiliates?format=csv&export=batches" download />}
+              disabled={exportingScope !== null}
+              onClick={() => handleCsvExport("batches")}
             >
               <Download className="size-4" aria-hidden="true" />
-              Ekspor CSV Batch
+              {exportingScope === "batches" ? "Mengekspor..." : "Ekspor CSV Batch"}
             </Button>
           </div>
         </CardHeader>
