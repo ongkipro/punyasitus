@@ -1,0 +1,4761 @@
+{
+  "schemaVersion": "1.0",
+  "generatedBy": "scripts/security/enumerate-surfaces.mjs",
+  "summary": {
+    "totalRoutes": 375,
+    "countsByCategory": {
+      "public_tenant_route": 26,
+      "mcp_oauth": 8,
+      "platform_public_endpoint": 8,
+      "auth_account": 15,
+      "affiliate_page": 1,
+      "agency_page": 5,
+      "public_tenant_api": 3,
+      "affiliate_api": 3,
+      "agency_api": 16,
+      "console_api": 54,
+      "onboarding_api": 6,
+      "plugin_webhook": 1,
+      "tenant_api": 141,
+      "console_page": 21,
+      "tenant_dashboard_page": 57,
+      "public_marketing_route": 10
+    },
+    "mcpAllowedToolCount": 16,
+    "mcpExcludedToolCount": 31,
+    "registeredPluginCount": 5
+  },
+  "routes": [
+    {
+      "route": "/",
+      "file": "apps/web/src/pages/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/.well-known/oauth-authorization-server",
+      "file": "apps/web/src/middleware/mcp-oauth.ts",
+      "kind": "middleware_endpoint",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "category": "mcp_oauth",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "public_discovery"
+    },
+    {
+      "route": "/.well-known/oauth-protected-resource",
+      "file": "apps/web/src/middleware/mcp-oauth.ts",
+      "kind": "middleware_endpoint",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "category": "mcp_oauth",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "public_discovery"
+    },
+    {
+      "route": "/.well-known/oauth-protected-resource/mcp",
+      "file": "apps/web/src/middleware/mcp-oauth.ts",
+      "kind": "middleware_endpoint",
+      "methods": [
+        "GET",
+        "HEAD"
+      ],
+      "category": "mcp_oauth",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "public_discovery"
+    },
+    {
+      "route": "/.well-known/punyasitus-domain-check",
+      "file": "apps/web/src/pages/.well-known/punyasitus-domain-check.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET"
+      ],
+      "category": "platform_public_endpoint",
+      "tenantScoped": false,
+      "expectedHost": "platform_or_tenant",
+      "authModel": "public_bounded"
+    },
+    {
+      "route": "/[...slug]",
+      "file": "apps/web/src/pages/[...slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/[indexnowKey].txt",
+      "file": "apps/web/src/pages/[indexnowKey].txt.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "HEAD"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/account",
+      "file": "apps/web/src/pages/account/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_app_user"
+    },
+    {
+      "route": "/account/connected-apps",
+      "file": "apps/web/src/pages/account/connected-apps/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_app_user"
+    },
+    {
+      "route": "/account/security",
+      "file": "apps/web/src/pages/account/security/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_app_user"
+    },
+    {
+      "route": "/affiliate",
+      "file": "apps/web/src/pages/affiliate/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "affiliate_page",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_affiliate_account"
+    },
+    {
+      "route": "/agency",
+      "file": "apps/web/src/pages/agency/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "agency_page",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/agency/billing",
+      "file": "apps/web/src/pages/agency/billing/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "agency_page",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/agency/clients",
+      "file": "apps/web/src/pages/agency/clients/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "agency_page",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/agency/clients/[handle]",
+      "file": "apps/web/src/pages/agency/clients/[handle]/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "agency_page",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/agency/plugins",
+      "file": "apps/web/src/pages/agency/plugins/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "agency_page",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/abuse-report",
+      "file": "apps/web/src/pages/api/abuse-report.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "POST"
+      ],
+      "category": "public_tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public_post"
+    },
+    {
+      "route": "/api/affiliate/batches/[batchId]",
+      "file": "apps/web/src/pages/api/affiliate/batches/[batchId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET"
+      ],
+      "category": "affiliate_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_affiliate_account"
+    },
+    {
+      "route": "/api/affiliate/overview",
+      "file": "apps/web/src/pages/api/affiliate/overview.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET"
+      ],
+      "category": "affiliate_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_affiliate_account"
+    },
+    {
+      "route": "/api/affiliates/apply",
+      "file": "apps/web/src/pages/api/affiliates/apply.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "POST"
+      ],
+      "category": "affiliate_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_affiliate_account"
+    },
+    {
+      "route": "/api/agency",
+      "file": "apps/web/src/pages/api/agency/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/billing",
+      "file": "apps/web/src/pages/api/agency/billing/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/billing/checkout",
+      "file": "apps/web/src/pages/api/agency/billing/checkout.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/billing/receipts/[receiptId]/pdf",
+      "file": "apps/web/src/pages/api/agency/billing/receipts/[receiptId]/pdf.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/billing/reconcile",
+      "file": "apps/web/src/pages/api/agency/billing/reconcile.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/clients",
+      "file": "apps/web/src/pages/api/agency/clients/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/clients/[tenantId]",
+      "file": "apps/web/src/pages/api/agency/clients/[tenantId]/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/clients/[tenantId]/switch",
+      "file": "apps/web/src/pages/api/agency/clients/[tenantId]/switch.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/enroll",
+      "file": "apps/web/src/pages/api/agency/enroll.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/invitations/accept",
+      "file": "apps/web/src/pages/api/agency/invitations/accept.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/plugins",
+      "file": "apps/web/src/pages/api/agency/plugins/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/plugins/checkout",
+      "file": "apps/web/src/pages/api/agency/plugins/checkout.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/plugins/orders/[orderId]/settle",
+      "file": "apps/web/src/pages/api/agency/plugins/orders/[orderId]/settle.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/plugins/receipts/[receiptId]/pdf",
+      "file": "apps/web/src/pages/api/agency/plugins/receipts/[receiptId]/pdf.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/receipts",
+      "file": "apps/web/src/pages/api/agency/receipts/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/agency/receipts/[receiptId]/pdf",
+      "file": "apps/web/src/pages/api/agency/receipts/[receiptId]/pdf.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "agency_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_agency_2fa"
+    },
+    {
+      "route": "/api/auth/[...all]",
+      "file": "apps/web/src/pages/api/auth/[...all].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/api/auth/account/[action]",
+      "file": "apps/web/src/pages/api/auth/account/[action].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/api/auth/mcp/[action]",
+      "file": "apps/web/src/pages/api/auth/mcp/[action].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/api/auth/two-factor/[action]",
+      "file": "apps/web/src/pages/api/auth/two-factor/[action].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/api/console/abuse",
+      "file": "apps/web/src/pages/api/console/abuse/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/abuse/[reportId]",
+      "file": "apps/web/src/pages/api/console/abuse/[reportId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/abuse/[reportId]/moderate",
+      "file": "apps/web/src/pages/api/console/abuse/[reportId]/moderate.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/abuse/rules",
+      "file": "apps/web/src/pages/api/console/abuse/rules.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/abuse/screening",
+      "file": "apps/web/src/pages/api/console/abuse/screening/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/abuse/screening/[reviewId]",
+      "file": "apps/web/src/pages/api/console/abuse/screening/[reviewId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/abuse/screening/[reviewId]/decision",
+      "file": "apps/web/src/pages/api/console/abuse/screening/[reviewId]/decision.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/abuse/takedown",
+      "file": "apps/web/src/pages/api/console/abuse/takedown.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/abuse/trust-watch",
+      "file": "apps/web/src/pages/api/console/abuse/trust-watch.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/affiliates",
+      "file": "apps/web/src/pages/api/console/affiliates/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/affiliates/[affiliateId]",
+      "file": "apps/web/src/pages/api/console/affiliates/[affiliateId]/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/affiliates/[affiliateId]/status",
+      "file": "apps/web/src/pages/api/console/affiliates/[affiliateId]/status.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/affiliates/batches/[batchId]/mark-paid",
+      "file": "apps/web/src/pages/api/console/affiliates/batches/[batchId]/mark-paid.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/affiliates/compliance",
+      "file": "apps/web/src/pages/api/console/affiliates/compliance.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/agencies",
+      "file": "apps/web/src/pages/api/console/agencies/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/agencies/[agencyId]",
+      "file": "apps/web/src/pages/api/console/agencies/[agencyId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/audit",
+      "file": "apps/web/src/pages/api/console/audit/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/audit/[auditId]",
+      "file": "apps/web/src/pages/api/console/audit/[auditId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/billing",
+      "file": "apps/web/src/pages/api/console/billing/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/billing/receipts/[receiptId]/pdf",
+      "file": "apps/web/src/pages/api/console/billing/receipts/[receiptId]/pdf.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/billing/recheck",
+      "file": "apps/web/src/pages/api/console/billing/recheck.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/billing/refund",
+      "file": "apps/web/src/pages/api/console/billing/refund.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/coupons",
+      "file": "apps/web/src/pages/api/console/coupons/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/coupons/[couponId]",
+      "file": "apps/web/src/pages/api/console/coupons/[couponId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/custom-themes/packages",
+      "file": "apps/web/src/pages/api/console/custom-themes/packages/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/custom-themes/packages/[packageId]",
+      "file": "apps/web/src/pages/api/console/custom-themes/packages/[packageId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/custom-themes/requests",
+      "file": "apps/web/src/pages/api/console/custom-themes/requests/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/custom-themes/requests/[requestId]",
+      "file": "apps/web/src/pages/api/console/custom-themes/requests/[requestId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/custom-themes/store",
+      "file": "apps/web/src/pages/api/console/custom-themes/store.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/domains",
+      "file": "apps/web/src/pages/api/console/domains/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/domains/[hostname]/recheck",
+      "file": "apps/web/src/pages/api/console/domains/[hostname]/recheck.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/domains/change",
+      "file": "apps/web/src/pages/api/console/domains/change.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/domains/recheck",
+      "file": "apps/web/src/pages/api/console/domains/recheck.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/health",
+      "file": "apps/web/src/pages/api/console/health/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/incidents",
+      "file": "apps/web/src/pages/api/console/incidents/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/incidents/[incidentId]",
+      "file": "apps/web/src/pages/api/console/incidents/[incidentId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/incidents/[incidentId]/resolve",
+      "file": "apps/web/src/pages/api/console/incidents/[incidentId]/resolve.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/jobs",
+      "file": "apps/web/src/pages/api/console/jobs/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/jobs/[jobKey]/retry",
+      "file": "apps/web/src/pages/api/console/jobs/[jobKey]/retry.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/jobs/cancel",
+      "file": "apps/web/src/pages/api/console/jobs/cancel.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/jobs/retry",
+      "file": "apps/web/src/pages/api/console/jobs/retry.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/operators",
+      "file": "apps/web/src/pages/api/console/operators/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/operators/[userId]/revoke",
+      "file": "apps/web/src/pages/api/console/operators/[userId]/revoke.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/operators/bootstrap",
+      "file": "apps/web/src/pages/api/console/operators/bootstrap.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/plugins/catalog",
+      "file": "apps/web/src/pages/api/console/plugins/catalog.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/plugins/grants",
+      "file": "apps/web/src/pages/api/console/plugins/grants.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/plugins/requests",
+      "file": "apps/web/src/pages/api/console/plugins/requests.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/provisioning",
+      "file": "apps/web/src/pages/api/console/provisioning/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/settings",
+      "file": "apps/web/src/pages/api/console/settings/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/tenants",
+      "file": "apps/web/src/pages/api/console/tenants/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/tenants/[tenantId]",
+      "file": "apps/web/src/pages/api/console/tenants/[tenantId]/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/tenants/[tenantId]/gtm",
+      "file": "apps/web/src/pages/api/console/tenants/[tenantId]/gtm.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/tenants/[tenantId]/state",
+      "file": "apps/web/src/pages/api/console/tenants/[tenantId]/state.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/console/tenants/[tenantId]/themes",
+      "file": "apps/web/src/pages/api/console/tenants/[tenantId]/themes.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "category": "console_api",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/api/events",
+      "file": "apps/web/src/pages/api/events.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "POST"
+      ],
+      "category": "public_tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public_post"
+    },
+    {
+      "route": "/api/health",
+      "file": "apps/web/src/pages/api/health/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "platform_public_endpoint",
+      "tenantScoped": false,
+      "expectedHost": "platform_or_tenant",
+      "authModel": "public_bounded"
+    },
+    {
+      "route": "/api/health/backup",
+      "file": "apps/web/src/pages/api/health/backup.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "platform_public_endpoint",
+      "tenantScoped": false,
+      "expectedHost": "platform_or_tenant",
+      "authModel": "public_bounded"
+    },
+    {
+      "route": "/api/health/db",
+      "file": "apps/web/src/pages/api/health/db.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "platform_public_endpoint",
+      "tenantScoped": false,
+      "expectedHost": "platform_or_tenant",
+      "authModel": "public_bounded"
+    },
+    {
+      "route": "/api/health/jobs",
+      "file": "apps/web/src/pages/api/health/jobs.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "platform_public_endpoint",
+      "tenantScoped": false,
+      "expectedHost": "platform_or_tenant",
+      "authModel": "public_bounded"
+    },
+    {
+      "route": "/api/leads",
+      "file": "apps/web/src/pages/api/leads.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "POST"
+      ],
+      "category": "public_tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public_post"
+    },
+    {
+      "route": "/api/onboarding/ai-draft",
+      "file": "apps/web/src/pages/api/onboarding/ai-draft.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "onboarding_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_app_user"
+    },
+    {
+      "route": "/api/onboarding/check-handle",
+      "file": "apps/web/src/pages/api/onboarding/check-handle.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "onboarding_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_app_user"
+    },
+    {
+      "route": "/api/onboarding/provision",
+      "file": "apps/web/src/pages/api/onboarding/provision.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "onboarding_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_app_user"
+    },
+    {
+      "route": "/api/onboarding/resend-verification",
+      "file": "apps/web/src/pages/api/onboarding/resend-verification.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "onboarding_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_app_user"
+    },
+    {
+      "route": "/api/onboarding/status",
+      "file": "apps/web/src/pages/api/onboarding/status.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "onboarding_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_app_user"
+    },
+    {
+      "route": "/api/onboarding/verify-email",
+      "file": "apps/web/src/pages/api/onboarding/verify-email.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "onboarding_api",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "session_app_user"
+    },
+    {
+      "route": "/api/plugins/[pluginId]/webhook",
+      "file": "apps/web/src/pages/api/plugins/[pluginId]/webhook.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "plugin_webhook",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "plugin_webhook_secret"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/activity",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/activity/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/ai-writing/quota",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/ai-writing/quota.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/ai-writing/suggest",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/ai-writing/suggest.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/analytics",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/analytics/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/analytics/gtm",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/analytics/gtm.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/analytics/gtm/template",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/analytics/gtm/template.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/billing",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/billing/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/billing/attempts",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/billing/attempts/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/billing/attempts/[attemptId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/billing/attempts/[attemptId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/billing/channels",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/billing/channels.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/billing/coupons/validate",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/billing/coupons/validate.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/billing/obligations",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/billing/obligations/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/billing/obligations/[obligationId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/billing/obligations/[obligationId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/billing/receipts",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/billing/receipts/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/billing/receipts/[receiptId]/pdf",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/billing/receipts/[receiptId]/pdf.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/branches",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/branches/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/branches/[branchId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/branches/[branchId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/branches/reorder",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/branches/reorder.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/catalog",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/catalog/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/catalog/[offeringId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/catalog/[offeringId]/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/catalog/[offeringId]/publish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/catalog/[offeringId]/publish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/catalog/[offeringId]/purge",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/catalog/[offeringId]/purge.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/catalog/[offeringId]/restore",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/catalog/[offeringId]/restore.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/catalog/[offeringId]/trash",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/catalog/[offeringId]/trash.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/catalog/[offeringId]/unpublish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/catalog/[offeringId]/unpublish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/catalog/categories",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/catalog/categories/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/catalog/categories/[categoryId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/catalog/categories/[categoryId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/catalog/trash",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/catalog/trash.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/categories",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/categories/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/categories/[categoryId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/categories/[categoryId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/custom-theme-packages",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/custom-theme-packages/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/custom-theme-requests",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/custom-theme-requests/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/custom-theme-requests/[requestId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/custom-theme-requests/[requestId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/deletion",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/deletion/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/deletion/cancel",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/deletion/cancel.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/domains",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/domains/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/domains/[domainId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/domains/[domainId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/domains/[domainId]/make-primary",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/domains/[domainId]/make-primary.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/domains/[domainId]/promote",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/domains/[domainId]/promote.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/domains/[domainId]/recheck",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/domains/[domainId]/recheck.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/exports",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/exports/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/exports/[exportId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/exports/[exportId]/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/exports/[exportId]/download",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/exports/[exportId]/download.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/forms",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/forms/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/forms/[formId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/forms/[formId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "DELETE",
+        "GET",
+        "PATCH",
+        "PUT"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/forms/[formId]/publish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/forms/[formId]/publish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/forms/templates",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/forms/templates.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/identity",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/identity/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/identity/business-profile",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/identity/business-profile/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/identity/business-profile/publish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/identity/business-profile/publish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/identity/publish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/identity/publish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/leads",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/leads/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/leads/[leadId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/leads/[leadId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/leads/export",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/leads/export.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/leads/export.csv",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/leads/export.csv.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/leads/notifications",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/leads/notifications.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/media",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/media/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/media/[resourceId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/media/[resourceId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "DELETE",
+        "GET",
+        "PATCH"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/media/[resourceId]/[action]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/media/[resourceId]/[action].ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/media/[resourceId]/captions",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/media/[resourceId]/captions.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST",
+        "PUT"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/media/[resourceId]/poster",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/media/[resourceId]/poster.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST",
+        "PUT"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/media/upload-intent",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/media/upload-intent.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/media/upload/[intentId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/media/upload/[intentId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST",
+        "PUT"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/media/video/upload-intent",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/media/video/upload-intent.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/media/video/upload/[intentId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/media/video/upload/[intentId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST",
+        "PUT"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/menus",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/menus/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/menus/[location]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/menus/[location].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/outlets",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/outlets/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/outlets/[outletId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/outlets/[outletId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/pages",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/pages/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/pages/[pageId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/pages/[pageId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/pages/[pageId]/preview",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/pages/[pageId]/preview.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/pages/[pageId]/publish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/pages/[pageId]/publish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/pages/[pageId]/purge",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/pages/[pageId]/purge.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/pages/[pageId]/restore",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/pages/[pageId]/restore.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/pages/[pageId]/revisions",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/pages/[pageId]/revisions.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/pages/[pageId]/trash",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/pages/[pageId]/trash.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/pages/[pageId]/unpublish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/pages/[pageId]/unpublish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/pages/trash",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/pages/trash.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/plugins",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/plugins/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/plugins/[pluginId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/plugins/[pluginId]/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/plugins/[pluginId]/[...subpath]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/plugins/[pluginId]/[...subpath].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/plugins/checkout",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/plugins/checkout.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/plugins/custom-dev",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/plugins/custom-dev.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/plugins/orders/[orderId]/settle",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/plugins/orders/[orderId]/settle.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/plugins/receipts/[receiptId]/pdf",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/plugins/receipts/[receiptId]/pdf.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/plugins/store",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/plugins/store.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/plugins/store/[pluginSlug]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/plugins/store/[pluginSlug].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/[postId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/[postId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/[postId]/preview",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/[postId]/preview.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/[postId]/publish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/[postId]/publish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/[postId]/purge",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/[postId]/purge.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/[postId]/restore",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/[postId]/restore.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/[postId]/revisions",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/[postId]/revisions.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/[postId]/trash",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/[postId]/trash.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/[postId]/unpublish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/[postId]/unpublish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/authors",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/authors/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/authors/[authorId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/authors/[authorId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/posts/trash",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/posts/trash.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/presets",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/presets/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/presets/apply",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/presets/apply.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/presets/draft",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/presets/draft.ts",
+      "kind": "endpoint",
+      "methods": [
+        "PATCH"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/presets/preview",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/presets/preview.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/presets/publish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/presets/publish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/preview",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/preview/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/qr",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/qr/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/revisions",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/revisions/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/revisions/[revisionId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/revisions/[revisionId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/revisions/[revisionId]/restore",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/revisions/[revisionId]/restore.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/seo/publish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/seo/publish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/seo/resources/[kind]/[resourceId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/seo/resources/[kind]/[resourceId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/seo/settings",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/seo/settings.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/seo/toggle",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/seo/toggle.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/seo/verification-check",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/seo/verification-check.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/service-requests",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/service-requests/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/service-requests/[requestId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/service-requests/[requestId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/service-requests/[requestId]/staff-access",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/service-requests/[requestId]/staff-access.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/settings",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/settings/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/settings/[group]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/settings/[group].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/settings/publish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/settings/publish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/tags",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/tags/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/tags/[tagId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/tags/[tagId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/theme",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/theme/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/theme/publish",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/theme/publish.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/themes",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/themes/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/themes/activate",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/themes/activate.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/themes/checkout",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/themes/checkout.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/themes/orders/[orderId]/settle",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/themes/orders/[orderId]/settle.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/themes/preview",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/themes/preview.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/themes/receipts/[receiptId]",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/themes/receipts/[receiptId].ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/tenants/[tenantId]/themes/variants",
+      "file": "apps/web/src/pages/api/tenants/[tenantId]/themes/variants.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/api/webhooks/email/bounce",
+      "file": "apps/web/src/pages/api/webhooks/email/bounce.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "platform_public_endpoint",
+      "tenantScoped": false,
+      "expectedHost": "platform_or_tenant",
+      "authModel": "signed_webhook"
+    },
+    {
+      "route": "/auth/consent",
+      "file": "apps/web/src/pages/auth/consent/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/auth/consent/publish/[token]",
+      "file": "apps/web/src/pages/auth/consent/publish/[token].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/auth/login",
+      "file": "apps/web/src/pages/auth/login/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/auth/onboarding",
+      "file": "apps/web/src/pages/auth/onboarding/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/auth/register",
+      "file": "apps/web/src/pages/auth/register/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/auth/reset-password",
+      "file": "apps/web/src/pages/auth/reset-password/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/auth/two-factor",
+      "file": "apps/web/src/pages/auth/two-factor/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/auth/verify-email",
+      "file": "apps/web/src/pages/auth/verify-email/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "auth_account",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "auth_flow"
+    },
+    {
+      "route": "/blog",
+      "file": "apps/web/src/pages/blog/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/blog/[slug]",
+      "file": "apps/web/src/pages/blog/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/blog/category/[slug]",
+      "file": "apps/web/src/pages/blog/category/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/blog/feed.xml",
+      "file": "apps/web/src/pages/blog/feed.xml.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "HEAD"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/blog/tag/[slug]",
+      "file": "apps/web/src/pages/blog/tag/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/console",
+      "file": "apps/web/src/pages/console/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/abuse",
+      "file": "apps/web/src/pages/console/abuse/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/abuse/screening",
+      "file": "apps/web/src/pages/console/abuse/screening.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/affiliates",
+      "file": "apps/web/src/pages/console/affiliates/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/agencies",
+      "file": "apps/web/src/pages/console/agencies/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/audit",
+      "file": "apps/web/src/pages/console/audit/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/billing",
+      "file": "apps/web/src/pages/console/billing/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/coupons",
+      "file": "apps/web/src/pages/console/coupons/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/custom-themes",
+      "file": "apps/web/src/pages/console/custom-themes/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/domains",
+      "file": "apps/web/src/pages/console/domains/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/funnel",
+      "file": "apps/web/src/pages/console/funnel/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/health",
+      "file": "apps/web/src/pages/console/health/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/incidents",
+      "file": "apps/web/src/pages/console/incidents/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/incidents/banner-preview",
+      "file": "apps/web/src/pages/console/incidents/banner-preview.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/jobs",
+      "file": "apps/web/src/pages/console/jobs/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/operators",
+      "file": "apps/web/src/pages/console/operators/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/plugins",
+      "file": "apps/web/src/pages/console/plugins/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/provisioning",
+      "file": "apps/web/src/pages/console/provisioning/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/settings",
+      "file": "apps/web/src/pages/console/settings/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/tenants",
+      "file": "apps/web/src/pages/console/tenants/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/console/tenants/[handle]",
+      "file": "apps/web/src/pages/console/tenants/[handle].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "console_page",
+      "tenantScoped": false,
+      "expectedHost": "console",
+      "authModel": "platform_operator_2fa"
+    },
+    {
+      "route": "/dashboard/[handle]",
+      "file": "apps/web/src/pages/dashboard/[handle]/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/appearance",
+      "file": "apps/web/src/pages/dashboard/[handle]/appearance/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/appearance/presets",
+      "file": "apps/web/src/pages/dashboard/[handle]/appearance/presets/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/appearance/themes",
+      "file": "apps/web/src/pages/dashboard/[handle]/appearance/themes/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/appearance/themes/custom",
+      "file": "apps/web/src/pages/dashboard/[handle]/appearance/themes/custom/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/billing",
+      "file": "apps/web/src/pages/dashboard/[handle]/billing/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog/[offeringId]",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/[offeringId].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog/categories",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/categories/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog/new",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/new.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog/services",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/services/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog/services/api",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/services/api.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog/trash",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/trash.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog/travel",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/travel/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog/travel/api",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/travel/api.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog/vehicles",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/vehicles/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/catalog/vehicles/api",
+      "file": "apps/web/src/pages/dashboard/[handle]/catalog/vehicles/api.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/dashboard/[handle]/forms",
+      "file": "apps/web/src/pages/dashboard/[handle]/forms/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/forms/[formId]",
+      "file": "apps/web/src/pages/dashboard/[handle]/forms/[formId].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/forms/new",
+      "file": "apps/web/src/pages/dashboard/[handle]/forms/new.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/insights",
+      "file": "apps/web/src/pages/dashboard/[handle]/insights/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/insights/api",
+      "file": "apps/web/src/pages/dashboard/[handle]/insights/api.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/dashboard/[handle]/leads",
+      "file": "apps/web/src/pages/dashboard/[handle]/leads/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/media",
+      "file": "apps/web/src/pages/dashboard/[handle]/media/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/menus",
+      "file": "apps/web/src/pages/dashboard/[handle]/menus/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/onboarding",
+      "file": "apps/web/src/pages/dashboard/[handle]/onboarding/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/onboarding/api",
+      "file": "apps/web/src/pages/dashboard/[handle]/onboarding/api.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/dashboard/[handle]/outlets",
+      "file": "apps/web/src/pages/dashboard/[handle]/outlets/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/pages",
+      "file": "apps/web/src/pages/dashboard/[handle]/pages/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/pages/[pageId]",
+      "file": "apps/web/src/pages/dashboard/[handle]/pages/[pageId].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/pages/new",
+      "file": "apps/web/src/pages/dashboard/[handle]/pages/new.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/pages/trash",
+      "file": "apps/web/src/pages/dashboard/[handle]/pages/trash.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/plugins",
+      "file": "apps/web/src/pages/dashboard/[handle]/plugins/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/plugins/[pluginId]",
+      "file": "apps/web/src/pages/dashboard/[handle]/plugins/[pluginId].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/posts",
+      "file": "apps/web/src/pages/dashboard/[handle]/posts/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/posts/[postId]",
+      "file": "apps/web/src/pages/dashboard/[handle]/posts/[postId].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/posts/authors",
+      "file": "apps/web/src/pages/dashboard/[handle]/posts/authors/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/posts/categories",
+      "file": "apps/web/src/pages/dashboard/[handle]/posts/categories/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/posts/new",
+      "file": "apps/web/src/pages/dashboard/[handle]/posts/new.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/posts/tags",
+      "file": "apps/web/src/pages/dashboard/[handle]/posts/tags/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/posts/trash",
+      "file": "apps/web/src/pages/dashboard/[handle]/posts/trash.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/preview",
+      "file": "apps/web/src/pages/dashboard/[handle]/preview/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/preview/frame",
+      "file": "apps/web/src/pages/dashboard/[handle]/preview/frame.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/seo",
+      "file": "apps/web/src/pages/dashboard/[handle]/seo/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/seo/api",
+      "file": "apps/web/src/pages/dashboard/[handle]/seo/api.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/dashboard/[handle]/service-status",
+      "file": "apps/web/src/pages/dashboard/[handle]/service-status/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/activity",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/activity/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/analytics",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/analytics/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/branches",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/branches/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/business",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/business/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/data",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/data/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/domains",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/domains/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/domains/guide",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/domains/guide.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/general",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/general/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/identity",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/identity/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/members",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/members/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/members/accept",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/members/accept/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/members/accept/api",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/members/accept/api.ts",
+      "kind": "endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/members/api",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/members/api.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET",
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/notifications",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/notifications/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/notifications/api",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/notifications/api.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET",
+        "PATCH",
+        "POST"
+      ],
+      "category": "tenant_api",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member_rbac"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/privacy",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/privacy/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/reading",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/reading/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/settings/seo",
+      "file": "apps/web/src/pages/dashboard/[handle]/settings/seo/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/dashboard/[handle]/setup-service",
+      "file": "apps/web/src/pages/dashboard/[handle]/setup-service/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "tenant_dashboard_page",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "session_tenant_member"
+    },
+    {
+      "route": "/kendaraan",
+      "file": "apps/web/src/pages/kendaraan/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/kendaraan/[slug]",
+      "file": "apps/web/src/pages/kendaraan/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/kendaraan/category/[slug]",
+      "file": "apps/web/src/pages/kendaraan/category/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/layanan",
+      "file": "apps/web/src/pages/layanan/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/layanan/[slug]",
+      "file": "apps/web/src/pages/layanan/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/layanan/category/[slug]",
+      "file": "apps/web/src/pages/layanan/category/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/marketing",
+      "file": "apps/web/src/pages/marketing/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_marketing_route",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public"
+    },
+    {
+      "route": "/marketing/api/funnel",
+      "file": "apps/web/src/pages/marketing/api/funnel.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "platform_public_endpoint",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public_bounded"
+    },
+    {
+      "route": "/marketing/bantuan",
+      "file": "apps/web/src/pages/marketing/bantuan/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_marketing_route",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public"
+    },
+    {
+      "route": "/marketing/bantuan/[slug]",
+      "file": "apps/web/src/pages/marketing/bantuan/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_marketing_route",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public"
+    },
+    {
+      "route": "/marketing/demo",
+      "file": "apps/web/src/pages/marketing/demo/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_marketing_route",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public"
+    },
+    {
+      "route": "/marketing/demo/[slug]",
+      "file": "apps/web/src/pages/marketing/demo/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_marketing_route",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public"
+    },
+    {
+      "route": "/marketing/harga",
+      "file": "apps/web/src/pages/marketing/harga.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_marketing_route",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public"
+    },
+    {
+      "route": "/marketing/pengembalian-dana",
+      "file": "apps/web/src/pages/marketing/pengembalian-dana.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_marketing_route",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public"
+    },
+    {
+      "route": "/marketing/penggunaan-wajar",
+      "file": "apps/web/src/pages/marketing/penggunaan-wajar.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_marketing_route",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public"
+    },
+    {
+      "route": "/marketing/privasi",
+      "file": "apps/web/src/pages/marketing/privasi.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_marketing_route",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public"
+    },
+    {
+      "route": "/marketing/syarat-ketentuan",
+      "file": "apps/web/src/pages/marketing/syarat-ketentuan.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_marketing_route",
+      "tenantScoped": false,
+      "expectedHost": "marketing",
+      "authModel": "public"
+    },
+    {
+      "route": "/mcp",
+      "file": "apps/web/src/pages/mcp/index.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL"
+      ],
+      "category": "mcp_oauth",
+      "tenantScoped": true,
+      "expectedHost": "app",
+      "authModel": "oauth2_bearer_only"
+    },
+    {
+      "route": "/oauth2/authorize",
+      "file": "apps/web/src/middleware/mcp-oauth.ts",
+      "kind": "middleware_endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "mcp_oauth",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "oauth2_bearer_only"
+    },
+    {
+      "route": "/oauth2/register",
+      "file": "apps/web/src/middleware/mcp-oauth.ts",
+      "kind": "middleware_endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "mcp_oauth",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "oauth2_bearer_only"
+    },
+    {
+      "route": "/oauth2/revoke",
+      "file": "apps/web/src/middleware/mcp-oauth.ts",
+      "kind": "middleware_endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "mcp_oauth",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "oauth2_bearer_only"
+    },
+    {
+      "route": "/oauth2/token",
+      "file": "apps/web/src/middleware/mcp-oauth.ts",
+      "kind": "middleware_endpoint",
+      "methods": [
+        "POST"
+      ],
+      "category": "mcp_oauth",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "oauth2_bearer_only"
+    },
+    {
+      "route": "/pay/renew",
+      "file": "apps/web/src/pages/pay/renew.ts",
+      "kind": "endpoint",
+      "methods": [
+        "GET"
+      ],
+      "category": "platform_public_endpoint",
+      "tenantScoped": false,
+      "expectedHost": "app",
+      "authModel": "public_bounded"
+    },
+    {
+      "route": "/produk",
+      "file": "apps/web/src/pages/produk/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/produk/[slug]",
+      "file": "apps/web/src/pages/produk/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/produk/category/[slug]",
+      "file": "apps/web/src/pages/produk/category/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/robots.txt",
+      "file": "apps/web/src/pages/robots.txt.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "HEAD"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/sitemap.xml",
+      "file": "apps/web/src/pages/sitemap.xml.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "HEAD"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/sitemaps/[kind].xml",
+      "file": "apps/web/src/pages/sitemaps/[kind].xml.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "HEAD"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/sitemaps/offerings.xml",
+      "file": "apps/web/src/pages/sitemaps/offerings.xml.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "HEAD"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/sitemaps/pages.xml",
+      "file": "apps/web/src/pages/sitemaps/pages.xml.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "HEAD"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/sitemaps/posts.xml",
+      "file": "apps/web/src/pages/sitemaps/posts.xml.ts",
+      "kind": "endpoint",
+      "methods": [
+        "ALL",
+        "GET",
+        "HEAD"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/tour",
+      "file": "apps/web/src/pages/tour/index.astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/tour/[slug]",
+      "file": "apps/web/src/pages/tour/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    },
+    {
+      "route": "/tour/category/[slug]",
+      "file": "apps/web/src/pages/tour/category/[slug].astro",
+      "kind": "page",
+      "methods": [
+        "GET"
+      ],
+      "category": "public_tenant_route",
+      "tenantScoped": true,
+      "expectedHost": "tenant",
+      "authModel": "verified_host_public"
+    }
+  ],
+  "mcpTools": {
+    "source": "packages/core/src/mcp/constants.ts",
+    "allowed": [
+      {
+        "name": "get_site_overview",
+        "scope": "content:read",
+        "group": "read"
+      },
+      {
+        "name": "list_pages",
+        "scope": "content:read",
+        "group": "read"
+      },
+      {
+        "name": "get_page",
+        "scope": "content:read",
+        "group": "read"
+      },
+      {
+        "name": "list_posts",
+        "scope": "content:read",
+        "group": "read"
+      },
+      {
+        "name": "get_post",
+        "scope": "content:read",
+        "group": "read"
+      },
+      {
+        "name": "list_offerings",
+        "scope": "content:read",
+        "group": "read"
+      },
+      {
+        "name": "get_offering",
+        "scope": "content:read",
+        "group": "read"
+      },
+      {
+        "name": "create_page_draft",
+        "scope": "content:write_draft",
+        "group": "write_draft"
+      },
+      {
+        "name": "update_page_draft",
+        "scope": "content:write_draft",
+        "group": "write_draft"
+      },
+      {
+        "name": "create_post_draft",
+        "scope": "content:write_draft",
+        "group": "write_draft"
+      },
+      {
+        "name": "update_post_draft",
+        "scope": "content:write_draft",
+        "group": "write_draft"
+      },
+      {
+        "name": "create_offering_draft",
+        "scope": "content:write_draft",
+        "group": "write_draft"
+      },
+      {
+        "name": "update_offering_draft",
+        "scope": "content:write_draft",
+        "group": "write_draft"
+      },
+      {
+        "name": "request_publish_approval",
+        "scope": "content:publish_request",
+        "group": "publish_request"
+      },
+      {
+        "name": "list_leads",
+        "scope": "leads:read",
+        "group": "leads_read"
+      },
+      {
+        "name": "get_lead",
+        "scope": "leads:read",
+        "group": "leads_read"
+      }
+    ],
+    "excluded": [
+      "auto_publish",
+      "connect_domain",
+      "create_payment",
+      "delete_lead",
+      "delete_media",
+      "delete_offering",
+      "delete_page",
+      "delete_post",
+      "fetch_media_url",
+      "get_billing",
+      "grant_theme",
+      "import_media_url",
+      "invite_member",
+      "list_domains",
+      "list_invoices",
+      "list_members",
+      "list_tenants",
+      "pay_subscription",
+      "publish_offering",
+      "publish_page",
+      "publish_post",
+      "remove_domain",
+      "remove_member",
+      "set_primary_domain",
+      "suspend_tenant",
+      "trash_offering",
+      "trash_page",
+      "trash_post",
+      "update_member_role",
+      "update_platform_settings",
+      "upload_media_from_url"
+    ]
+  },
+  "plugins": [
+    {
+      "id": "bio-links",
+      "symbol": "BIO_LINKS_PLUGIN",
+      "entryFile": "packages/plugins/bio-links/index.ts",
+      "publicRoutes": [
+        "/link",
+        "/link/go"
+      ],
+      "hasAdminApi": true,
+      "hasWebhook": false,
+      "adminApiRoute": "/api/tenants/[tenantId]/plugins/bio-links/[...subpath]",
+      "webhookRoute": null
+    },
+    {
+      "id": "lead-notifier",
+      "symbol": "LEAD_NOTIFIER_PLUGIN",
+      "entryFile": "packages/plugins/lead-notifier/index.ts",
+      "publicRoutes": [],
+      "hasAdminApi": false,
+      "hasWebhook": false,
+      "adminApiRoute": "/api/tenants/[tenantId]/plugins/lead-notifier/[...subpath]",
+      "webhookRoute": null
+    },
+    {
+      "id": "seo-ai-autopilot",
+      "symbol": "SEO_AI_AUTOPILOT_PLUGIN",
+      "entryFile": "packages/plugins/seo-ai-autopilot/index.ts",
+      "publicRoutes": [],
+      "hasAdminApi": true,
+      "hasWebhook": false,
+      "adminApiRoute": "/api/tenants/[tenantId]/plugins/seo-ai-autopilot/[...subpath]",
+      "webhookRoute": null
+    },
+    {
+      "id": "wa-cs-rotator",
+      "symbol": "WA_CS_ROTATOR_PLUGIN",
+      "entryFile": "packages/plugins/wa-cs-rotator/index.ts",
+      "publicRoutes": [
+        "/wa-rotator"
+      ],
+      "hasAdminApi": true,
+      "hasWebhook": false,
+      "adminApiRoute": "/api/tenants/[tenantId]/plugins/wa-cs-rotator/[...subpath]",
+      "webhookRoute": null
+    },
+    {
+      "id": "wp-importer",
+      "symbol": "WP_IMPORTER_PLUGIN",
+      "entryFile": "packages/plugins/wp-importer/index.ts",
+      "publicRoutes": [],
+      "hasAdminApi": true,
+      "hasWebhook": false,
+      "adminApiRoute": "/api/tenants/[tenantId]/plugins/wp-importer/[...subpath]",
+      "webhookRoute": null
+    }
+  ]
+}

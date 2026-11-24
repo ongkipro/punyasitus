@@ -1,0 +1,30 @@
+# OWASP ZAP Baseline Ruleset for PunyaSitus (TASK-078 / REQ-078 / DEC-032)
+#
+# Policy:
+# - Key High and Medium ZAP rules are explicitly set to FAIL so CI breaks on any
+#   unaccepted High or Medium alert (`fail_action: true` in .github/workflows/security.yml).
+# - Only explicitly justified benign Informational / Low rules are set to IGNORE so
+#   CI does not fail permanently on accepted non-findings.
+# - Format: <rule_id>\t<IGNORE|INFO|WARN|FAIL>\t<rationale>
+
+# --- Explicit FAIL rules (High / Medium / critical baseline hardening) ---
+10010	FAIL	Cookie No HttpOnly Flag: PunyaSitus mandates __Host- session cookies with HttpOnly.
+10011	FAIL	Cookie Without Secure Flag: PunyaSitus mandates __Host- session cookies with Secure.
+10020	FAIL	Anti-clickjacking Header Missing: HTML surfaces must emit X-Frame-Options or CSP frame-ancestors (tracked SEC-003).
+10021	FAIL	X-Content-Type-Options Header Missing: HTML and API responses must emit nosniff (tracked SEC-003).
+10035	FAIL	Strict-Transport-Security Header Not Set: HTTPS targets must enforce HSTS at the Cloudflare edge or Worker.
+10038	FAIL	Content Security Policy (CSP) Header Not Set: All HTML surfaces must emit CSP (tracked SEC-003).
+10054	FAIL	Cookie without SameSite Attribute: PunyaSitus mandates SameSite=Lax on __Host- session cookies.
+10055	FAIL	CSP unsafe-inline / wildcard directive: Public and app CSP must eliminate script-src unsafe-inline (tracked SEC-006).
+40012	FAIL	Cross Site Scripting (Reflected): Zero reflected XSS tolerated.
+40014	FAIL	Cross Site Scripting (Persistent): Zero stored XSS tolerated.
+40016	FAIL	Cross Site Scripting (Persistent - Prime): Zero stored XSS tolerated.
+40017	FAIL	Cross Site Scripting (Persistent - Spider): Zero stored XSS tolerated.
+40018	FAIL	SQL Injection: Zero SQL injection tolerated (parameterized Drizzle/D1 + plugin SQL guard).
+90022	FAIL	Application Error Disclosure: Stack traces and internal error disclosures are forbidden.
+
+# --- Explicitly accepted benign Informational / Low rules (IGNORE) ---
+10027	IGNORE	Informational/Low: Benign HTML/JS build comment scanner notice reviewed manually; does not indicate secret leakage.
+10049	IGNORE	Informational: Public marketing and tenant HTML pages are intentionally edge-cacheable with tenant+cacheVersion keys; private/admin/API routes enforce Cache-Control: no-store.
+10096	IGNORE	Informational: Numeric epoch timestamps appear intentionally in public sitemap/JSON metadata and do not disclose internal state.
+10109	IGNORE	Informational: Modern Web Application detection notice (Astro SSR + Base UI islands); not a security vulnerability.
