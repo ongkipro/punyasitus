@@ -205,6 +205,8 @@ export function isM1AvailablePresetId(presetId: string): presetId is M1Available
 export type PresetErrorCode =
   | "UNSUPPORTED_PRESET"
   | "IDEMPOTENCY_KEY_CONFLICT"
+  | "PRESET_SWITCH_CONFIRMATION_REQUIRED"
+  | "PRESET_MISMATCH"
   | "SAMPLE_CONTENT_BLOCKED"
   | "CHECKLIST_INCOMPLETE"
   | "INVALID_SECTION_SELECTION"
@@ -1246,3 +1248,4 @@ export function convertValidatedSectionToPublicPageSectionDto(
 export * from "./blueprints.ts";
 export * from "./checklist.ts";
 export * from "./gbp-checklist.ts";
+export * from "./verticals.ts";
