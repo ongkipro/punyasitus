@@ -8,6 +8,7 @@ import {
   SEO_AI_AUTOPILOT_PLUGIN,
   SEO_AI_AUTOPILOT_PLUGIN_ID,
 } from "../../../../packages/plugins/seo-ai-autopilot/index.ts";
+import { LEAD_NOTIFIER_PLUGIN } from "../../../../packages/plugins/lead-notifier/index.ts";
 
 /**
  * Explicit First-Party Modular Plugin Registry (REQ-097, ADR-0010, PLAN §19.7).
@@ -122,6 +123,7 @@ export function createPluginRegistry(
  */
 export const REGISTERED_FIRST_PARTY_PLUGINS: readonly PluginDefinition[] = [
   SEO_AI_AUTOPILOT_PLUGIN,
+  LEAD_NOTIFIER_PLUGIN,
 ] as const;
 
 /**
