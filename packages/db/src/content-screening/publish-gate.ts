@@ -43,7 +43,10 @@ export const MAX_OPEN_REVIEWS_PER_TENANT = 50 as const;
 const MEDIA_ALT_CHUNK_SIZE = 50;
 const MAX_MEDIA_ITEMS_TO_SCAN = 500;
 
-export interface PublishGateResourceParams<K extends PublishableResourceType> {
+export interface PublishGateResourceParams<
+  K extends PublishableResourceType,
+  TPublished = PublishResourceAtomicallyResult<K>,
+> {
   readonly tenantId: string;
   readonly resourceType: K;
   readonly resourceId: K extends "theme_config" ? string : number;
@@ -56,10 +59,23 @@ export interface PublishGateResourceParams<K extends PublishableResourceType> {
   /** Additional explicit hidden/image ALT texts or form labels to screen alongside the draft. */
   readonly extraImageAlts?: readonly string[];
   readonly extraFormLabels?: readonly string[];
+  /**
+   * Optional additional draft snapshots to screen alongside the primary resource
+   * (e.g., offering `attributes_json` or `business_profile_structured` fields).
+   */
+  readonly extraSnapshots?: readonly unknown[];
+  /**
+   * Optional domain publish executor invoked ONLY when screening returns `verdict: "allow"`.
+   * Defaults to `publishResourceAtomically(...)`.
+   */
+  readonly executePublish?: () => Promise<TPublished>;
   readonly nowMs?: number;
 }
 
-export type PublishGateResourceOutcome<K extends PublishableResourceType> =
+export type PublishGateResourceOutcome<
+  K extends PublishableResourceType,
+  TPublished = PublishResourceAtomicallyResult<K>,
+> =
   | {
       readonly outcome: "published";
       readonly held: false;
@@ -69,7 +85,7 @@ export type PublishGateResourceOutcome<K extends PublishableResourceType> =
         readonly scannedFieldsCount: number;
         readonly scannedLinksCount: number;
       };
-      readonly published: PublishResourceAtomicallyResult<K>;
+      readonly published: TPublished;
     }
   | {
       readonly outcome: "held_for_review";
@@ -108,6 +124,19 @@ export type PublishGateFormOutcome =
       readonly deduplicated: boolean;
     };
 
+const SINGLE_MEDIA_REF_KEYS: ReadonlySet<string> = new Set([
+  "imageid",
+  "image_id",
+  "coverid",
+  "cover_id",
+  "logoid",
+  "logo_id",
+  "ogimageid",
+  "og_image_id",
+]);
+
+const ARRAY_MEDIA_REF_KEYS: ReadonlySet<string> = new Set(["imageids", "image_ids"]);
+
 function collectReferencedMediaIds(value: unknown, out: Set<number>, depth = 0): void {
   if (depth > 10 || value === null || value === undefined || typeof value !== "object") return;
   if (Array.isArray(value)) {
@@ -119,14 +148,18 @@ function collectReferencedMediaIds(value: unknown, out: Set<number>, depth = 0):
   for (const [key, v] of Object.entries(value as Record<string, unknown>)) {
     const lower = key.toLowerCase();
     if (
-      (lower.endsWith("mediaid") || lower.endsWith("media_id")) &&
+      (lower.endsWith("mediaid") ||
+        lower.endsWith("media_id") ||
+        SINGLE_MEDIA_REF_KEYS.has(lower)) &&
       typeof v === "number" &&
       Number.isInteger(v) &&
       v > 0
     ) {
       out.add(v);
     } else if (
-      (lower.endsWith("mediaids") || lower.endsWith("media_ids")) &&
+      (lower.endsWith("mediaids") ||
+        lower.endsWith("media_ids") ||
+        ARRAY_MEDIA_REF_KEYS.has(lower)) &&
       Array.isArray(v)
     ) {
       for (const id of v) {
@@ -398,7 +431,7 @@ async function persistHeldReviewRow(
         params.resourceSlug,
         params.resourceTitle,
         params.publishSource,
-        params.expectedVersion,
+        Math.max(1, params.expectedVersion),
         Math.max(1, params.screening.findings.length),
         JSON.stringify(params.screening.matchedCategories),
         JSON.stringify(params.screening.matchedFields),
@@ -554,11 +587,14 @@ export async function loadScreenableResourceDraft<K extends PublishableResourceT
  * Screens any publishable CMS resource (`page`, `post`, `offering`, `site_settings`,
  * `business_profile`, `menu`, `theme_config`) across BOTH dashboard and MCP publish paths.
  */
-export async function publishResourceWithScreening<K extends PublishableResourceType>(
+export async function publishResourceWithScreening<
+  K extends PublishableResourceType,
+  TPublished = PublishResourceAtomicallyResult<K>,
+>(
   platformDb: D1Database,
   tenantDb: D1Database,
-  params: PublishGateResourceParams<K>,
-): Promise<PublishGateResourceOutcome<K>> {
+  params: PublishGateResourceParams<K, TPublished>,
+): Promise<PublishGateResourceOutcome<K, TPublished>> {
   const nowMs = Math.floor(params.nowMs ?? Date.now());
   const resourceIdStr = String(params.resourceId);
 
@@ -583,6 +619,11 @@ export async function publishResourceWithScreening<K extends PublishableResource
   // 2. Gather media ALT texts fail-closed (never silently skip >50 items or DB errors!)
   const referencedMediaIds = new Set<number>(params.extraMediaIds ?? []);
   collectReferencedMediaIds(candidateSnapshot, referencedMediaIds);
+  if (params.extraSnapshots) {
+    for (const extraSnapshot of params.extraSnapshots) {
+      collectReferencedMediaIds(extraSnapshot, referencedMediaIds);
+    }
+  }
   const mediaScan = await fetchMediaAltTextsFailClosed(tenantDb, Array.from(referencedMediaIds));
   const combinedAlts = [...mediaScan.alts, ...(params.extraImageAlts ?? [])];
 
@@ -590,12 +631,16 @@ export async function publishResourceWithScreening<K extends PublishableResource
 
   // 3. Load active ruleset & run deterministic ReDoS-safe screening
   const { rules, rulesetVersion } = await loadActiveScreeningRuleset(platformDb);
+  const screeningSnapshot =
+    params.extraSnapshots && params.extraSnapshots.length > 0
+      ? { primary: candidateSnapshot, extra: params.extraSnapshots }
+      : candidateSnapshot;
   const payload: PublishScreeningInputPayload = {
     title,
     slug,
     imageAlts: combinedAlts,
     formLabels: params.extraFormLabels,
-    snapshot: candidateSnapshot,
+    snapshot: screeningSnapshot,
   };
 
   let screening = screenPublishContent(payload, { rules, rulesetVersion });
@@ -661,15 +706,17 @@ export async function publishResourceWithScreening<K extends PublishableResource
   }
 
   // 4. Clean content -> proceed with atomic publish
-  const published = await publishResourceAtomically(platformDb, tenantDb, {
-    tenantId: params.tenantId,
-    resourceType: params.resourceType,
-    resourceId: params.resourceId,
-    expectedVersion: params.expectedVersion,
-    actorUserId: params.actorUserId ?? null,
-    draftOverride: params.draftOverride,
-    nowMs,
-  });
+  const published = params.executePublish
+    ? await params.executePublish()
+    : ((await publishResourceAtomically(platformDb, tenantDb, {
+        tenantId: params.tenantId,
+        resourceType: params.resourceType,
+        resourceId: params.resourceId,
+        expectedVersion: params.expectedVersion,
+        actorUserId: params.actorUserId ?? null,
+        draftOverride: params.draftOverride,
+        nowMs,
+      })) as TPublished);
 
   await clearTenantHoldBestEffort(tenantDb, params.resourceType, resourceIdStr, nowMs);
 
