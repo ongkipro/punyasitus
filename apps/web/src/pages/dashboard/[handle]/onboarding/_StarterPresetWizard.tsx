@@ -6,7 +6,9 @@ import type {
   PresetSectionStatusDto,
   PublishStarterPresetResult,
   TenantPresetStateDto,
+  VerticalPresetDashboardStateDto,
 } from "@punyasitus/db/presets/index";
+import { VerticalOnboardingWorkspace } from "./_VerticalOnboardingWorkspace";
 import {
   AlertCircleIcon,
   AlertTriangleIcon,
@@ -52,9 +54,11 @@ export interface StarterPresetWizardProps {
   readonly draftApiUrl: string;
   readonly previewApiUrl: string;
   readonly publishApiUrl: string;
+  readonly verticalPresetsApiUrl?: string;
   readonly customizerHref: string;
   readonly pagesHref: string;
   readonly initialState: TenantPresetStateDto;
+  readonly initialVerticalState?: VerticalPresetDashboardStateDto;
 }
 
 interface ApiErrorNotice {
@@ -166,7 +170,23 @@ function extractEditableFields(item: PresetSectionStatusDto): {
   };
 }
 
-export function StarterPresetWizard({
+export function StarterPresetWizard(props: StarterPresetWizardProps) {
+  if (props.initialVerticalState && props.verticalPresetsApiUrl) {
+    return (
+      <VerticalOnboardingWorkspace
+        tenantHandle={props.tenantHandle}
+        workspaceName={props.workspaceName}
+        verticalPresetsApiUrl={props.verticalPresetsApiUrl}
+        customizerHref={props.customizerHref}
+        pagesHref={props.pagesHref}
+        initialVerticalState={props.initialVerticalState}
+      />
+    );
+  }
+  return <M1StarterPresetWizard {...props} />;
+}
+
+function M1StarterPresetWizard({
   tenantHandle,
   workspaceName,
   surfaceMode,

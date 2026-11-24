@@ -2,8 +2,10 @@ import { canPerform, isActionAllowedForTenantStatus } from "@punyasitus/auth";
 import type { Role, TenantStatus } from "@punyasitus/core/schemas";
 import {
   loadTenantPresetState,
+  loadVerticalPresetDashboardState,
   type PresetMemberScope,
   type TenantPresetStateDto,
+  type VerticalPresetDashboardStateDto,
 } from "@punyasitus/db/presets/index";
 
 /**
@@ -143,4 +145,55 @@ export async function loadPresetPageOrGateResponse(params: {
     params.member,
   );
   return { ok: true, initialState };
+}
+
+/**
+ * Extended SSR lifecycle & RBAC gate for `/dashboard/[handle]/onboarding` (TASK-066, M2).
+ * Evaluates `evaluatePresetPageGate` strictly BEFORE opening `TenantStore`, then loads
+ * both the M1-compatible `initialState` and the M2 4-vertical `verticalState`.
+ */
+export async function loadVerticalOnboardingPageOrGateResponse(params: {
+  readonly platformDb: D1Database | null | undefined;
+  readonly member: PresetMemberScope;
+  readonly operatorHold?: boolean;
+  readonly resolveTenantDb: () => Promise<D1Database | null> | D1Database | null;
+}): Promise<
+  | {
+      readonly ok: true;
+      readonly initialState: TenantPresetStateDto;
+      readonly verticalState: VerticalPresetDashboardStateDto;
+    }
+  | { readonly ok: false; readonly response: Response }
+> {
+  const gate = evaluatePresetPageGate({
+    handle: params.member.handle,
+    tenantStatus: params.member.tenantStatus,
+    role: params.member.role,
+    operatorHold: params.operatorHold,
+  });
+
+  if (!gate.allowed) {
+    return { ok: false, response: gate.response };
+  }
+
+  const tenantDb = await params.resolveTenantDb();
+  if (!tenantDb || !params.member.tenantId || !params.platformDb) {
+    return {
+      ok: false,
+      response: new Response("Penyimpanan data tenant sementara tidak tersedia.", {
+        status: 503,
+        headers: {
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "private, no-store",
+          "X-Robots-Tag": "noindex, nofollow",
+        },
+      }),
+    };
+  }
+
+  const [initialState, verticalState] = await Promise.all([
+    loadTenantPresetState(params.platformDb, tenantDb, params.member),
+    loadVerticalPresetDashboardState(params.platformDb, tenantDb, params.member),
+  ]);
+  return { ok: true, initialState, verticalState };
 }

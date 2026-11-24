@@ -59,6 +59,8 @@ export {
   TENANT_0012_STARTER_PRESETS_SQL,
 } from "./migrations.ts";
 
+export * from "./verticals.ts";
+
 /**
  * Per-Tenant Starter Preset Repository (`packages/db/src/presets/index.ts`;
  * REQ-047, REQ-019, REQ-034, REQ-036; PLAN §11.4; TASK-043).
