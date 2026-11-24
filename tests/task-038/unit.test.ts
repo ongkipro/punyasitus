@@ -118,7 +118,8 @@ describe("TASK-038 Full Production Release Gate (M1 + M2) — Unit & Contract In
     expect(yaml).toContain("playwright-core install --with-deps chromium firefox webkit");
     expect(yaml).toContain("node scripts/verify/release-gate.mjs");
     expect(yaml).toContain("node scripts/verify/backup-restore-drill.mjs --verify-rollback-plan");
-    expect(yaml).toContain("node tests/performance/release-lab.mjs --allow-tracked-cls-deviation=M1-FU-08");
+    expect(yaml).toContain("node tests/performance/release-lab.mjs --report-out");
+    expect(yaml).not.toContain("--allow-tracked-cls-deviation");
     expect(yaml).toContain("node tests/e2e-gate/release-gate.mjs --browsers=chromium,firefox,webkit");
     expect(yaml).toContain("node tests/task-038/e2e.mjs --verify-existing-reports");
     expect(yaml).not.toMatch(/\$\{\{\s*secrets\./);

@@ -60,9 +60,8 @@ jobs:
       - name: Executed isolated backup, restore & DEC-022 tombstone replay drill
         run: node scripts/verify/backup-restore-drill.mjs --verify-rollback-plan --report-out "$TASK038_REPORT_DIR/backup-restore-drill.json"
 
-      # Pre-launch tracked waiver (--allow-tracked-cls-deviation=M1-FU-08): MUST be removed once M1-FU-08 is closed before live launch.
-      - name: PLAN §9 5-run mobile performance lab (release-lab.mjs)
-        run: node tests/performance/release-lab.mjs --allow-tracked-cls-deviation=M1-FU-08 --report-out "$TASK038_REPORT_DIR/release-lab.json"
+      - name: PLAN §9 5-run mobile performance lab (release-lab.mjs, strict CLS <= 0.10)
+        run: node tests/performance/release-lab.mjs --report-out "$TASK038_REPORT_DIR/release-lab.json"
 
       - name: Multi-browser (Chromium/Firefox/WebKit) 360/768/1440, No-JS & negative-case gate
         run: node tests/e2e-gate/release-gate.mjs --browsers=chromium,firefox,webkit --report-out "$TASK038_REPORT_DIR/e2e-release-gate.json" --screenshot-dir "$TASK038_SCREENSHOT_DIR"

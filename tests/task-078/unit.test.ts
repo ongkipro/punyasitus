@@ -65,6 +65,11 @@ describe("TASK-078 Pre-Launch Security Assurance Contract & Evidence Verificatio
     expect(md).toContain("`NOT_APPLICABLE`");
     // V13.2 ZAP CI baseline must be honestly VERIFIED_STATIC until executed on a live CI runner
     expect(md).toMatch(/\|\s*`V13\.2`[\s\S]*?\|\s*`VERIFIED_STATIC`\s*\|/);
+    // Post-hardening resolved controls (SEC-001..SEC-006) are VERIFIED_AUTOMATED
+    for (const controlId of ["V1.5", "V3.2", "V3.3", "V3.4", "V5.3", "V6.4", "V16.3"]) {
+      const escaped = controlId.replace(".", "\\.");
+      expect(md).toMatch(new RegExp(`\\|\\s*\`${escaped}\`[^\\n]*\\|\\s*\`VERIFIED_AUTOMATED\`\\s*\\|`));
+    }
     // V16 includes explicit error-handling control
     expect(md).toContain("`V16.4`");
 
@@ -105,6 +110,7 @@ describe("TASK-078 Pre-Launch Security Assurance Contract & Evidence Verificatio
       "TASK-086",
       "SEC-005",
       "SEC-006",
+      "RESOLVED_VERIFIED",
       "CUSTOM-REFERRER-POLICY",
       "EXT-01",
       "EXT-10",
@@ -121,12 +127,13 @@ describe("TASK-078 Pre-Launch Security Assurance Contract & Evidence Verificatio
     expect(missing).toEqual([]);
   });
 
-  it("records real executed built-Worker DAST output and separates UNVERIFIED_STAGING_GATE (EXT-10) in zap-scan-report.md", () => {
+  it("records real executed built-Worker DAST output (0 alerts PASS) and separates UNVERIFIED_STAGING_GATE (EXT-10) in zap-scan-report.md", () => {
     expect(fs.existsSync(ZAP_REPORT_PATH)).toBe(true);
     const md = fs.readFileSync(ZAP_REPORT_PATH, "utf8");
 
     expect(md).toContain("UNVERIFIED_STAGING_GATE");
-    expect(md).toContain("PASS_WITH_TRACKED_FINDINGS");
+    expect(md).toContain("0 High, 0 Medium, 0 Low");
+    expect(md).toContain("`PASS`");
     expect(md).toContain("EXT-10");
     expect(md).toContain("SEC-003");
     expect(md).toContain("SEC-006");
