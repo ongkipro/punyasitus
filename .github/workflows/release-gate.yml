@@ -1,0 +1,82 @@
+name: Production Release Gate (M1 + M2)
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: release-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-gate:
+    name: Full M1 + M2 Release Gate (Chromium/Firefox/WebKit, 5-Run Lab & Backup Drill)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      CI: "true"
+      TASK038_REPORT_DIR: /tmp/task-038-reports
+      TASK038_SCREENSHOT_DIR: /tmp/qa-task-038
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+
+      - name: Setup Node.js 24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: "pnpm"
+
+      - name: Check specification integrity
+        run: pnpm run spec:check
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright Chromium, Firefox, and WebKit
+        run: pnpm --filter @punyasitus/web exec playwright-core install --with-deps chromium firefox webkit
+
+      - name: Build platform Worker artifact for release gates
+        run: pnpm --filter @punyasitus/web build
+
+      - name: Full M1 + M2 static & contract release gate (release-gate.mjs)
+        run: |
+          mkdir -p "$TASK038_REPORT_DIR" "$TASK038_SCREENSHOT_DIR"
+          node scripts/verify/release-gate.mjs --report-out "$TASK038_REPORT_DIR/release-gate.json"
+
+      - name: Executed isolated backup, restore & DEC-022 tombstone replay drill
+        run: node scripts/verify/backup-restore-drill.mjs --verify-rollback-plan --report-out "$TASK038_REPORT_DIR/backup-restore-drill.json"
+
+      # Pre-launch tracked waiver (--allow-tracked-cls-deviation=M1-FU-08): MUST be removed once M1-FU-08 is closed before live launch.
+      - name: PLAN §9 5-run mobile performance lab (release-lab.mjs)
+        run: node tests/performance/release-lab.mjs --allow-tracked-cls-deviation=M1-FU-08 --report-out "$TASK038_REPORT_DIR/release-lab.json"
+
+      - name: Multi-browser (Chromium/Firefox/WebKit) 360/768/1440, No-JS & negative-case gate
+        run: node tests/e2e-gate/release-gate.mjs --browsers=chromium,firefox,webkit --report-out "$TASK038_REPORT_DIR/e2e-release-gate.json" --screenshot-dir "$TASK038_SCREENSHOT_DIR"
+
+      - name: TASK-038 release gate orchestrator verification
+        run: node tests/task-038/e2e.mjs --verify-existing-reports
+
+      - name: Upload release gate reports and visual screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-gate-evidence
+          path: |
+            /tmp/task-038-reports
+            /tmp/qa-task-038
+          retention-days: 14
+          if-no-files-found: ignore
