@@ -82,6 +82,24 @@ function inspectDockerZapAvailability() {
   return { dockerAvailable: true, zapImageCached: img.status === 0 };
 }
 
+function hasUnsafeInlineScriptSrc(cspHeader) {
+  const directives = new Map();
+  for (const rawPart of String(cspHeader).split(";")) {
+    const part = rawPart.trim();
+    if (!part) continue;
+    const spaceIdx = part.search(/\s/);
+    if (spaceIdx === -1) {
+      directives.set(part.toLowerCase(), "");
+    } else {
+      directives.set(part.slice(0, spaceIdx).toLowerCase(), part.slice(spaceIdx + 1));
+    }
+  }
+  const scriptSrc = directives.get("script-src") ?? directives.get("default-src") ?? "";
+  const scriptSrcElem = directives.get("script-src-elem") ?? "";
+  const unsafeInlineRe = /(?:^|\s)'unsafe-inline'(?:\s|$)/i;
+  return unsafeInlineRe.test(scriptSrc) || unsafeInlineRe.test(scriptSrcElem);
+}
+
 function summarizeHeaders(headers) {
   const pick = (name) => {
     const val = headers[name.toLowerCase()];
@@ -198,7 +216,7 @@ export async function runBuiltWorkerDastScan({ pullZap = false } = {}) {
             disposition: "REOPEN_OWNING_TASK",
             detail: `HTML response on ${t.id} (${t.path}) did not emit Content-Security-Policy.`,
           });
-        } else if (summary.contentSecurityPolicy.includes("'unsafe-inline'")) {
+        } else if (hasUnsafeInlineScriptSrc(summary.contentSecurityPolicy)) {
           observedAlerts.push({
             zapRuleId: "10055",
             severity: "Medium",
@@ -206,7 +224,7 @@ export async function runBuiltWorkerDastScan({ pullZap = false } = {}) {
             surface: t.id,
             findingRef: "SEC-006",
             disposition: "REOPEN_OWNING_TASK",
-            detail: `Strict public CSP on ${t.id} currently includes 'unsafe-inline' in script-src (packages/core/src/analytics/csp.ts:104).`,
+            detail: `CSP on ${t.id} (${t.path}) includes 'unsafe-inline' in script-src.`,
           });
         }
 
@@ -695,7 +713,9 @@ async function main() {
   } else {
     const alertCount = observedAlerts.length;
     console.log(
-      `${verdict}: TASK-078 Security Assurance Suite (${stages.length} stages passed; ${alertCount} tracked DAST header/CSP alerts [${highOrMediumCount} Medium/High] recorded for owning-task reopen).`,
+      alertCount === 0
+        ? `${verdict}: TASK-078 Security Assurance Suite (${stages.length} stages passed; 0 DAST header/CSP alerts [0 High, 0 Medium, 0 Low]).`
+        : `${verdict}: TASK-078 Security Assurance Suite (${stages.length} stages passed; ${alertCount} tracked DAST header/CSP alerts [${highOrMediumCount} Medium/High] recorded for owning-task reopen).`,
     );
     if (dast) {
       console.log(

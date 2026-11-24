@@ -77,9 +77,8 @@ async function main() {
       backupReportPath,
     ]);
 
-    console.log("==> [3/4] Running tests/performance/release-lab.mjs (--allow-tracked-cls-deviation=M1-FU-08)");
+    console.log("==> [3/4] Running tests/performance/release-lab.mjs (strict CLS <= 0.10, zero waiver)");
     runSubScript("tests/performance/release-lab.mjs", [
-      "--allow-tracked-cls-deviation=M1-FU-08",
       "--report-out",
       labReportPath,
     ]);
@@ -154,6 +153,14 @@ async function main() {
   assert(
     labReport.summary?.maxInitialTransferredGzipBytes <= MAX_INITIAL_ASSETS_GZIP_BYTES,
     `Initial assets ${String(labReport.summary?.maxInitialTransferredGzipBytes)} > ${MAX_INITIAL_ASSETS_GZIP_BYTES}`,
+  );
+  assert(
+    labReport.summary?.clsBudgetMet === true && labReport.summary?.cls?.clsBudgetMet === true,
+    `Expected strict clsBudgetMet=true (CLS <= 0.10), got ${String(labReport.summary?.clsBudgetMet)} (p50=${String(labReport.summary?.cls?.p50)}, p95=${String(labReport.summary?.cls?.p95)}, max=${String(labReport.summary?.cls?.max)})`,
+  );
+  assert(
+    labReport.summary?.trackedWaiver === null && labReport.summary?.cls?.trackedWaiver === null,
+    `Expected trackedWaiver=null (zero CLS waiver), got ${String(labReport.summary?.trackedWaiver)}`,
   );
   assert(
     labReport.inp?.status === "FIELD_DATA_ONLY_CRUX_RUM_28D" && labReport.inp?.valueMs === null,
