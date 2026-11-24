@@ -7,21 +7,21 @@ Review-Risk: R3
 Independent-Review: PASS
 Primary-Worker: agy-supervisor
 Independent-Reviewer: pi-claude-sonnet-5-5
-Independent-Review-Head: b4fa649
+Independent-Review-Head: b3b6f6f
 
 ## Now
 
-**94 / 110 roadmap tasks (85.5% total; 85 / 85 = 100.0% Phase 1 M1 + 9 / 22 = 40.9% Wave 7 M2 landed!) completed, visually verified (360px/1440px Playwright), independently cross-family reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, checkpointed, and pushed to `origin/main` (`b4fa649`):**
+**107 / 110 roadmap tasks (97.3% total; 85 / 85 = 100.0% Phase 1 M1 + 22 / 22 = 100.0% Wave 7 M2 landed!) completed, visually verified (360px/1440px Playwright), independently cross-family reviewed (`pi-claude-sonnet-5-5` via `ai-ask pi`), verified in `delivery-ledger`, merged, checkpointed, and pushed to `origin/main` (`b3b6f6f`):**
 - **Wave 0–6 (85/85 — 100% M1):** All 85 M1 tasks including `TASK-063` Integration Checkpoint M1 (`086b018`, plus additive M2 migration forward-compatibility `36e9f2a`).
-- **Wave 7 M2 Landed (9/22):** `TASK-074` (`5bc711e`, AI Writing Suggestions, `platform/0029`), `TASK-072` (`967f25b`, First-Party Insights, `tenant/0022`), `TASK-075` (`c1eb1e4`, Tenant MCP Server + OAuth 2.1 PKCE/RFC 8707, `platform/0030`), `TASK-073` (`09867a0`, Google Maps Review Link & GBP Checklist), `TASK-083` (`e9e95f6`, Agency/Reseller Portal & Agency-Payer Billing, `platform/0028`), `TASK-109` (`305ca89`, Optional AI Draft Step in Onboarding), `TASK-064` (`90c7567`, Content Revision History & Draft-Only Restore, `tenant/0023`), `TASK-110` (`7839fcf`, Monthly Owner Performance Report Email), `TASK-019` (`b4fa649`, Offline Gerai Multi-Outlet Directory & Consent-Gated Maps).
-- **Clean Mainline (`b4fa649`):** `94/94` unit test files PASS, `0` typecheck errors across `682` files, `delivery-ledger verify` PASS.
+- **Wave 7 (22/22 — 100% M2):** All 22 M2 tasks landed: AI Writing (`TASK-074`, `platform/0029`), Insights (`TASK-072`, `tenant/0022`), Tenant MCP + OAuth 2.1 (`TASK-075`, `platform/0030`), Google Maps Review + GBP (`TASK-073`), Agency Portal (`TASK-083`, `platform/0028`), AI Draft Onboarding (`TASK-109`), Revision History (`TASK-064`, `tenant/0023`), Monthly Owner Report (`TASK-110`), Offline Gerai Multi-Outlet (`TASK-019`), WA Support Entry Point (`TASK-105`), Affiliate Enrollment & Attribution (`TASK-084`, `platform/0031`), Preferred Schedule Inquiries (`TASK-071`, `tenant/0024`), Travel & Umrah DEC-042 (`TASK-020`), Affiliate Commission Ledger & Payout Batches (`TASK-085`, `platform/0032`), Professional Services (`TASK-035`), Affiliate Portal & Console Payouts (`TASK-086`), Plugin Store & AutoLaris Add-ons (`TASK-098`, `platform/0033`), Vehicle Showroom `/kendaraan` (`TASK-079`), Vertical Starter Presets M2 (`TASK-066`), Official Seed Plugins `lead-notifier` (`TASK-101`), `wp-importer` (`TASK-100`), and `bio-links` + `wa-cs-rotator` (`TASK-099`) — all 5 official plugins registered in `plugin-registry.ts` with zero Frozen Core edits.
+- **Clean Mainline (`b3b6f6f`):** `107/107` unit test files (`1,076/1,076` tests PASS), `0` typecheck errors, `spec:check` + `lint` + `delivery-ledger verify` PASS.
 
 ## Next
 
-1. **Wave 7 (M2 — 13 remaining of 22; 4 active in parallel!):**
-   - Active in isolated worktrees (4): `TASK-105` (WhatsApp Support Entry Point), `TASK-084` (Affiliate Enrollment & Attribution, `platform/0031`), `TASK-020` (Travel & Umrah Itinerary / DEC-042 `SK PPIU`), `TASK-071` (Preferred Schedule Fields for Inquiries, `tenant/0024`).
-   - Queued dependency chains (9): Verticals (`TASK-035` -> `TASK-079` -> `TASK-066`), Affiliates (`TASK-085` -> `TASK-086`), Plugins (`TASK-098` -> `TASK-099`, `TASK-100`, `TASK-101`).
-2. **Wave 8 (`TASK-078` ASVS L2 / ZAP / BOLA -> `TASK-038` Full Production Release Gate M1+M2).** (`TASK-062` deferred to Release 1.1 per DEC-035 C16.)
+1. **Wave 8 — Final 2 Launch Gate Tasks:**
+   - **`TASK-078` (R3):** Pre-Launch Security Assurance — OWASP ASVS 5.0 Level 2 checklist, exhaustive cross-tenant BOLA suite (every tenant API route, MCP tool, and public route), OWASP ZAP baseline CI workflow (`security.yml`), and full scan report + independent R3 review.
+   - **`TASK-038` (R3):** Full Production Release Gate (M1 + M2) — Chromium/Firefox/WebKit matrix at 360/768/1440, PLAN §9 performance lab, executed backup/restore rehearsal, `RELEASE.md`, and `production-gate` (keeping `EXT-*` live/legal gates explicitly `UNVERIFIED` until owner authorizes live staging).
+2. **`TASK-062`** (Owner Redirect Manager & 404 Monitor) remains explicitly deferred to Release 1.1 per `DEC-035 C16`.
 
 ## Blockers
 

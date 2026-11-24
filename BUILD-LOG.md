@@ -198,3 +198,24 @@ Record only durable implementation changes, validation evidence, and gotchas tha
 - **Verification on `main` (`b4fa649`):** `94/94` unit test files PASS, `0` typecheck errors across `682` Astro/TS files, `delivery-ledger checkpoint && verify` PASS.
 - **Wave 7 Active Batch (4 parallel):** `TASK-105`, `TASK-084` (`platform/0031_affiliates.sql`), `TASK-020`, `TASK-071` (`tenant/0024_lead_preferred_schedule.sql`). Next free migrations after active batch: `platform/0032_*`, `tenant/0025_*`.
 - **Follow-ups logged for `TASK-066`/`TASK-038` public shell wiring:** wire `SectionOutlets` & `mapOutletsToSchemaBranches` into `section-registry.ts` / `public-seo-context.ts`, wire published `googleMapsReviewUrl` into `SectionRenderer.astro` (`SectionTestimonials`), and verify editor preserves/clears `onboarding_ai_draft` marker cleanly.
+
+
+## 2026-11-24 — Wave 7 (M2) 100% Complete: 22 / 22 Landed (`107 / 110` Total = `97.3%`, `b3b6f6f`)
+
+- **Remaining 13 Wave 7 M2 Tasks Landed (all with Playwright 360/1440 Visual QA, independent cross-family `pi-claude-sonnet-5-5` `VERDICT: APPROVE`, and full `delivery-ledger` PASS):**
+  - `TASK-105` (`c4011f8`, R2->R3): WhatsApp Support Entry Point with Context & Published Hours (active-only agency routing, zero owner-login leak, `mailto:` hardening).
+  - `TASK-084` (`97dfdab`, R3): Affiliate Enrollment, 30-Day First-Party Attribution & Anti-Abuse Locks (`platform/0031_affiliates.sql`, immutability triggers, OCC superadmin correction).
+  - `TASK-071` (`252b34d`, R2->R3): Preferred Schedule Fields for Inquiries & Single-Pass WA Tokens (`tenant/0024_lead_preferred_schedule.sql`, replay-safe idempotency precheck).
+  - `TASK-020` (`b31d362`, R2->R3): Travel & Umrah Itinerary Module with Server-Side Fail-Closed DEC-042 `SK PPIU` Gate & lossless `travelPackageV1` envelope.
+  - `TASK-085` (`ac8be35`, R3): Affiliate Commission Ledger `60%`/`20%`, 14-Day Hold & Bi-Monthly Payout Batches (`platform/0032_affiliate_commission_ledger.sql`, paid/batched delete-protection triggers, durable retry).
+  - `TASK-035` (`4d67fdd`, R2->R3): Professional Services Pricing Tiers (`from`/`fixed`/`inquiry`), Process Steps & Specialist WA CTA (`whatsappOverride`).
+  - `TASK-086` (`c27cdae`, R3): Affiliate Self-Service Portal & Console Payout Management.
+  - `TASK-098` (`4e4038f`, R3): Plugin Store, `private_client` Grants & AutoLaris Add-on Billing (`platform/0033_plugin_store_billing.sql`, cascading revocation, atomic coupon settlement, live CAS re-reads).
+  - `TASK-079` (`caff724`, R2->R3): Vehicle Showroom `/kendaraan` & Pure `BigInt` `round_half_up` Static Credit-Estimate Table (zero fabricated fallbacks, atomic `vehicleShowroomV1` publish, frozen listing snapshot precedence).
+  - `TASK-066` (`4ffba52`, R2->R3): Additional Vertical Starter Presets M2 (`professional_services`, `travel_umrah`, `multi_outlet`) & Onboarding Workspace (cache-bump compensation rollback, crash-after-seed retry preservation, `operatorHold` SSR gate, draft-only menu).
+  - `TASK-101` (`f55d35b`, R2->R3): Official Plugin `lead-notifier` (1-click 15m single-use Telegram Bot linking with non-stalling HTTP 200 rejected-token ack + entitlement-gated HMAC-SHA256 SSRF-guarded webhook + non-blocking `lead.created` hook; **zero Frozen Core edits**).
+  - `TASK-100` (`f426c5c`, R2->R3): Official Free Plugin `wp-importer` (`/wp-json` + linear `O(n)` XXE-guarded WXR draft-only TipTap importer + RIFF/WEBP EXIF/polyglot guard + default `@punyasitus/db` CMS & R2 Media adapters with failure cleanup; **zero Frozen Core edits**).
+  - `TASK-099` (`b3b6f6f`, R2->R3): Official Seed Plugins `bio-links` (`public_free`, 0-JS `/link` + first-party click stats) & `wa-cs-rotator` (`public_paid`/grantable, OCC CAS round-robin/SWRR/schedule rotation + 5-step primary WA fallback + zero-PII `source_path` + instant disable revert; **zero Frozen Core edits**).
+- **Full-Repo Executed Proof Entering Wave 8 (`b3b6f6f`):** `107/107` unit test files (`1,076/1,076` tests PASS), `0` typecheck errors, `pnpm spec:check` + `pnpm lint` + `delivery-ledger verify` PASS.
+- **Migration Registry Entering Wave 8:** `packages/db/migrations/platform/` up to `0033_plugin_store_billing.sql`; `packages/db/migrations/tenant/` up to `0024_lead_preferred_schedule.sql`.
+- **Next:** Wave 8 (`TASK-078` Pre-Launch Security Assurance -> `TASK-038` Full Production Release Gate M1 + M2).
