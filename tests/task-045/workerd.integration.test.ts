@@ -491,7 +491,9 @@ describe("TASK-045 Cloudflare for SaaS Worker Topology & Route Contract on worke
       expect(res.status, host).toBe(404);
       expect(res.headers.get("Cache-Control")).toBe("no-store");
       expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
-      expect(res.headers.get("Content-Security-Policy")).toBe("default-src 'none'");
+      expect(res.headers.get("Content-Security-Policy")).toBe(
+        "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      );
       unknownBodies.push(await res.text());
     }
     expect(new Set(unknownBodies).size).toBe(1);

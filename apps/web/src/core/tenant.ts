@@ -263,7 +263,8 @@ export function createStatePageResponse(
   const headers = new Headers({
     "Cache-Control": "no-store",
     "X-Robots-Tag": "noindex, nofollow",
-    "Content-Security-Policy": "default-src 'none'",
+    "Content-Security-Policy":
+      "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
     "X-PunyaSitus-Surface": options.surface,
   });
 

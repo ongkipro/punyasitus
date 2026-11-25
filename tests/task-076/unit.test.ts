@@ -520,15 +520,30 @@ describe("TASK-076 Unit Tests — Easy GTM Setup, Consent Mode v2, ps_* DataLaye
       const platformCsp = buildPlatformSurfaceCspHeader(nonce);
       const platformScriptSrc =
         platformCsp.split(";").find((d) => d.trim().startsWith("script-src")) ?? "";
+      const platformStyleSrc =
+        platformCsp.split(";").find((d) => d.trim().startsWith("style-src")) ?? "";
       expect(platformCsp).toContain("frame-ancestors 'self'");
       expect(platformCsp).toContain("base-uri 'self'");
+      expect(platformCsp).toContain("form-action 'self'");
       expect(platformCsp).toContain("object-src 'none'");
-      expect(platformCsp).toContain("img-src 'self' data: blob: https:");
-      expect(platformCsp).toContain("connect-src 'self' https:");
+      expect(platformCsp).toContain(
+        "img-src 'self' data: blob: https://media.punyasitus.com https://i.ytimg.com",
+      );
+      expect(platformCsp).toContain("media-src 'self' blob: https://media.punyasitus.com");
+      expect(platformCsp).toContain("connect-src 'self' https://challenges.cloudflare.com");
+      expect(platformCsp).not.toContain("https:;");
+      expect(platformStyleSrc.trim()).toBe("style-src 'self'");
       expect(platformScriptSrc).toContain(`'nonce-${nonce}'`);
       expect(platformScriptSrc).not.toContain("'unsafe-inline'");
       expect(platformScriptSrc).toContain("https://challenges.cloudflare.com");
       expect(platformCsp).not.toContain("googletagmanager.com");
+
+      const marketingCsp = buildPlatformSurfaceCspHeader(nonce, {
+        allowInlineStyles: true,
+        platformDomain: "staging.punyasitus.com",
+      });
+      expect(marketingCsp).toContain("style-src 'self' 'unsafe-inline'");
+      expect(marketingCsp).toContain("https://media.staging.punyasitus.com");
 
       const relaxed = buildRelaxedGtmCspHeader(nonce);
       expect(relaxed).toContain(`'nonce-${nonce}'`);

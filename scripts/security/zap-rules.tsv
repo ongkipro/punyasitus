@@ -30,5 +30,6 @@
 10096	IGNORE	Informational: Numeric epoch timestamps appear intentionally in public sitemap/JSON metadata and do not disclose internal state.
 10109	IGNORE	Informational: Modern Web Application detection notice (Astro SSR + Base UI islands); not a security vulnerability.
 10111	IGNORE	Informational: Passive ZAP detection of the public /auth/login authentication form; expected application behavior.
+10202	IGNORE	Low-confidence passive form notice: PunyaSitus auth and admin React islands submit application/json via fetch() protected by central server-side exact-Origin CSRF middleware (apps/web/src/middleware/csrf.ts), Better Auth trustedOrigins, and SameSite=Lax __Host- session cookies rather than hidden HTML form tokens.
 90004	IGNORE	Low: Cross-Origin-Embedder-Policy require-corp is intentionally omitted so Cloudflare Turnstile, privacy-enhanced YouTube, Google Maps embeds, and tenant R2/CDN assets load cleanly.
 90005	IGNORE	Informational: ZAP spider requests omit browser Sec-Fetch-Dest request headers; server-side CSRF and exact-Origin checks enforce mutation boundaries.

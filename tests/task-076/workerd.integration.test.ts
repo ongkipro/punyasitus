@@ -747,7 +747,9 @@ describe("TASK-076 Workerd Integration — Tenant GTM RBAC, Risk Ack, Mutual Exc
     expect(unknownHostStateRes.headers.get("X-Content-Type-Options")).toBe("nosniff");
     expect(unknownHostStateRes.headers.get("Referrer-Policy")).toBe("strict-origin-when-cross-origin");
     expect(unknownHostStateRes.headers.get("X-Frame-Options")).toBe("SAMEORIGIN");
-    expect(unknownHostStateRes.headers.get("Content-Security-Policy")).toBe("default-src 'none'");
+    expect(unknownHostStateRes.headers.get("Content-Security-Policy")).toBe(
+      "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    );
 
     const wwwRedirectRes = await executeTenantWithConsentAwareCspMiddleware(
       {

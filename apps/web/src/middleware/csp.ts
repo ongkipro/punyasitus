@@ -43,6 +43,7 @@ import type { AuthMiddlewareContext } from "./auth.ts";
 export interface CspMiddlewareRuntimeEnv {
   readonly PLATFORM_DB?: D1Database | null;
   readonly APP_ENV?: string;
+  readonly PLATFORM_DOMAIN?: string;
 }
 
 export interface CspMiddlewareOptions {
@@ -306,7 +307,13 @@ export async function executePublicCspMiddleware(
     context.locals.cspNonce = platformNonce;
     const headers = new Headers(response.headers);
     setBaselineSecurityHeadersOn(headers, true);
-    headers.set("Content-Security-Policy", buildPlatformSurfaceCspHeader(platformNonce));
+    headers.set(
+      "Content-Security-Policy",
+      buildPlatformSurfaceCspHeader(platformNonce, {
+        allowInlineStyles: surface === "marketing",
+        platformDomain: runtimeEnv.PLATFORM_DOMAIN,
+      }),
+    );
     headers.set("X-PunyaSitus-CSP-Profile", "strict");
 
     if (isHeadRequest) {
@@ -396,6 +403,7 @@ export async function executeTenantWithConsentAwareCspMiddleware(
         {
           PLATFORM_DB: tenantEnv.PLATFORM_DB,
           APP_ENV: tenantEnv.APP_ENV,
+          PLATFORM_DOMAIN: tenantEnv.PLATFORM_DOMAIN,
         },
         { extraTestOrigins: options.extraTestOrigins },
       ),

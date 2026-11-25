@@ -566,7 +566,9 @@ describe("TASK-002 Host-Based Tenant Resolution & Request Gate on workerd", () =
       expect(res.status).toBe(404);
       expect(res.headers.get("Cache-Control")).toBe("no-store");
       expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
-      expect(res.headers.get("Content-Security-Policy")).toBe("default-src 'none'");
+      expect(res.headers.get("Content-Security-Policy")).toBe(
+        "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      );
       if (pathname.startsWith("/api/")) {
         expect(await res.json()).toEqual({ success: false, code: "NOT_FOUND" });
       } else {
@@ -700,7 +702,9 @@ describe("TASK-002 Host-Based Tenant Resolution & Request Gate on workerd", () =
       expect(htmlRes.status).toBe(404);
       expect(htmlRes.headers.get("Cache-Control")).toBe("no-store");
       expect(htmlRes.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
-      expect(htmlRes.headers.get("Content-Security-Policy")).toBe("default-src 'none'");
+      expect(htmlRes.headers.get("Content-Security-Policy")).toBe(
+        "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      );
       expect(htmlRes.headers.get("X-PunyaSitus-Surface")).toBe("unknown");
       const html = await htmlRes.text();
       expect(html).toContain(STATE_PAGE_MESSAGES.notFound);
@@ -821,7 +825,9 @@ describe("TASK-002 Host-Based Tenant Resolution & Request Gate on workerd", () =
       expect(htmlRes.status).toBe(503);
       expect(htmlRes.headers.get("Cache-Control")).toBe("no-store");
       expect(htmlRes.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
-      expect(htmlRes.headers.get("Content-Security-Policy")).toBe("default-src 'none'");
+      expect(htmlRes.headers.get("Content-Security-Policy")).toBe(
+        "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      );
       expect(htmlRes.headers.get("Retry-After")).toBe("60");
       const body = await htmlRes.text();
       expect(body).toContain(entry.expectedMessage);
@@ -972,7 +978,9 @@ describe("TASK-002 Host-Based Tenant Resolution & Request Gate on workerd", () =
     expect(dbOutageHtml.headers.get("Retry-After")).toBe("60");
     expect(dbOutageHtml.headers.get("Cache-Control")).toBe("no-store");
     expect(dbOutageHtml.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
-    expect(dbOutageHtml.headers.get("Content-Security-Policy")).toBe("default-src 'none'");
+    expect(dbOutageHtml.headers.get("Content-Security-Policy")).toBe(
+      "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    );
     expect(await dbOutageHtml.text()).toContain(STATE_PAGE_MESSAGES.unavailable);
 
     const dbOutageApi = await routeEdgeRequest(

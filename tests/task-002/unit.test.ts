@@ -103,7 +103,9 @@ describe("TASK-002 unit tests — lifecycle status, cache keys, neutral state pa
     expect(html404.status).toBe(404);
     expect(html404.headers.get("Cache-Control")).toBe("no-store");
     expect(html404.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
-    expect(html404.headers.get("Content-Security-Policy")).toBe("default-src 'none'");
+    expect(html404.headers.get("Content-Security-Policy")).toBe(
+      "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    );
     expect(html404.headers.get("Retry-After")).toBeNull();
     const html404Body = await html404.text();
     expect(html404Body).toContain(STATE_PAGE_MESSAGES.notFound);
@@ -126,7 +128,9 @@ describe("TASK-002 unit tests — lifecycle status, cache keys, neutral state pa
       expect(htmlRes.headers.get("Retry-After")).toBe("60");
       expect(htmlRes.headers.get("Cache-Control")).toBe("no-store");
       expect(htmlRes.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
-      expect(htmlRes.headers.get("Content-Security-Policy")).toBe("default-src 'none'");
+      expect(htmlRes.headers.get("Content-Security-Policy")).toBe(
+        "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      );
       expect(await htmlRes.text()).toContain(message);
 
       const apiRes = createStatePageResponse(kind, { pathname: "/api/events", surface: "tenant" });

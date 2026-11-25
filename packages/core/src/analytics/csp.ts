@@ -121,16 +121,46 @@ export function buildStrictPublicCspHeader(nonce?: string): string {
   ].join("; ");
 }
 
+export interface PlatformSurfaceCspOptions {
+  /**
+   * Public marketing pages still render static `style="..."` layout attributes without auth
+   * sessions; authenticated `app` and `console` surfaces strictly emit `style-src 'self'`.
+   */
+  readonly allowInlineStyles?: boolean;
+  /** Optional platform root domain used to allow first-party `https://media.<domain>` previews. */
+  readonly platformDomain?: string;
+}
+
+const DEFAULT_PLATFORM_MEDIA_DOMAIN = "punyasitus.com";
+const SAFE_DOMAIN_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i;
+
+function resolvePlatformMediaOrigin(platformDomain?: string): string {
+  const normalized = (platformDomain ?? "").trim().toLowerCase();
+  if (normalized && SAFE_DOMAIN_RE.test(normalized)) {
+    return `https://media.${normalized}`;
+  }
+  return `https://media.${DEFAULT_PLATFORM_MEDIA_DOMAIN}`;
+}
+
 /**
  * Strict per-response nonced CSP profile for platform HTML surfaces (`marketing`, `app`, `console`).
  * Enforces `frame-ancestors 'self'`, `base-uri 'self'`, `form-action 'self'`, `object-src 'none'`,
- * and zero `'unsafe-inline'` in `script-src`, while supporting Turnstile, React/Astro island hydration
- * via nonce, local blob image/video previews for admin media uploads, and HTTPS API connections.
+ * zero `'unsafe-inline'` in `script-src` (and zero `'unsafe-inline'` in `style-src` on `app`/`console`),
+ * and explicit first-party/vendor origins (no bare `https:` wildcards) while supporting Turnstile,
+ * React/Astro island hydration via nonce, local blob previews, and platform media CDN previews.
  */
-export function buildPlatformSurfaceCspHeader(nonce: string): string {
+export function buildPlatformSurfaceCspHeader(
+  nonce: string,
+  options: PlatformSurfaceCspOptions = {},
+): string {
   if (!isValidCspNonce(nonce)) {
     throw new Error("Invalid CSP nonce: must be 16-64 base64/url-safe characters.");
   }
+
+  const mediaOrigin = resolvePlatformMediaOrigin(options.platformDomain);
+  const styleDirective = options.allowInlineStyles
+    ? "style-src 'self' 'unsafe-inline'"
+    : "style-src 'self'";
 
   return [
     "default-src 'self'",
@@ -139,10 +169,10 @@ export function buildPlatformSurfaceCspHeader(nonce: string): string {
     "object-src 'none'",
     "frame-ancestors 'self'",
     `script-src 'self' 'nonce-${nonce}' ${FIRST_PARTY_PLATFORM_ORIGINS.turnstile}`,
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: blob: https:",
-    "media-src 'self' blob: https:",
-    "connect-src 'self' https:",
+    styleDirective,
+    `img-src 'self' data: blob: ${mediaOrigin} https://i.ytimg.com`,
+    `media-src 'self' blob: ${mediaOrigin}`,
+    `connect-src 'self' ${FIRST_PARTY_PLATFORM_ORIGINS.turnstile}`,
     "font-src 'self' data:",
     `frame-src 'self' ${FIRST_PARTY_PLATFORM_ORIGINS.turnstile}`,
   ].join("; ");
