@@ -839,4 +839,47 @@ describe("TASK-001 Multi-Tenant Database Schema & Drizzle Migrations on workerd"
     expect(resolvedBeta?.tenantId).toBe(beta.id);
     expect(await resolveHostRecord(env.PLATFORM_DB, "unknown-host.situsku.click")).toBeNull();
   });
+
+  it("M1-FU-01: applies ALL_PLATFORM_MIGRATIONS (0001..0033) and ALL_TENANT_MIGRATIONS (0001..0024) cleanly and idempotently in workerd", async () => {
+    const { ALL_PLATFORM_MIGRATIONS } = await import("@punyasitus/db/platform");
+    const { ALL_TENANT_MIGRATIONS } = await import("@punyasitus/db/tenant");
+
+    const platFirst = await applyPlatformMigrations(env.PLATFORM_DB, ALL_PLATFORM_MIGRATIONS);
+    expect(platFirst.applied.length + platFirst.skipped.length).toBe(ALL_PLATFORM_MIGRATIONS.length);
+    expect(platFirst.currentVersion).toBe(33);
+
+    const platSecond = await applyPlatformMigrations(env.PLATFORM_DB, ALL_PLATFORM_MIGRATIONS);
+    expect(platSecond.applied).toEqual([]);
+    expect(platSecond.skipped).toHaveLength(ALL_PLATFORM_MIGRATIONS.length);
+
+    const fullCatalogTenantId = "01JTESTTENANTFULLCAT000001";
+    await seedSyntheticTenantInPlatformDb(env.PLATFORM_DB, {
+      tenantId: fullCatalogTenantId,
+      orgId: "org_fullcat",
+      handle: "full-catalog",
+      name: "Full Catalog Fixture",
+      host: "full-catalog.situsku.click",
+    });
+    const ns = env.TENANT_STORE as unknown as TenantStoreNamespaceLike;
+    const stub = openTenantStoreStub(ns, fullCatalogTenantId);
+    const tenFirst = await orchestrateTenantMigration(
+      env.PLATFORM_DB,
+      stub,
+      fullCatalogTenantId,
+      ALL_TENANT_MIGRATIONS,
+    );
+    expect(tenFirst.outcome).toBe("migrated");
+    expect(tenFirst.applied).toHaveLength(ALL_TENANT_MIGRATIONS.length);
+    expect(tenFirst.schemaVersion).toBe(24);
+
+    const tenSecond = await orchestrateTenantMigration(
+      env.PLATFORM_DB,
+      stub,
+      fullCatalogTenantId,
+      ALL_TENANT_MIGRATIONS,
+    );
+    expect(tenSecond.outcome).toBe("up_to_date");
+    expect(tenSecond.applied).toEqual([]);
+    expect(tenSecond.skipped).toHaveLength(ALL_TENANT_MIGRATIONS.length);
+  });
 });

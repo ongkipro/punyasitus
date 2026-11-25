@@ -179,6 +179,22 @@ describe("TASK-024 OpenAPI 3.1 contract generation & drift check", () => {
     // Operation IDs are unique across all routes
     const opIds = ROUTE_CONTRACTS.map((r) => r.operationId);
     expect(new Set(opIds).size).toBe(opIds.length);
+
+    // M1-FU-06 / ASVS V4.4: 100% of shipped `/api/**` and `/mcp` routes in surface-inventory.json are documented
+    const inventoryPath = path.join(ROOT, "docs/security/surface-inventory.json");
+    const inventory = JSON.parse(fs.readFileSync(inventoryPath, "utf8")) as {
+      readonly routes: readonly { readonly route: string }[];
+    };
+    const normalizeSurfaceRoute = (r: string) =>
+      r.replace(/\[\.\.\.([^\]]+)\]/g, "{$1}").replace(/\[([^\]]+)\]/g, "{$1}");
+    const openApiPathSet = new Set(pathKeys);
+    const missingFromOpenApi = inventory.routes
+      .map((r) => r.route)
+      .filter((r) => r.startsWith("/api/") || r === "/mcp")
+      .map(normalizeSurfaceRoute)
+      .filter((p) => !openApiPathSet.has(p));
+    expect(missingFromOpenApi).toEqual([]);
+    expect(new Set(opIds).size).toBe(opIds.length);
   });
 
   it("ensures every component schema in the registry produces valid JSON Schema without leftover $schema/$id", () => {

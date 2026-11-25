@@ -1415,4 +1415,123 @@ describe("TASK-017: Tenant-Scoped Sitemap, Sub-Sitemaps, Robots & Blog RSS on wo
     expect(robotsPluginOffBody).toContain("Disallow: /api/");
     expect(robotsPluginOffBody).not.toContain("Sitemap:");
   });
+
+  it("M1-FU-05: fails closed with 503 no-store on TenantStore DB outages and includes opted-in taxonomy archives", async () => {
+    // 1. Fail-closed 503 Retry-After: 60 no-store noindex when TenantStore DB throws
+    const failingTenantDb = {
+      prepare() {
+        return {
+          bind() {
+            return this;
+          },
+          first: async () => {
+            throw new Error("D1_ERROR: simulated TenantStore outage");
+          },
+          all: async () => {
+            throw new Error("D1_ERROR: simulated TenantStore outage");
+          },
+          run: async () => {
+            throw new Error("D1_ERROR: simulated TenantStore outage");
+          },
+        };
+      },
+    } as unknown as D1Database;
+
+    const outageDeps = {
+      ...makeRuntimeDiscoveryDeps({ nowMs: BASE_TIME + 80_000 }),
+      tenantDb: failingTenantDb,
+    };
+
+    const [indexOutage, subOutage, robotsOutage, feedOutage] = await Promise.all([
+      handleSitemapIndexRequest(
+        new Request(`https://${TENANT_ALPHA.customDomain}/sitemap.xml`),
+        outageDeps,
+      ),
+      handleSubSitemapRequest(
+        new Request(`https://${TENANT_ALPHA.customDomain}/sitemaps/pages.xml`),
+        "pages",
+        outageDeps,
+      ),
+      handleRobotsTxtRequest(
+        new Request(`https://${TENANT_ALPHA.customDomain}/robots.txt`),
+        outageDeps,
+      ),
+      handleBlogFeedRequest(
+        new Request(`https://${TENANT_ALPHA.customDomain}/blog/feed.xml`),
+        outageDeps,
+      ),
+    ]);
+
+    for (const res of [indexOutage, subOutage, robotsOutage, feedOutage]) {
+      expect(res.status).toBe(503);
+      expect(res.headers.get("Retry-After")).toBe("60");
+      expect(res.headers.get("Cache-Control")).toBe("no-store");
+      expect(res.headers.get("X-Robots-Tag")).toBe("noindex, nofollow");
+    }
+    expect(await robotsOutage.text()).toContain("Disallow: /");
+
+    // 2. Opted-in taxonomy archive with useful intro & published post appears in posts.xml, while non-opted-in stays excluded
+    await tenantDbAlpha
+      .prepare("UPDATE installed_plugins SET enabled = 1 WHERE plugin_id = 'seo-ai-autopilot'")
+      .run();
+    await tenantDbAlpha
+      .prepare(
+        `CREATE TABLE IF NOT EXISTS taxonomy_archive_settings (
+          taxonomy_id INTEGER PRIMARY KEY REFERENCES taxonomies(id) ON DELETE CASCADE,
+          index_opt_in INTEGER NOT NULL DEFAULT 0 CHECK (index_opt_in IN (0, 1)),
+          updated_at INTEGER NOT NULL
+        )`,
+      )
+      .run();
+
+    // Re-publish the post properly via publishPost and link it to opted-in vs non-opted-in categories
+    const postVerRow = await tenantDbAlpha
+      .prepare("SELECT version FROM posts WHERE id = ?")
+      .bind(alphaPublishedPostId)
+      .first<{ readonly version: number }>();
+    await publishPost(env.PLATFORM_DB, tenantDbAlpha, {
+      tenantId: TENANT_ALPHA.id,
+      postId: alphaPublishedPostId,
+      expectedVersion: Number(postVerRow?.version ?? 1),
+      nowMs: BASE_TIME + 80_500,
+    });
+    clearHostResolutionCache();
+
+    const longIntro =
+      "Panduan lengkap dan studi kasus terverifikasi mengenai layanan konsultasi operasional bisnis skala nasional.";
+    await tenantDbAlpha
+      .prepare(
+        `INSERT OR REPLACE INTO taxonomies (id, taxonomy_type, offering_type, parent_id, depth, slug, name, description, sort_order, version, created_at, updated_at)
+         VALUES
+           (901, 'post_category', NULL, NULL, 0, 'panduan-bisnis', 'Panduan Bisnis', ?, 1, 1, ?, ?),
+           (902, 'post_category', NULL, NULL, 0, 'internal-notes', 'Internal Notes', ?, 2, 1, ?, ?)`,
+      )
+      .bind(longIntro, BASE_TIME, BASE_TIME, longIntro, BASE_TIME, BASE_TIME)
+      .run();
+    await tenantDbAlpha
+      .prepare(
+        `INSERT OR REPLACE INTO taxonomy_archive_settings (taxonomy_id, index_opt_in, updated_at)
+         VALUES (901, 1, ?), (902, 0, ?)`,
+      )
+      .bind(BASE_TIME, BASE_TIME)
+      .run();
+    await tenantDbAlpha
+      .prepare(
+        `INSERT OR IGNORE INTO post_taxonomies (post_id, taxonomy_id) VALUES (?, 901), (?, 902)`,
+      )
+      .bind(alphaPublishedPostId, alphaPublishedPostId)
+      .run();
+
+    const postsWithTax = await handleSubSitemapRequest(
+      new Request(`https://${TENANT_ALPHA.customDomain}/sitemaps/posts.xml`),
+      "posts",
+      makeRuntimeDiscoveryDeps({ nowMs: BASE_TIME + 81_000 }),
+    );
+    expect(postsWithTax.status).toBe(200);
+    const postsWithTaxXml = await postsWithTax.text();
+    expect(postsWithTaxXml).toContain(
+      `https://${TENANT_ALPHA.customDomain}/blog/category/panduan-bisnis`,
+    );
+    expect(postsWithTaxXml).not.toContain("/blog/category/internal-notes");
+  });
 });

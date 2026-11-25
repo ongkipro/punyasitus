@@ -1,6 +1,7 @@
 ---
 import "./sections.css";
 import type { PublicBranchViewInput } from "@punyasitus/core/branches/index";
+import type { PublishedFormDefinition } from "@punyasitus/core/forms/index";
 import type {
   BlogLatestSectionConfig,
   ContactLocationSectionConfig,
@@ -21,8 +22,10 @@ import {
 } from "../../../core/section-registry.ts";
 import SectionBlogLatest from "./SectionBlogLatest.astro";
 import SectionBranches from "./SectionBranches.astro";
+import SectionContactForm from "./SectionContactForm.astro";
 import SectionContactLocation from "./SectionContactLocation.astro";
 import SectionCtaBanner from "./SectionCtaBanner.astro";
+import SectionCustomForm from "./SectionCustomForm.astro";
 import SectionFaq from "./SectionFaq.astro";
 import SectionFeatures from "./SectionFeatures.astro";
 import SectionGallery from "./SectionGallery.astro";
@@ -53,6 +56,10 @@ export interface Props {
   readonly fallbackOfferings?: readonly SectionOfferingItem[];
   readonly fallbackPosts?: BlogLatestSectionConfig["posts"];
   readonly fallbackBranches?: readonly PublicBranchViewInput[];
+  readonly fallbackForms?: Readonly<Record<string, PublishedFormDefinition>>;
+  readonly turnstileSiteKey?: string;
+  readonly showContactForm?: boolean;
+  readonly googleMapsReviewUrl?: string | null;
   readonly businessName?: string | null;
   readonly fallbackBusiness?: {
     readonly address?: string | null;
@@ -81,9 +88,29 @@ const {
   fallbackOfferings = [],
   fallbackPosts = [],
   fallbackBranches = [],
+  fallbackForms = {},
+  turnstileSiteKey,
+  showContactForm = false,
+  googleMapsReviewUrl = null,
   businessName = null,
   fallbackBusiness,
 } = Astro.props;
+
+const contactBranchOptions = fallbackBranches
+  .map((branch, idx) => {
+    const parsedId =
+      typeof branch.id === "number" && Number.isFinite(branch.id)
+        ? branch.id
+        : typeof branch.id === "string" && /^\d+$/.test(branch.id)
+          ? Number(branch.id)
+          : idx + 1;
+    return {
+      id: parsedId,
+      name: branch.name,
+      address: branch.address ?? null,
+      whatsappE164: branch.whatsappE164 ?? null,
+    };
+  });
 
 const result = safeAssemblePageSections({
   sections,
@@ -202,17 +229,62 @@ const resolvedHeroVariant: HeroVariant =
               isFirstSection={isFirstSection}
             />
           );
-        case "SectionCtaBanner":
+        case "SectionCtaBanner": {
+          const ctaConfig = section.config as CtaBannerSectionConfig;
+          if (section.type === "custom_form") {
+            const formSlug = ctaConfig.formSlug?.trim() || null;
+            const matchedForm = formSlug ? fallbackForms[formSlug] ?? null : null;
+            if (matchedForm) {
+              return (
+                <SectionCustomForm
+                  id={section.id}
+                  form={matchedForm}
+                  eyebrow={ctaConfig.eyebrow ?? undefined}
+                  businessName={businessName ?? undefined}
+                  sourcePath={assembled.routePath}
+                  returnTo={assembled.routePath}
+                  turnstileSiteKey={turnstileSiteKey}
+                  isHealthCategory={assembled.isHealthCategory}
+                  surfaceTone={surfaceTone}
+                  isPreview={assembled.isPreview}
+                  isFirstSection={isFirstSection}
+                />
+              );
+            }
+            if (formSlug === "contact") {
+              return (
+                <SectionContactForm
+                  id={section.id}
+                  eyebrow={ctaConfig.eyebrow ?? undefined}
+                  heading={ctaConfig.heading}
+                  subheading={ctaConfig.subheading ?? undefined}
+                  submitLabel={ctaConfig.primaryCta.label}
+                  businessName={businessName ?? undefined}
+                  sourcePath={assembled.routePath}
+                  returnTo={assembled.routePath}
+                  turnstileSiteKey={turnstileSiteKey}
+                  branches={contactBranchOptions}
+                  whatsappPhone={fallbackBusiness?.whatsappE164 ?? null}
+                  primaryOrigin={primaryOrigin}
+                  googleMapsReviewUrl={googleMapsReviewUrl}
+                  surfaceTone={surfaceTone}
+                  isPreview={assembled.isPreview}
+                  isFirstSection={isFirstSection}
+                />
+              );
+            }
+          }
           return (
             <SectionCtaBanner
               id={section.id}
               sectionType={section.type}
-              config={section.config as CtaBannerSectionConfig}
+              config={ctaConfig}
               surfaceTone={surfaceTone}
               isPreview={assembled.isPreview}
               isFirstSection={isFirstSection}
             />
           );
+        }
         case "SectionContactLocation": {
           const contactConfig = section.config as ContactLocationSectionConfig;
           if (section.type === "branches") {
@@ -262,15 +334,32 @@ const resolvedHeroVariant: HeroVariant =
             );
           }
           return (
-            <SectionContactLocation
-              id={section.id}
-              sectionType={section.type}
-              config={contactConfig}
-              fallbackBusiness={fallbackBusiness}
-              surfaceTone={surfaceTone}
-              isPreview={assembled.isPreview}
-              isFirstSection={isFirstSection}
-            />
+            <>
+              <SectionContactLocation
+                id={section.id}
+                sectionType={section.type}
+                config={contactConfig}
+                fallbackBusiness={fallbackBusiness}
+                surfaceTone={surfaceTone}
+                isPreview={assembled.isPreview}
+                isFirstSection={isFirstSection}
+              />
+              {showContactForm && (
+                <SectionContactForm
+                  id={`${section.id}-form`}
+                  businessName={businessName ?? undefined}
+                  sourcePath={assembled.routePath}
+                  returnTo={assembled.routePath}
+                  turnstileSiteKey={turnstileSiteKey}
+                  branches={contactBranchOptions}
+                  whatsappPhone={contactConfig.whatsappPhone ?? fallbackBusiness?.whatsappE164 ?? null}
+                  primaryOrigin={primaryOrigin}
+                  googleMapsReviewUrl={googleMapsReviewUrl}
+                  surfaceTone={surfaceTone === "surface" ? "muted" : "surface"}
+                  isPreview={assembled.isPreview}
+                />
+              )}
+            </>
           );
         }
       }

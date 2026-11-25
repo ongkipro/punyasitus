@@ -44,6 +44,9 @@ const enriched =
     layoutMode={result.layoutMode}
     currentPath={result.currentPath}
     initialCookieHeader={Astro.request.headers.get("cookie")}
+    operatorKillSwitchActive={enriched?.operatorKillSwitchActive ?? false}
+    pageType={result.isHomepage ? "home" : "page"}
+    contentId={result.page ? result.page.slug : null}
   >
     <PublicSeoHead
       slot="head"
@@ -79,6 +82,8 @@ const enriched =
         fallbackOfferings={result.fallbackOfferings}
         fallbackPosts={result.fallbackPosts}
         fallbackBranches={enriched?.activeBranches ?? []}
+        fallbackForms={enriched?.publishedForms ?? {}}
+        turnstileSiteKey={(env as unknown as { readonly TURNSTILE_SITE_KEY?: string }).TURNSTILE_SITE_KEY}
         businessName={result.shell.business.name}
         fallbackBusiness={{
           address: result.shell.business.address,

@@ -24,9 +24,8 @@ Independent-Review-Head: 5a5ad9c
 
 ## Next
 
-1. **External Staging, Provider & Legal Gates (`EXT-01..EXT-10` — ONLY remaining pre-launch gates):** Execute only with explicit owner authorization against live Cloudflare Workers Paid, SaaS zone (`situsku.click` DCV/O2O/Trust+), Google OAuth, Cloudflare Email Sending (`notif.punyasitus.com`), AutoLaris relay, Indonesian legal/PSE/UU PDP review (`DEC-047`), and live staging ZAP full active scan.
-2. **Optional Pre-Staging Polish (Non-Blocking):** `M1-FU-01`, `M1-FU-02`, `M1-FU-04`, `M1-FU-05`, `M1-FU-06`, and secondary publish routes noted in `docs/security/findings-register.md` §1.1.
-3. **Release 1.1 (`TASK-062`):** Owner Redirect Manager & 404 Monitor remains explicitly deferred to Release 1.1 per `DEC-035 C16`.
+1. **External Staging, Provider & Legal Gates (`EXT-01..EXT-10` — ONLY remaining pre-launch gates):** Execute only with explicit owner authorization against live Cloudflare Workers Paid, SaaS zone (`situsku.click` DCV/O2O/Trust+), Google OAuth, Cloudflare Email Sending (`notif.punyasitus.com`), AutoLaris relay, Indonesian legal/PSE/UU PDP review (`DEC-047`), and live staging ZAP full active scan. (All 6 security findings `SEC-001..SEC-006` and all 8 pre-staging polish items `M1-FU-01..M1-FU-08` are now `RESOLVED_VERIFIED`; ASVS 5.0 L2 has **0 `FINDING_REOPEN_REQUIRED`** rows.)
+2. **Release 1.1 (`TASK-062`):** Owner Redirect Manager & 404 Monitor remains explicitly deferred to Release 1.1 per `DEC-035 C16`.
 
 ## Blockers
 

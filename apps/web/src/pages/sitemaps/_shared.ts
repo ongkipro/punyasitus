@@ -33,6 +33,11 @@ import {
 } from "@punyasitus/core/seo/index";
 import type { OfferingType } from "@punyasitus/core/schemas/common";
 import {
+  getTaxonomyPublicBasePath,
+  hasUsefulTaxonomyIntro,
+  type TaxonomyKind,
+} from "@punyasitus/core/taxonomy/index";
+import {
   createTenantDb,
   openTenantStoreStub,
   type TenantStoreNamespaceLike,
@@ -787,6 +792,11 @@ async function resolveDiscoveryTenantScope(
 // Published Tenant Data & Media Loaders (Zero Draft Leaks, Bounded Queries)
 // ---------------------------------------------------------------------------
 
+function isMissingTableError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err ?? "");
+  return /no such table/i.test(message);
+}
+
 async function loadPublishedSiteSettings(
   tenantDb: D1Database,
 ): Promise<SiteSettingsSnapshot | null> {
@@ -796,14 +806,19 @@ async function loadPublishedSiteSettings(
       resourceId: 1,
     });
     return dto?.data ?? null;
-  } catch {
-    return null;
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      return null;
+    }
+    throw err;
   }
 }
 
 /**
  * Checks `installed_plugins` for `seo-ai-autopilot` (`REQ-066`).
  * Default when no row exists is active (`true`); an explicit row with `enabled = 0` disables sitemaps.
+ * Missing optional table degrades safely to `true`, while genuine `TenantStore` DB outages rethrow
+ * so sitemap/robots handlers fail closed with `503 no-store`.
  */
 async function isSeoAutopilotActive(tenantDb: D1Database): Promise<boolean> {
   try {
@@ -812,9 +827,142 @@ async function isSeoAutopilotActive(tenantDb: D1Database): Promise<boolean> {
       .first<{ readonly enabled: number }>();
     if (!row) return true;
     return Number(row.enabled) !== 0;
-  } catch {
-    return true;
+  } catch (err) {
+    if (isMissingTableError(err)) {
+      return true;
+    }
+    throw err;
   }
+}
+
+interface RawOptedInTaxonomyRow {
+  readonly id: number;
+  readonly taxonomy_type: TaxonomyKind;
+  readonly offering_type: OfferingType | null;
+  readonly slug: string;
+  readonly description: string | null;
+  readonly published_count: number;
+  readonly latest_lastmod_ms: number | null;
+}
+
+async function hasTenantTable(tenantDb: D1Database, tableName: string): Promise<boolean> {
+  const row = await tenantDb
+    .prepare("SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1")
+    .bind(tableName)
+    .first<{ readonly present: number }>();
+  return Boolean(row?.present);
+}
+
+async function collectOptedInBlogTaxonomyEntries(params: {
+  readonly scope: ResolvedDiscoveryTenant;
+  readonly siteSettings: SiteSettingsSnapshot | null;
+  readonly siteVisibility: SiteVisibility;
+}): Promise<SitemapUrlEntry[]> {
+  if (!(await hasTenantTable(params.scope.tenantDb, "taxonomy_archive_settings"))) {
+    return [];
+  }
+  const res = await params.scope.tenantDb
+    .prepare(
+      `SELECT t.id, t.taxonomy_type, t.offering_type, t.slug, t.description,
+              COUNT(DISTINCT p.id) AS published_count,
+              MAX(COALESCE(p.content_modified_at, p.published_at)) AS latest_lastmod_ms
+       FROM taxonomies t
+       INNER JOIN taxonomy_archive_settings s ON s.taxonomy_id = t.id AND s.index_opt_in = 1
+       INNER JOIN post_taxonomies pt ON pt.taxonomy_id = t.id
+       INNER JOIN posts p ON p.id = pt.post_id
+         AND p.status = 'published'
+         AND p.deleted_at IS NULL
+         AND p.published_body_json IS NOT NULL
+       WHERE t.taxonomy_type IN ('post_category', 'post_tag')
+       GROUP BY t.id
+       HAVING published_count > 0
+       ORDER BY t.taxonomy_type ASC, t.id ASC
+       LIMIT 500`,
+    )
+    .all<RawOptedInTaxonomyRow>();
+
+  const entries: SitemapUrlEntry[] = [];
+  for (const row of res.results) {
+    if (!row.slug) continue;
+    const routeKind =
+      row.taxonomy_type === "post_tag" ? "tag_archive" : "category_archive";
+    const pathname = getTaxonomyPublicBasePath(row.taxonomy_type, row.slug);
+    const decision = resolvePublishedSeoDecision({
+      surface: "public_tenant",
+      routeKind,
+      pathname,
+      tenant: params.scope.seoTenant,
+      siteVisibility: params.siteVisibility,
+      archiveEnabled: params.siteSettings?.blogEnabled ?? true,
+      publishedItemCount: Number(row.published_count),
+      taxonomyIndexOptIn: true,
+      taxonomyHasUsefulIntro: hasUsefulTaxonomyIntro(row.description),
+    });
+    if (decision.sitemapEligible && decision.canonical) {
+      entries.push({
+        loc: decision.canonical,
+        lastmod: formatIsoLastmod(row.latest_lastmod_ms),
+      });
+    }
+  }
+  return entries;
+}
+
+async function collectOptedInOfferingTaxonomyEntries(params: {
+  readonly scope: ResolvedDiscoveryTenant;
+  readonly siteSettings: SiteSettingsSnapshot | null;
+  readonly siteVisibility: SiteVisibility;
+}): Promise<SitemapUrlEntry[]> {
+  if (!(await hasTenantTable(params.scope.tenantDb, "taxonomy_archive_settings"))) {
+    return [];
+  }
+  const res = await params.scope.tenantDb
+    .prepare(
+      `SELECT t.id, t.taxonomy_type, t.offering_type, t.slug, t.description,
+              COUNT(DISTINCT o.id) AS published_count,
+              MAX(COALESCE(o.content_modified_at, o.published_at)) AS latest_lastmod_ms
+       FROM taxonomies t
+       INNER JOIN taxonomy_archive_settings s ON s.taxonomy_id = t.id AND s.index_opt_in = 1
+       INNER JOIN offering_taxonomies ot ON ot.taxonomy_id = t.id
+       INNER JOIN offerings o ON o.id = ot.offering_id
+         AND o.status = 'published'
+         AND o.deleted_at IS NULL
+         AND o.published_snapshot_json IS NOT NULL
+       WHERE t.taxonomy_type = 'offering_category'
+       GROUP BY t.id
+       HAVING published_count > 0
+       ORDER BY t.id ASC
+       LIMIT 500`,
+    )
+    .all<RawOptedInTaxonomyRow>();
+
+  const entries: SitemapUrlEntry[] = [];
+  for (const row of res.results) {
+    if (!row.slug) continue;
+    const pathname = getTaxonomyPublicBasePath(
+      "offering_category",
+      row.slug,
+      row.offering_type ?? "service",
+    );
+    const decision = resolvePublishedSeoDecision({
+      surface: "public_tenant",
+      routeKind: "offering_category_archive",
+      pathname,
+      tenant: params.scope.seoTenant,
+      siteVisibility: params.siteVisibility,
+      archiveEnabled: params.siteSettings?.catalogEnabled ?? true,
+      publishedItemCount: Number(row.published_count),
+      taxonomyIndexOptIn: true,
+      taxonomyHasUsefulIntro: hasUsefulTaxonomyIntro(row.description),
+    });
+    if (decision.sitemapEligible && decision.canonical) {
+      entries.push({
+        loc: decision.canonical,
+        lastmod: formatIsoLastmod(row.latest_lastmod_ms),
+      });
+    }
+  }
+  return entries;
 }
 
 function resolveMediaBaseOrigin(mediaPublicBaseUrl?: string | null): string {
@@ -1431,6 +1579,17 @@ async function collectPublishedPostSitemapEntries(params: {
     });
   }
 
+  const optedInTaxonomies = await collectOptedInBlogTaxonomyEntries({
+    scope: params.scope,
+    siteSettings: params.siteSettings,
+    siteVisibility,
+  });
+  for (const taxEntry of optedInTaxonomies) {
+    if (seenLocs.has(taxEntry.loc)) continue;
+    seenLocs.add(taxEntry.loc);
+    entries.push(taxEntry);
+  }
+
   return entries;
 }
 
@@ -1575,6 +1734,17 @@ async function collectPublishedOfferingSitemapEntries(params: {
     });
   }
 
+  const optedInTaxonomies = await collectOptedInOfferingTaxonomyEntries({
+    scope: params.scope,
+    siteSettings: params.siteSettings,
+    siteVisibility,
+  });
+  for (const taxEntry of optedInTaxonomies) {
+    if (seenLocs.has(taxEntry.loc)) continue;
+    seenLocs.add(taxEntry.loc);
+    entries.push(taxEntry);
+  }
+
   return entries;
 }
 
@@ -1635,21 +1805,30 @@ export async function handleSitemapIndexRequest(
   }
 
   const { scope } = scopeRes;
-  const [siteSettings, seoActive] = await Promise.all([
-    loadPublishedSiteSettings(scope.tenantDb),
-    isSeoAutopilotActive(scope.tenantDb),
-  ]);
+  let siteSettings: SiteSettingsSnapshot | null;
+  let seoActive: boolean;
+  let pageEntries: SitemapUrlEntry[];
+  let postEntries: SitemapUrlEntry[];
+  let offeringEntries: SitemapUrlEntry[];
+  try {
+    [siteSettings, seoActive] = await Promise.all([
+      loadPublishedSiteSettings(scope.tenantDb),
+      isSeoAutopilotActive(scope.tenantDb),
+    ]);
 
-  if (!seoActive || !isTenantSitemapIndexable(scope, siteSettings)) {
-    return createNotFoundResponse(request, XML_CONTENT_TYPE);
+    if (!seoActive || !isTenantSitemapIndexable(scope, siteSettings)) {
+      return createNotFoundResponse(request, XML_CONTENT_TYPE);
+    }
+
+    const mediaBaseOrigin = resolveMediaBaseOrigin(deps.mediaPublicBaseUrl);
+    [pageEntries, postEntries, offeringEntries] = await Promise.all([
+      collectPublishedPageSitemapEntries({ scope, siteSettings, mediaBaseOrigin }),
+      collectPublishedPostSitemapEntries({ scope, siteSettings, mediaBaseOrigin }),
+      collectPublishedOfferingSitemapEntries({ scope, siteSettings, mediaBaseOrigin }),
+    ]);
+  } catch {
+    return createUnavailableResponse(request, 60, { contentType: XML_CONTENT_TYPE });
   }
-
-  const mediaBaseOrigin = resolveMediaBaseOrigin(deps.mediaPublicBaseUrl);
-  const [pageEntries, postEntries, offeringEntries] = await Promise.all([
-    collectPublishedPageSitemapEntries({ scope, siteSettings, mediaBaseOrigin }),
-    collectPublishedPostSitemapEntries({ scope, siteSettings, mediaBaseOrigin }),
-    collectPublishedOfferingSitemapEntries({ scope, siteSettings, mediaBaseOrigin }),
-  ]);
 
   const byKind: ReadonlyArray<readonly [SitemapKind, readonly SitemapUrlEntry[]]> = [
     ["pages", pageEntries],
@@ -1727,28 +1906,33 @@ export async function handleSubSitemapRequest(
   }
 
   const { scope } = scopeRes;
-  const [siteSettings, seoActive] = await Promise.all([
-    loadPublishedSiteSettings(scope.tenantDb),
-    isSeoAutopilotActive(scope.tenantDb),
-  ]);
+  let entries: SitemapUrlEntry[];
+  try {
+    const [siteSettings, seoActive] = await Promise.all([
+      loadPublishedSiteSettings(scope.tenantDb),
+      isSeoAutopilotActive(scope.tenantDb),
+    ]);
 
-  if (!seoActive || !isTenantSitemapIndexable(scope, siteSettings)) {
-    return createNotFoundResponse(request, XML_CONTENT_TYPE);
-  }
+    if (!seoActive || !isTenantSitemapIndexable(scope, siteSettings)) {
+      return createNotFoundResponse(request, XML_CONTENT_TYPE);
+    }
 
-  if (parsedParam.kind === "posts" && siteSettings?.blogEnabled === false) {
-    return createNotFoundResponse(request, XML_CONTENT_TYPE);
-  }
-  if (parsedParam.kind === "offerings" && siteSettings?.catalogEnabled === false) {
-    return createNotFoundResponse(request, XML_CONTENT_TYPE);
-  }
+    if (parsedParam.kind === "posts" && siteSettings?.blogEnabled === false) {
+      return createNotFoundResponse(request, XML_CONTENT_TYPE);
+    }
+    if (parsedParam.kind === "offerings" && siteSettings?.catalogEnabled === false) {
+      return createNotFoundResponse(request, XML_CONTENT_TYPE);
+    }
 
-  const mediaBaseOrigin = resolveMediaBaseOrigin(deps.mediaPublicBaseUrl);
-  const entries = await collectSitemapEntriesForKind(parsedParam.kind, {
-    scope,
-    siteSettings,
-    mediaBaseOrigin,
-  });
+    const mediaBaseOrigin = resolveMediaBaseOrigin(deps.mediaPublicBaseUrl);
+    entries = await collectSitemapEntriesForKind(parsedParam.kind, {
+      scope,
+      siteSettings,
+      mediaBaseOrigin,
+    });
+  } catch {
+    return createUnavailableResponse(request, 60, { contentType: XML_CONTENT_TYPE });
+  }
 
   const chunks = chunkSitemapUrlEntries(entries, {
     maxUrls: deps.maxUrlsPerSitemap,
@@ -1832,10 +2016,19 @@ export async function handleRobotsTxtRequest(
   }
 
   const { scope } = scopeRes;
-  const [siteSettings, seoActive] = await Promise.all([
-    loadPublishedSiteSettings(scope.tenantDb),
-    isSeoAutopilotActive(scope.tenantDb),
-  ]);
+  let siteSettings: SiteSettingsSnapshot | null;
+  let seoActive: boolean;
+  try {
+    [siteSettings, seoActive] = await Promise.all([
+      loadPublishedSiteSettings(scope.tenantDb),
+      isSeoAutopilotActive(scope.tenantDb),
+    ]);
+  } catch {
+    return createUnavailableResponse(request, 60, {
+      body: ROBOTS_DISALLOW_ALL_BODY,
+      contentType: TEXT_CONTENT_TYPE,
+    });
+  }
 
   const aiTrainingPolicy: AiTrainingPolicy = siteSettings?.aiTrainingPolicy ?? "allow";
   const siteVisibility: SiteVisibility = siteSettings?.siteVisibility ?? "public";
@@ -1913,7 +2106,12 @@ export async function handleBlogFeedRequest(
   }
 
   const { scope } = scopeRes;
-  const siteSettings = await loadPublishedSiteSettings(scope.tenantDb);
+  let siteSettings: SiteSettingsSnapshot | null;
+  try {
+    siteSettings = await loadPublishedSiteSettings(scope.tenantDb);
+  } catch {
+    return createUnavailableResponse(request, 60, { contentType: RSS_CONTENT_TYPE });
+  }
 
   // Absent (404) when the tenant's blog feature is disabled (PLAN §15.7, REQ-024)
   if (siteSettings?.blogEnabled === false) {
@@ -1929,90 +2127,95 @@ export async function handleBlogFeedRequest(
     readonly pubDateMs: number;
   }> = [];
 
-  let offset = 0;
-  while (selected.length < MAX_RSS_FEED_ITEMS && offset < MAX_SCAN_ROWS) {
-    const res = await scope.tenantDb
-      .prepare(
-        `SELECT id, slug, title, excerpt, published_body_json, primary_category_id,
-                author_id, cover_media_id, reading_time_minutes, show_toc, seo_json,
-                status, published_at, content_modified_at, deleted_at, version, updated_at
-         FROM posts
-         WHERE status = 'published'
-           AND deleted_at IS NULL
-           AND published_body_json IS NOT NULL
-         ORDER BY published_at DESC, id DESC
-         LIMIT ? OFFSET ?`,
-      )
-      .bind(QUERY_BATCH_LIMIT, offset)
-      .all<RawPostPublishedRow>();
+  let resolvedMedia: Map<number, ResolvedMediaImage>;
+  try {
+    let offset = 0;
+    while (selected.length < MAX_RSS_FEED_ITEMS && offset < MAX_SCAN_ROWS) {
+      const res = await scope.tenantDb
+        .prepare(
+          `SELECT id, slug, title, excerpt, published_body_json, primary_category_id,
+                  author_id, cover_media_id, reading_time_minutes, show_toc, seo_json,
+                  status, published_at, content_modified_at, deleted_at, version, updated_at
+           FROM posts
+           WHERE status = 'published'
+             AND deleted_at IS NULL
+             AND published_body_json IS NOT NULL
+           ORDER BY published_at DESC, id DESC
+           LIMIT ? OFFSET ?`,
+        )
+        .bind(QUERY_BATCH_LIMIT, offset)
+        .all<RawPostPublishedRow>();
 
-    if (res.results.length === 0) break;
-    offset += res.results.length;
+      if (res.results.length === 0) break;
+      offset += res.results.length;
 
-    for (const row of res.results) {
-      if (selected.length >= MAX_RSS_FEED_ITEMS) break;
+      for (const row of res.results) {
+        if (selected.length >= MAX_RSS_FEED_ITEMS) break;
 
-      let dto: PublishedResourceDto<"post"> | null;
-      try {
-        dto = extractPublishedSnapshot("post", {
-          resourceId: Number(row.id),
-          status: row.status,
-          deletedAt: row.deleted_at,
-          publishedJson: row.published_body_json,
-          publishedAt: row.published_at,
-          contentModifiedAt: row.content_modified_at,
-          version: Number(row.version),
-          updatedAt: Number(row.updated_at),
+        let dto: PublishedResourceDto<"post"> | null;
+        try {
+          dto = extractPublishedSnapshot("post", {
+            resourceId: Number(row.id),
+            status: row.status,
+            deletedAt: row.deleted_at,
+            publishedJson: row.published_body_json,
+            publishedAt: row.published_at,
+            contentModifiedAt: row.content_modified_at,
+            version: Number(row.version),
+            updatedAt: Number(row.updated_at),
+          });
+        } catch {
+          continue;
+        }
+        if (!dto) continue;
+
+        // Exclude posts with explicit per-resource `noindex: true`
+        if (dto.data.seo?.noindex === true) continue;
+
+        const decision = resolvePublishedResourceSeoDecision({
+          tenant: scope.seoTenant,
+          siteSettings,
+          resource: dto,
+          canonicalOverride: dto.data.seo?.canonicalOverride ?? null,
         });
-      } catch {
-        continue;
-      }
-      if (!dto) continue;
 
-      // Exclude posts with explicit per-resource `noindex: true`
-      if (dto.data.seo?.noindex === true) continue;
+        if (decision.httpStatus !== 200 || !decision.canonical) continue;
+        // On active paid sites, enforce full sitemap/indexability eligibility
+        if (scope.tenant.status !== "trial" && siteSettings?.siteVisibility !== "noindex") {
+          if (!decision.sitemapEligible) continue;
+        }
 
-      const decision = resolvePublishedResourceSeoDecision({
-        tenant: scope.seoTenant,
-        siteSettings,
-        resource: dto,
-        canonicalOverride: dto.data.seo?.canonicalOverride ?? null,
-      });
+        const pubDateMs = dto.publishedAt ?? dto.contentModifiedAt ?? 0;
+        if (pubDateMs <= 0) continue;
 
-      if (decision.httpStatus !== 200 || !decision.canonical) continue;
-      // On active paid sites, enforce full sitemap/indexability eligibility
-      if (scope.tenant.status !== "trial" && siteSettings?.siteVisibility !== "noindex") {
-        if (!decision.sitemapEligible) continue;
+        selected.push({
+          dto,
+          canonical: decision.canonical,
+          pubDateMs,
+        });
       }
 
-      const pubDateMs = dto.publishedAt ?? dto.contentModifiedAt ?? 0;
-      if (pubDateMs <= 0) continue;
-
-      selected.push({
-        dto,
-        canonical: decision.canonical,
-        pubDateMs,
-      });
+      if (res.results.length < QUERY_BATCH_LIMIT) break;
     }
 
-    if (res.results.length < QUERY_BATCH_LIMIT) break;
-  }
-
-  // Batch-load featured cover images for the selected posts
-  const coverMediaIds = new Set<number>();
-  for (const item of selected) {
-    if (item.dto.data.coverMediaId) {
-      coverMediaIds.add(item.dto.data.coverMediaId);
+    // Batch-load featured cover images for the selected posts
+    const coverMediaIds = new Set<number>();
+    for (const item of selected) {
+      if (item.dto.data.coverMediaId) {
+        coverMediaIds.add(item.dto.data.coverMediaId);
+      }
     }
-  }
 
-  const mediaBaseOrigin = resolveMediaBaseOrigin(deps.mediaPublicBaseUrl);
-  const resolvedMedia = await loadVerifiedTenantImagesById(
-    scope.tenant.id,
-    scope.tenantDb,
-    coverMediaIds,
-    mediaBaseOrigin,
-  );
+    const mediaBaseOrigin = resolveMediaBaseOrigin(deps.mediaPublicBaseUrl);
+    resolvedMedia = await loadVerifiedTenantImagesById(
+      scope.tenant.id,
+      scope.tenantDb,
+      coverMediaIds,
+      mediaBaseOrigin,
+    );
+  } catch {
+    return createUnavailableResponse(request, 60, { contentType: RSS_CONTENT_TYPE });
+  }
 
   const feedItems: RssFeedItemEntry[] = [];
   for (const item of selected) {

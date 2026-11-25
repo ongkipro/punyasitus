@@ -17,9 +17,15 @@ export interface Props {
   readonly contract: PublicThemeRouteShellContract;
   readonly pageTitle?: string;
   readonly pageDescription?: string;
+  /**
+   * When `true`, `<slot name="head" />` (e.g. `<PublicSeoHead>`) is the single authoritative
+   * emitter for title, description, robots, canonical, OG, verification meta, RSS, and JSON-LD —
+   * matching `DefaultLayout`'s `managedHead` contract and preventing duplicate head tags.
+   */
+  readonly managedHead?: boolean;
 }
 
-const { contract, pageTitle, pageDescription } = Astro.props;
+const { contract, pageTitle, pageDescription, managedHead = false } = Astro.props;
 const isCustomActive =
   !contract.resolution.fallbackUsed &&
   contract.resolution.resolvedTheme.id === SAMPLE_AGENCY_THEME_ID;
@@ -29,6 +35,7 @@ const isCustomActive =
   shell={contract.shell}
   pageTitle={pageTitle}
   pageDescription={pageDescription}
+  managedHead={managedHead}
   currentPath={contract.pathname}
   privacyPolicyUrl={contract.consent.privacyPolicyUrl}
   showConsent={contract.consent.required}
@@ -38,13 +45,17 @@ const isCustomActive =
   headerCtaLabel={contract.headerCtaLabel}
   headerCtaHref={contract.headerCtaHref}
 >
-  <SEOHead
-    slot="head"
-    metadata={contract.seoMetadata}
-    jsonLd={contract.schemaGraph ?? undefined}
-    omitTitle={true}
-    omitDescription={true}
-  />
+  {managedHead ? (
+    <slot name="head" slot="head" />
+  ) : (
+    <SEOHead
+      slot="head"
+      metadata={contract.seoMetadata}
+      jsonLd={contract.schemaGraph ?? undefined}
+      omitTitle={true}
+      omitDescription={true}
+    />
+  )}
 
   {isCustomActive ? (
     <div

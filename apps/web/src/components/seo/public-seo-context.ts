@@ -4,6 +4,7 @@ import {
   type PublicBranchViewInput,
 } from "@punyasitus/core/branches/index";
 import type { TocHeadingEntry } from "@punyasitus/core/content/index";
+import type { PublishedFormDefinition } from "@punyasitus/core/forms/index";
 import type { SocialMetadataDto } from "@punyasitus/core/og-generator";
 import {
   generateSchemaGraph,
@@ -24,11 +25,13 @@ import {
   sanitizeTenantLocalHref,
   type PublicAuthorProfileDto,
 } from "@punyasitus/core/seo/local-entity";
+import { getTenantGtmKillSwitchStatus } from "@punyasitus/db/analytics-settings/index";
 import { getPublicAuthorById } from "@punyasitus/db/authors/index";
 import {
   createTenantDb,
   openTenantStoreStub,
 } from "@punyasitus/db/connections";
+import { getPublishedTenantFormBySlug } from "@punyasitus/db/forms/index";
 import {
   getPublishedPublicSeoContext,
   loadPublishedTenantInternalLinkTargets,
@@ -90,6 +93,8 @@ export interface PublishedTaxonomyChipLink {
 export interface EnrichedPublicPageData {
   readonly head: PublicSeoHeadProps;
   readonly activeBranches: readonly PublicBranchViewInput[];
+  readonly publishedForms: Readonly<Record<string, PublishedFormDefinition>>;
+  readonly operatorKillSwitchActive: boolean;
   readonly shouldRenderStandaloneBranches: boolean;
   readonly schemaGraph: SchemaGraphDocument | null;
 }
@@ -312,11 +317,66 @@ function resolvePublishedCatalogCta(params: {
  * - `resolvePublishSafeSchemaType` gating (e.g. `FAQPage` only when visible FAQ exists)
  * - Published Search Appearance templates, webmaster verification tags, and RSS discovery link
  */
+async function loadPublishedFormsForPageSections(
+  deps: PublicRouteDeps,
+  tenantId: string,
+  sections: unknown,
+): Promise<Readonly<Record<string, PublishedFormDefinition>>> {
+  if (!Array.isArray(sections) || sections.length === 0) return {};
+  const slugs = new Set<string>();
+  for (const raw of sections) {
+    if (!raw || typeof raw !== "object") continue;
+    const rec = raw as Record<string, unknown>;
+    const type = rec.type ?? rec.kind;
+    if (type !== "custom_form") continue;
+    const cfg = rec.config && typeof rec.config === "object" ? (rec.config as Record<string, unknown>) : rec;
+    const slug = typeof cfg.formSlug === "string" ? cfg.formSlug.trim().toLowerCase() : "";
+    if (slug && slug !== "contact") {
+      slugs.add(slug);
+    }
+  }
+  if (slugs.size === 0) return {};
+  const tenantDb = resolveTenantDbFromDeps(deps, tenantId);
+  if (!tenantDb) return {};
+  const loaded: Record<string, PublishedFormDefinition> = {};
+  await Promise.all(
+    Array.from(slugs).map(async (slug) => {
+      try {
+        const res = await getPublishedTenantFormBySlug(tenantDb, slug);
+        if (res?.definition) {
+          loaded[slug] = res.definition;
+        }
+      } catch {
+        // Degrade safely to CTA fallback when tenant_forms table is unavailable
+      }
+    }),
+  );
+  return loaded;
+}
+
+async function resolveGtmKillSwitchSafe(
+  deps: PublicRouteDeps,
+  tenantId: string,
+  hasAnalyticsConfig: boolean,
+): Promise<boolean> {
+  if (!hasAnalyticsConfig || !deps.platformDb) return false;
+  try {
+    const status = await getTenantGtmKillSwitchStatus(deps.platformDb, tenantId);
+    return status.disabled;
+  } catch {
+    return true;
+  }
+}
+
 export async function enrichPublicPageRouteResult(
   result: PublicPageRenderResult,
   deps: PublicRouteDeps,
 ): Promise<EnrichedPublicPageData> {
-  const seoCtx = await loadPublicSeoCtxSafe(deps, result.tenant.id);
+  const [seoCtx, publishedForms, operatorKillSwitchActive] = await Promise.all([
+    loadPublicSeoCtxSafe(deps, result.tenant.id),
+    loadPublishedFormsForPageSections(deps, result.tenant.id, result.page?.sections),
+    resolveGtmKillSwitchSafe(deps, result.tenant.id, Boolean(result.shell.site.analyticsConfig)),
+  ]);
   const activeBranches = seoCtx?.activeBranches ?? [];
   const hasExplicitBranchesSection = hasEnabledBranchesSection(result.page?.sections);
   const shouldRenderStandaloneBranches =
@@ -393,6 +453,8 @@ export async function enrichPublicPageRouteResult(
       },
     }),
     activeBranches,
+    publishedForms,
+    operatorKillSwitchActive,
     shouldRenderStandaloneBranches,
     schemaGraph,
   };

@@ -1,7 +1,14 @@
 ---
 import "../../styles/site/tokens.css";
 import "../../styles/site/base.css";
+import {
+  parseStoredAnalyticsSettings,
+  type DirectAnalyticsConfig,
+  type GtmPageType,
+  type StoredAnalyticsSettings,
+} from "@punyasitus/core/analytics/config";
 import { sanitizeNavigationHref } from "@punyasitus/core/content/index";
+import AnalyticsHead from "../../components/AnalyticsHead.astro";
 import Consent, {
   type MapEmbedConfig,
   type VendorScriptSlot,
@@ -37,6 +44,11 @@ export interface Props {
   readonly logoHeight?: number;
   readonly headerCtaLabel?: string | null;
   readonly headerCtaHref?: string | null;
+  readonly analyticsConfig?: Partial<DirectAnalyticsConfig> | null;
+  readonly gtmConfig?: Partial<StoredAnalyticsSettings> | null;
+  readonly operatorKillSwitchActive?: boolean;
+  readonly pageType?: GtmPageType;
+  readonly contentId?: string | null;
 }
 
 const {
@@ -57,7 +69,20 @@ const {
   logoHeight = 36,
   headerCtaLabel = null,
   headerCtaHref = null,
+  analyticsConfig,
+  gtmConfig,
+  operatorKillSwitchActive = false,
+  pageType = "page",
+  contentId = null,
 } = Astro.props;
+
+const parsedShellAnalytics =
+  shell.site.analyticsConfig && typeof shell.site.analyticsConfig === "object"
+    ? parseStoredAnalyticsSettings(shell.site.analyticsConfig)
+    : null;
+const resolvedGtmConfig = gtmConfig !== undefined ? gtmConfig : parsedShellAnalytics;
+const resolvedDirectAnalytics =
+  analyticsConfig !== undefined ? analyticsConfig : parsedShellAnalytics;
 
 // Defensively re-validate theme tokens before SSR inline injection so malformed
 // or untrusted shell props can never emit executable CSS or break out of <style>.
@@ -153,6 +178,16 @@ function isCurrentNavPath(href: string, activePath: string): boolean {
       <meta name="robots" content="noindex, nofollow" />
     )}
     <slot name="head" />
+    <AnalyticsHead
+      config={resolvedDirectAnalytics}
+      gtmConfig={resolvedGtmConfig}
+      operatorKillSwitchActive={operatorKillSwitchActive}
+      surface={shell.isPreview ? "preview" : "tenant"}
+      isPreview={shell.isPreview}
+      initialCookieHeader={initialCookieHeader}
+      pageType={pageType}
+      contentId={contentId}
+    />
     <style is:inline set:html={safeTheme.css} />
   </head>
   <body

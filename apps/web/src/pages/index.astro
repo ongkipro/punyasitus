@@ -144,6 +144,9 @@ const consentCookieHeader =
     layoutMode={tenantHomeResult.layoutMode}
     currentPath={tenantHomeResult.currentPath}
     initialCookieHeader={consentCookieHeader}
+    operatorKillSwitchActive={enriched?.operatorKillSwitchActive ?? false}
+    pageType="home"
+    contentId={tenantHomeResult.page ? tenantHomeResult.page.slug : null}
   >
     <PublicSeoHead
       slot="head"
@@ -171,6 +174,8 @@ const consentCookieHeader =
         fallbackOfferings={tenantHomeResult.fallbackOfferings}
         fallbackPosts={tenantHomeResult.fallbackPosts}
         fallbackBranches={enriched?.activeBranches ?? []}
+        fallbackForms={enriched?.publishedForms ?? {}}
+        turnstileSiteKey={(env as unknown as { readonly TURNSTILE_SITE_KEY?: string }).TURNSTILE_SITE_KEY}
         businessName={tenantHomeResult.shell.business.name}
         fallbackBusiness={{
           address: tenantHomeResult.shell.business.address,

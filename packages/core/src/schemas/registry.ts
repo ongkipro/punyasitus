@@ -11,6 +11,7 @@ import {
 } from "./common.ts";
 import { CONSOLE_DOMAIN_MODULE } from "./console.ts";
 import { DOMAINS_DOMAIN_MODULE } from "./domains.ts";
+import { SHIPPED_EXTENSIONS_DOMAIN_MODULE } from "./extensions.ts";
 import { LEADS_EVENTS_DOMAIN_MODULE } from "./leads-events.ts";
 import { PUBLIC_DTO_SCHEMAS } from "./public-dto.ts";
 
@@ -27,6 +28,7 @@ const DOMAIN_MODULES: readonly DomainSchemaModule[] = [
   LEADS_EVENTS_DOMAIN_MODULE,
   BILLING_DOMAIN_MODULE,
   CONSOLE_DOMAIN_MODULE,
+  SHIPPED_EXTENSIONS_DOMAIN_MODULE,
 ];
 
 export const ROUTE_CONTRACTS: readonly RouteContract[] = DOMAIN_MODULES.flatMap(
@@ -42,6 +44,7 @@ export const ALL_COMPONENT_SCHEMAS: Readonly<Record<string, z.ZodType>> = {
   ...LEADS_EVENTS_DOMAIN_MODULE.schemas,
   ...BILLING_DOMAIN_MODULE.schemas,
   ...CONSOLE_DOMAIN_MODULE.schemas,
+  ...SHIPPED_EXTENSIONS_DOMAIN_MODULE.schemas,
 };
 
 const ERROR_RESPONSE_COMPONENTS: Readonly<Record<number, string>> = {
@@ -262,6 +265,8 @@ export function buildOpenApiDocument(): OpenApiDocument {
       { name: "Leads & Events", description: "Host-scoped anonymous tenant POST endpoints (/api/leads, /api/events, /api/abuse-report)" },
       { name: "Billing", description: "Owner/agency AutoLaris QRIS/VA subscription billing, coupons, and PDF receipts" },
       { name: "Console", description: "Superadmin platform operations on console.punyasitus.com" },
+      { name: "Agency & Affiliates", description: "Agency client portal, reseller billing, and affiliate referral/payout APIs" },
+      { name: "MCP & Platform", description: "Tenant MCP OAuth 2.1 endpoint, plugin webhooks, and platform health probes" },
     ],
     "x-punyasitus-roles": [...RoleSchema.options],
     "x-punyasitus-surfaces": [...SurfaceKindSchema.options],

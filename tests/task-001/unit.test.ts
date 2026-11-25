@@ -10,8 +10,8 @@ import {
   type SqlValue,
   type StorageLike,
 } from "@punyasitus/db/connections";
-import { PLATFORM_MIGRATIONS } from "@punyasitus/db/platform";
-import { TENANT_MIGRATIONS } from "@punyasitus/db/tenant";
+import { ALL_PLATFORM_MIGRATIONS, PLATFORM_MIGRATIONS } from "@punyasitus/db/platform";
+import { ALL_TENANT_MIGRATIONS, TENANT_MIGRATIONS } from "@punyasitus/db/tenant";
 import { describe, expect, it } from "vitest";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
@@ -34,6 +34,41 @@ describe("TASK-001 unit checks — SQL migration bundles & trigger-safe splitter
     expect(TENANT_MIGRATIONS).toHaveLength(1);
     expect(TENANT_MIGRATIONS[0]!.name).toBe("0001_initial_tenant");
     expect(TENANT_MIGRATIONS[0]!.sql).toBe(tenantSqlOnDisk);
+
+    // M1-FU-01: Consolidated M1 + M2 migration catalogs match EVERY .sql file on disk byte-for-byte
+    const platformFiles = fs
+      .readdirSync(path.join(ROOT, "packages/db/migrations/platform"))
+      .filter((f) => f.endsWith(".sql"))
+      .sort();
+    expect(ALL_PLATFORM_MIGRATIONS).toHaveLength(platformFiles.length);
+    for (let i = 0; i < platformFiles.length; i += 1) {
+      const file = platformFiles[i]!;
+      const descriptor = ALL_PLATFORM_MIGRATIONS[i]!;
+      expect(descriptor.name).toBe(file.replace(/\.sql$/, ""));
+      expect(descriptor.sql).toBe(
+        fs.readFileSync(path.join(ROOT, "packages/db/migrations/platform", file), "utf8"),
+      );
+      if (i > 0) {
+        expect(descriptor.version).toBeGreaterThan(ALL_PLATFORM_MIGRATIONS[i - 1]!.version);
+      }
+    }
+
+    const tenantFiles = fs
+      .readdirSync(path.join(ROOT, "packages/db/migrations/tenant"))
+      .filter((f) => f.endsWith(".sql"))
+      .sort();
+    expect(ALL_TENANT_MIGRATIONS).toHaveLength(tenantFiles.length);
+    for (let i = 0; i < tenantFiles.length; i += 1) {
+      const file = tenantFiles[i]!;
+      const descriptor = ALL_TENANT_MIGRATIONS[i]!;
+      expect(descriptor.name).toBe(file.replace(/\.sql$/, ""));
+      expect(descriptor.sql).toBe(
+        fs.readFileSync(path.join(ROOT, "packages/db/migrations/tenant", file), "utf8"),
+      );
+      if (i > 0) {
+        expect(descriptor.version).toBeGreaterThan(ALL_TENANT_MIGRATIONS[i - 1]!.version);
+      }
+    }
   });
 
   it("splits SQLite migrations safely across comments, quoted semicolons, and CREATE TRIGGER blocks", () => {
