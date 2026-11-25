@@ -63,8 +63,8 @@ describe("TASK-078 Pre-Launch Security Assurance Contract & Evidence Verificatio
       expect(md).toMatch(new RegExp(`^## V${v}\\s+—`, "m"));
     }
     expect(md).toContain("`NOT_APPLICABLE`");
-    // V13.2 ZAP CI baseline must be honestly VERIFIED_STATIC until executed on a live CI runner
-    expect(md).toMatch(/\|\s*`V13\.2`[\s\S]*?\|\s*`VERIFIED_STATIC`\s*\|/);
+    // V13.2 ZAP CI baseline verified on live hosted GitHub Actions runner (run 45577200637)
+    expect(md).toMatch(/\|\s*`V13\.2`[\s\S]*?\|\s*`VERIFIED_AUTOMATED`\s*\|/);
     // Post-hardening resolved controls (SEC-001..SEC-006) are VERIFIED_AUTOMATED
     for (const controlId of ["V1.5", "V3.2", "V3.3", "V3.4", "V5.3", "V6.4", "V16.3"]) {
       const escaped = controlId.replace(".", "\\.");

@@ -2,17 +2,18 @@
 
 - **Contract Authorities:** `PRD.md` (`REQ-078`), `DECISIONS.md` (`DEC-032`), `docs/tasks/wave-8.md` (`TASK-078`)
 - **CI Workflow:** `.github/workflows/security.yml` (`zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25` / `v0.15.0`, targeting Host-routed `http://127.0.0.1:8787/auth/login` with ZAP replacer injecting `Host: app.punyasitus.com`)
-- **ZAP Ruleset:** `scripts/security/zap-rules.tsv` (explicit `FAIL` rules on High/Medium/cookie/XSS/SQLi/header checks; `IGNORE` only on 4 justified benign Low/Info rules; `fail_action: true`)
-- **Local Security Runner:** `scripts/security/run-security-suite.mjs` (post-hardening re-scan against commits `5cb5de1`, `1da5819`, `04e885a`: **`PASS` — 0 High, 0 Medium, 0 Low alerts**)
+- **ZAP Ruleset:** `scripts/security/zap-rules.tsv` (14 explicit `FAIL` rules on High/Medium/cookie/XSS/SQLi/header/CSP checks; `IGNORE` only on 9 explicitly justified benign Low/Info/SPA-JSON rules; `fail_action: true`)
+- **Hosted CI OWASP ZAP Baseline (`45577200637`, commit `6a4d6c1`, 2026-11-25):** **`PASS` — `PASS: 65`, `FAIL-NEW: 0`, `WARN-NEW: 0`, `INFO: 0`, `IGNORE: 6`** (`https://github.com/ongkipro/punyasitus/actions/runs/45577200637`)
+- **Local Security Runner:** `scripts/security/run-security-suite.mjs` (post-hardening re-scan against commits `5cb5de1`, `1da5819`, `04e885a`, `6a4d6c1`: **`PASS` — 0 High, 0 Medium, 0 Low alerts**)
 
 ---
 
-## 1. Execution Boundary (Honest Separation of Local vs. Live Staging Evidence)
+## 1. Execution Boundary (Honest Separation of Local, Hosted CI & Live Staging Evidence)
 
 | Environment / Scan Type | Status | Evidence Source |
 |---|---|---|
-| **Local Built-Worker HTTP DAST, Header Audit & 50-Endpoint Cross-Tenant BOLA Probe** | **EXECUTED (`PASS`: all isolation & attack probes passed; 0 High, 0 Medium, 0 Low alerts = `0` total alerts after resolving `SEC-003` & `SEC-006` in `1da5819`)** | `node scripts/security/run-security-suite.mjs` against real built `apps/web/dist/server/wrangler.json` (`2026-11-24`, post-hardening `04e885a`) |
-| **CI OWASP ZAP Baseline Workflow (`.github/workflows/security.yml`)** | **CONFIGURED & `actionlint`-VERIFIED (`VERIFIED_STATIC`)** (runs on PR, push to `main`, weekly schedule, and `workflow_dispatch`; Host-routed to `app.punyasitus.com`) | `.github/workflows/security.yml`, `scripts/security/zap-rules.tsv` (Docker daemon available locally; `ghcr.io/zaproxy/zaproxy:stable` image not pre-cached locally so local run executed the built-Worker HTTP DAST scanner) |
+| **Local Built-Worker HTTP DAST, Header Audit & 50-Endpoint Cross-Tenant BOLA Probe** | **EXECUTED (`PASS`: all isolation & attack probes passed; 0 High, 0 Medium, 0 Low alerts = `0` total alerts after resolving `SEC-003` & `SEC-006` in `1da5819` & `6a4d6c1`)** | `node scripts/security/run-security-suite.mjs` against real built `apps/web/dist/server/wrangler.json` (`2026-11-25`, commit `6a4d6c1`) |
+| **Hosted CI OWASP ZAP Baseline Workflow (`.github/workflows/security.yml`)** | **EXECUTED ON HOSTED GITHUB ACTIONS (`VERIFIED_AUTOMATED` — `PASS`: `65` PASS, `0` FAIL-NEW, `0` WARN-NEW, `0` INFO, `6` IGNORE)** | Run `45577200637` (`https://github.com/ongkipro/punyasitus/actions/runs/45577200637`, commit `6a4d6c1`, 2026-11-25), `.github/workflows/security.yml`, `scripts/security/zap-rules.tsv` |
 | **Live Staging OWASP ZAP Full Active Scan (`EXT-10`)** | **`UNVERIFIED_STAGING_GATE`** | Blocked on authorized staging Cloudflare provisioning (`EXT-01`, `EXT-02`, `EXT-10`); MUST be executed and recorded here prior to authorized production cutover |
 
 ---
@@ -66,11 +67,16 @@
 
 **Explicit `FAIL` Rules & Accepted Benign `IGNORE` Rules (`scripts/security/zap-rules.tsv`):**
 - **Explicit `FAIL` (14 rules):** `10010`, `10011`, `10020`, `10021`, `10035`, `10038`, `10054`, `10055`, `40012`, `40014`, `40016`, `40017`, `40018`, `90022` — ensures CI fails cleanly on any unaccepted High/Medium/cookie/header/XSS/SQLi/error-disclosure alert.
-- **Accepted `IGNORE` (4 benign Info/Low rules):**
+- **Accepted `IGNORE` (9 justified benign Info/Low/SPA-JSON rules in `scripts/security/zap-rules.tsv`):**
   - `10027` (`IGNORE`): Benign HTML/JS build comment notice reviewed manually.
   - `10049` (`IGNORE`): Public marketing/tenant HTML edge caching is intentional (`caches.default` keyed by tenant + `cacheVersion`); private/API routes send `no-store`.
+  - `10094` (`IGNORE`): 128-bit Base64 CSP script nonces are emitted per response in `<script nonce="...">` and `Content-Security-Policy` headers; not sensitive data disclosure.
   - `10096` (`IGNORE`): Epoch timestamps in public JSON/sitemaps are non-sensitive metadata.
   - `10109` (`IGNORE`): Modern Web Application informational detection notice.
+  - `10111` (`IGNORE`): Passive ZAP detection of the public `/auth/login` authentication form; expected behavior.
+  - `10202` (`IGNORE`): Low-confidence passive HTML form token notice on React island `<form method="post">` auth forms that submit `application/json` via `fetch()` protected by server-side exact-`Origin` CSRF middleware (`apps/web/src/middleware/csrf.ts`), Better Auth `trustedOrigins`, and `SameSite=Lax` `__Host-` session cookies.
+  - `90004` (`IGNORE`): `Cross-Origin-Embedder-Policy: require-corp` is intentionally omitted so Cloudflare Turnstile, privacy-enhanced YouTube, Google Maps embeds, and tenant R2/CDN assets load cleanly.
+  - `90005` (`IGNORE`): ZAP spider requests omit browser `Sec-Fetch-*` headers; server-side CSRF and exact-`Origin` checks enforce mutation boundaries.
 
 ---
 

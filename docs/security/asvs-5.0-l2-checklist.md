@@ -125,7 +125,7 @@
 | Control Group | Control / Requirement | PunyaSitus Evidence (Files & Tests on Disk) | Status |
 |---|---|---|---|
 | `V13.1` | CI/CD supply-chain hardening: top-level `permissions: {}`, least-privilege `contents: read`, `persist-credentials: false`, 100% 40-char SHA-pinned GitHub Actions, frozen lockfile installs, zero `${{ secrets.* }}` | `.github/workflows/ci.yml`, `.github/workflows/security.yml`, `tests/task-078/unit.test.ts` | `VERIFIED_AUTOMATED` |
-| `V13.2` | OWASP ZAP baseline workflow configured in CI against Host-routed `app.punyasitus.com` with explicit High/Medium `FAIL` rules in `zap-rules.tsv` (executes on GitHub Actions runner upon PR/push; not executed on a live CI runner in this local session) | `.github/workflows/security.yml`, `scripts/security/zap-rules.tsv`, `docs/security/zap-scan-report.md`, `tests/task-078/unit.test.ts` | `VERIFIED_STATIC` |
+| `V13.2` | OWASP ZAP baseline workflow executed on hosted GitHub Actions against Host-routed `app.punyasitus.com` with 14 explicit High/Medium `FAIL` rules in `zap-rules.tsv` (run `45577200637` on `6a4d6c1`: `PASS: 65`, `FAIL-NEW: 0`, `WARN-NEW: 0`, `INFO: 0`, `IGNORE: 6`; live staging full scan remains `EXT-10`) | `.github/workflows/security.yml`, `scripts/security/zap-rules.tsv`, `docs/security/zap-scan-report.md`, `tests/task-078/unit.test.ts` | `VERIFIED_AUTOMATED` |
 | `V13.3` | Dotfile/probe rejection (`/.env`, `/.git/config`, `/wp-login.php`) in Worker routing & Cloudflare WAF declarative rules | `infra/cloudflare/topology.json`, `scripts/security/run-security-suite.mjs` | `VERIFIED_AUTOMATED` |
 
 ## V14 — Data Protection & UU PDP Privacy
