@@ -598,12 +598,14 @@ describe("TASK-107 workerd integration — Owner Full-Website Export Archive & S
     expect(fullText).not.toContain("Baju Beta");
 
     // 6. Link stops working after exact 24 hours -> 410 EXPORT_EXPIRED
-    //    (Simulate owner with an active session 24 hours later)
+    //    (Simulate owner with an active session 24 hours later; keep expires_at in the future
+    //     relative to wall-clock Date.now() so Better Auth getSession does not reject with 401.)
     const after24h = t0 + 1000 + EXPORT_LINK_TTL_MS;
+    const futureExpiresAt = Math.max(after24h, Date.now()) + 86_400_000;
     await env.PLATFORM_DB.prepare(
       "UPDATE sessions SET created_at = ?, updated_at = ?, expires_at = ? WHERE user_id = ?",
     )
-      .bind(after24h - 60_000, after24h - 60_000, after24h + 86_400_000, ownerA.userId)
+      .bind(after24h - 60_000, after24h - 60_000, futureExpiresAt, ownerA.userId)
       .run();
 
     const expiredDownload = await handleTenantExportDownloadRequest(

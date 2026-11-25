@@ -108,6 +108,7 @@ export function buildStrictPublicCspHeader(nonce?: string): string {
   return [
     "default-src 'self'",
     "base-uri 'self'",
+    "form-action 'self'",
     "object-src 'none'",
     "frame-ancestors 'self'",
     `script-src ${scriptSources.join(" ")}`,
@@ -122,9 +123,9 @@ export function buildStrictPublicCspHeader(nonce?: string): string {
 
 /**
  * Strict per-response nonced CSP profile for platform HTML surfaces (`marketing`, `app`, `console`).
- * Enforces `frame-ancestors 'self'`, `base-uri 'self'`, `object-src 'none'`, and zero `'unsafe-inline'`
- * in `script-src`, while supporting Turnstile, React/Astro island hydration via nonce, local blob
- * image/video previews for admin media uploads, and HTTPS API connections.
+ * Enforces `frame-ancestors 'self'`, `base-uri 'self'`, `form-action 'self'`, `object-src 'none'`,
+ * and zero `'unsafe-inline'` in `script-src`, while supporting Turnstile, React/Astro island hydration
+ * via nonce, local blob image/video previews for admin media uploads, and HTTPS API connections.
  */
 export function buildPlatformSurfaceCspHeader(nonce: string): string {
   if (!isValidCspNonce(nonce)) {
@@ -134,6 +135,7 @@ export function buildPlatformSurfaceCspHeader(nonce: string): string {
   return [
     "default-src 'self'",
     "base-uri 'self'",
+    "form-action 'self'",
     "object-src 'none'",
     "frame-ancestors 'self'",
     `script-src 'self' 'nonce-${nonce}' ${FIRST_PARTY_PLATFORM_ORIGINS.turnstile}`,
@@ -205,6 +207,7 @@ export function buildRelaxedGtmCspHeader(
   return [
     "default-src 'self'",
     "base-uri 'self'",
+    "form-action 'self'",
     "object-src 'none'",
     "frame-ancestors 'self'",
     `script-src ${scriptSources.join(" ")}`,

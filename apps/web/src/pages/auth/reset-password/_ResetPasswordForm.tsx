@@ -239,6 +239,7 @@ export function ResetPasswordForm({
             </div>
           ) : (
             <form
+              method="post"
               onSubmit={handleSetNewPassword}
               noValidate
               className="space-y-4"
@@ -357,6 +358,7 @@ export function ResetPasswordForm({
             )}
 
             <form
+              method="post"
               onSubmit={handleRequestReset}
               noValidate
               className="relative space-y-4"

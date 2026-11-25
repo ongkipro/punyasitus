@@ -26,5 +26,9 @@
 # --- Explicitly accepted benign Informational / Low rules (IGNORE) ---
 10027	IGNORE	Informational/Low: Benign HTML/JS build comment scanner notice reviewed manually; does not indicate secret leakage.
 10049	IGNORE	Informational: Public marketing and tenant HTML pages are intentionally edge-cacheable with tenant+cacheVersion keys; private/admin/API routes enforce Cache-Control: no-store.
+10094	IGNORE	Informational: 128-bit Base64 CSP script nonces are emitted per response in <script nonce="..."> and Content-Security-Policy headers; not sensitive data disclosure.
 10096	IGNORE	Informational: Numeric epoch timestamps appear intentionally in public sitemap/JSON metadata and do not disclose internal state.
 10109	IGNORE	Informational: Modern Web Application detection notice (Astro SSR + Base UI islands); not a security vulnerability.
+10111	IGNORE	Informational: Passive ZAP detection of the public /auth/login authentication form; expected application behavior.
+90004	IGNORE	Low: Cross-Origin-Embedder-Policy require-corp is intentionally omitted so Cloudflare Turnstile, privacy-enhanced YouTube, Google Maps embeds, and tenant R2/CDN assets load cleanly.
+90005	IGNORE	Informational: ZAP spider requests omit browser Sec-Fetch-Dest request headers; server-side CSRF and exact-Origin checks enforce mutation boundaries.

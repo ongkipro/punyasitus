@@ -243,6 +243,7 @@ export function LoginForm({
         </div>
 
         <form
+          method="post"
           onSubmit={handleSubmit}
           noValidate
           className="relative space-y-4"

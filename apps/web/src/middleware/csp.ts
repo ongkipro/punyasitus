@@ -156,6 +156,7 @@ async function isTenantGtmActiveForRequest(
 
 const BASELINE_REFERRER_POLICY = "strict-origin-when-cross-origin";
 const BASELINE_X_FRAME_OPTIONS = "SAMEORIGIN";
+const BASELINE_PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()";
 const CSP_NONCE_TOKEN_RE = /'nonce-([A-Za-z0-9+/=_-]{16,64})'/;
 
 function isWebSocketUpgradeResponse(response: Response): boolean {
@@ -175,6 +176,9 @@ function setBaselineSecurityHeadersOn(headers: Headers, isHtml: boolean): void {
     }
     if (!headers.has("X-Frame-Options")) {
       headers.set("X-Frame-Options", BASELINE_X_FRAME_OPTIONS);
+    }
+    if (!headers.has("Permissions-Policy")) {
+      headers.set("Permissions-Policy", BASELINE_PERMISSIONS_POLICY);
     }
   }
 }
@@ -209,8 +213,9 @@ export function applyBaselineSecurityHeaders(response: Response): Response {
   const needsNoSniff = !response.headers.has("X-Content-Type-Options");
   const needsReferrer = isHtml && !response.headers.has("Referrer-Policy");
   const needsFrameOptions = isHtml && !response.headers.has("X-Frame-Options");
+  const needsPermissionsPolicy = isHtml && !response.headers.has("Permissions-Policy");
 
-  if (!needsNoSniff && !needsReferrer && !needsFrameOptions) {
+  if (!needsNoSniff && !needsReferrer && !needsFrameOptions && !needsPermissionsPolicy) {
     return response;
   }
 
