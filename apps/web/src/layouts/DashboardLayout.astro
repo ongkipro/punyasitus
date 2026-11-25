@@ -113,8 +113,8 @@ if (!resolvedServiceAccess && Astro.locals.tenantEntitlement && Astro.locals.aut
       reasonParam === "trial_expired"
         ? "29 Des 2026, 17.00 WIB"
         : "07 Jan 2027, 23.59 WIB",
-    billingHref: `${basePath ?? ""}#langganan`,
-    leadsExportHref: `${basePath ?? ""}#ekspor-prospek`,
+    billingHref: `${(basePath ?? "").replace(/\/+$/, "")}/billing`,
+    leadsExportHref: `${(basePath ?? "").replace(/\/+$/, "")}/leads`,
     signOutHref: "/auth/login?signOut=1",
   };
 }

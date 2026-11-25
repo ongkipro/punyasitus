@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import {
   getMobileBottomTabs,
+  getSecondaryDrawerLinks,
   getSidebarNavItems,
 } from "../../apps/web/src/components/admin/navigation.ts";
 
@@ -131,6 +132,46 @@ describe("TASK-032: shadcn/ui Base UI lock & DEC-036 boundary guards", () => {
       expect(mobile.length).toBe(5);
       expect(mobile[4]?.opensMoreDrawer).toBe(true);
     }
+  });
+
+  it("maps dashboard, agency, and console navigation items to real routes rather than hash placeholders", () => {
+    const dashboardDesktop = getSidebarNavItems("dashboard", { basePath: "/dashboard/alpha-studio" });
+    expect(dashboardDesktop.map((i) => i.href)).toEqual([
+      "/dashboard/alpha-studio",
+      "/dashboard/alpha-studio/leads",
+      "/dashboard/alpha-studio/catalog",
+      "/dashboard/alpha-studio/pages",
+      "/dashboard/alpha-studio/posts",
+      "/dashboard/alpha-studio/media",
+      "/dashboard/alpha-studio/appearance",
+      "/dashboard/alpha-studio/plugins",
+      "/dashboard/alpha-studio/settings",
+    ]);
+
+    const dashboardMobile = getMobileBottomTabs("dashboard", { basePath: "/dashboard/alpha-studio" });
+    expect(dashboardMobile.slice(0, 4).map((i) => i.href)).toEqual([
+      "/dashboard/alpha-studio",
+      "/dashboard/alpha-studio/catalog",
+      "/dashboard/alpha-studio/leads",
+      "/dashboard/alpha-studio/appearance",
+    ]);
+
+    const dashboardSecondary = getSecondaryDrawerLinks("dashboard", "/dashboard/alpha-studio");
+    expect(dashboardSecondary.every((i) => !i.href.includes("#"))).toBe(true);
+    expect(dashboardSecondary.map((i) => i.href)).toContain("/dashboard/alpha-studio/seo");
+    expect(dashboardSecondary.map((i) => i.href)).toContain("/dashboard/alpha-studio/billing");
+
+    const agencyDesktop = getSidebarNavItems("agency", { basePath: "/agency" });
+    expect(agencyDesktop.every((i) => !i.href.includes("#"))).toBe(true);
+    expect(agencyDesktop.map((i) => i.href)).toContain("/agency/clients");
+    expect(agencyDesktop.map((i) => i.href)).toContain("/agency/billing");
+    expect(agencyDesktop.map((i) => i.href)).toContain("/agency/plugins");
+
+    const consoleDesktop = getSidebarNavItems("console", { basePath: "/console" });
+    expect(consoleDesktop.every((i) => !i.href.includes("#"))).toBe(true);
+    expect(consoleDesktop.map((i) => i.href)).toContain("/console/tenants");
+    expect(consoleDesktop.map((i) => i.href)).toContain("/console/jobs");
+    expect(consoleDesktop.map((i) => i.href)).toContain("/console/health");
   });
 
   it("excludes design-fixtures from production build output when dist exists", () => {

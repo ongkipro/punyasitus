@@ -63,7 +63,7 @@ export function getSidebarNavItems(
     unreadLeadsCount?: number;
   },
 ): NavItem[] {
-  const base = opts?.basePath ?? "";
+  const base = (opts?.basePath ?? "").replace(/\/+$/, "");
   const offeringLabel = opts?.offeringLabel?.trim() || "Layanan";
   const unread = opts?.unreadLeadsCount ?? 0;
 
@@ -71,96 +71,90 @@ export function getSidebarNavItems(
     case "dashboard":
       // Strict 9-item WordPress-familiar cap (DESIGN.md §3.1)
       return [
-        { id: "home", label: "Beranda", href: `${base}`, icon: "home" },
+        { id: "home", label: "Beranda", href: base || "/", icon: "home" },
         {
           id: "leads",
           label: "Pesan Masuk",
-          href: `${base}#pesan-masuk`,
+          href: `${base}/leads`,
           icon: "inbox",
           badgeCount: unread > 0 ? unread : undefined,
         },
         {
           id: "offering",
           label: offeringLabel,
-          href: `${base}#penawaran`,
+          href: `${base}/catalog`,
           icon: "briefcase",
         },
         {
           id: "pages",
           label: "Halaman",
-          href: `${base}#halaman`,
+          href: `${base}/pages`,
           icon: "file-text",
         },
         {
           id: "articles",
           label: "Artikel",
-          href: `${base}#artikel`,
+          href: `${base}/posts`,
           icon: "newspaper",
         },
         {
           id: "media",
           label: "Media",
-          href: `${base}#media`,
+          href: `${base}/media`,
           icon: "image",
         },
         {
           id: "theme",
           label: "Tema",
-          href: `${base}#tema`,
+          href: `${base}/appearance`,
           icon: "palette",
         },
         {
           id: "plugins",
           label: "Plugin",
-          href: `${base}#plugin`,
+          href: `${base}/plugins`,
           icon: "plug",
         },
         {
           id: "settings",
           label: "Pengaturan",
-          href: `${base}#pengaturan`,
+          href: `${base}/settings`,
           icon: "settings",
         },
       ];
 
     case "agency":
       return [
-        { id: "home", label: "Beranda", href: `${base}`, icon: "home" },
+        { id: "home", label: "Beranda", href: base || "/agency", icon: "home" },
         {
           id: "clients",
           label: "Daftar Klien",
-          href: `${base}#klien`,
+          href: `${base}/clients`,
           icon: "building",
         },
         {
           id: "billing",
           label: "Tagihan & Kuota",
-          href: `${base}#tagihan`,
+          href: `${base}/billing`,
           icon: "receipt",
         },
         {
-          id: "themes",
-          label: "Template & Tema",
-          href: `${base}#tema`,
-          icon: "palette",
-        },
-        {
-          id: "team",
-          label: "Tim Agensi",
-          href: `${base}#tim`,
-          icon: "users",
+          id: "plugins",
+          label: "Add-on Plugin",
+          href: `${base}/plugins`,
+          icon: "plug",
         },
         {
           id: "settings",
-          label: "Pengaturan",
-          href: `${base}#pengaturan`,
+          label: "Akun & Keamanan",
+          href: "/account",
           icon: "settings",
         },
       ];
 
     case "affiliate":
       return [
-        { id: "home", label: "Beranda", href: `${base}`, icon: "home" },
+        { id: "home", label: "Beranda", href: base || "/affiliate", icon: "home" },
         {
           id: "links",
           label: "Tautan Referral",
@@ -180,68 +174,62 @@ export function getSidebarNavItems(
           icon: "wallet",
         },
         {
-          id: "materials",
-          label: "Materi Promosi",
-          href: `${base}#materi`,
-          icon: "megaphone",
-        },
-        {
           id: "settings",
-          label: "Pengaturan",
-          href: `${base}#pengaturan`,
+          label: "Akun & Keamanan",
+          href: "/account",
           icon: "settings",
         },
       ];
 
     case "console":
       return [
-        { id: "home", label: "Ringkasan", href: `${base}`, icon: "home" },
+        { id: "home", label: "Ringkasan", href: base || "/console", icon: "home" },
         {
           id: "tenants",
           label: "Tenant",
-          href: `${base}#tenant`,
+          href: `${base}/tenants`,
           icon: "building",
         },
         {
           id: "agencies",
           label: "Agensi",
-          href: `${base}#agensi`,
+          href: `${base}/agencies`,
           icon: "users",
         },
         {
           id: "affiliates",
           label: "Afiliasi",
-          href: `${base}#afiliasi`,
+          href: `${base}/affiliates`,
           icon: "link",
         },
         {
           id: "domains",
           label: "Domain & SSL",
-          href: `${base}#domain`,
+          href: `${base}/domains`,
           icon: "globe",
         },
         {
           id: "queues",
           label: "Antrean & Jobs",
-          href: `${base}#antrean`,
+          href: `${base}/jobs`,
           icon: "layers",
         },
         {
           id: "audit",
           label: "Audit Log",
-          href: `${base}#audit`,
+          href: `${base}/audit`,
           icon: "shield-check",
         },
         {
           id: "status",
           label: "Status Layanan",
-          href: `${base}#status`,
+          href: `${base}/health`,
           icon: "activity",
         },
         {
           id: "settings",
           label: "Pengaturan",
-          href: `${base}#pengaturan`,
+          href: `${base}/settings`,
           icon: "settings",
         },
       ];
@@ -255,25 +243,25 @@ export function getMobileBottomTabs(
     unreadLeadsCount?: number;
   },
 ): MobileTabItem[] {
-  const base = opts?.basePath ?? "";
+  const base = (opts?.basePath ?? "").replace(/\/+$/, "");
   const unread = opts?.unreadLeadsCount ?? 0;
 
   switch (surface) {
     case "dashboard":
       // Exact 5-slot mobile bottom bar (DESIGN.md §3.1) sized to never truncate at 360px
       return [
-        { id: "home", label: "Beranda", href: `${base}`, icon: "home" },
+        { id: "home", label: "Beranda", href: base || "/", icon: "home" },
         {
           id: "offering",
           label: "Konten",
-          href: `${base}#penawaran`,
+          href: `${base}/catalog`,
           icon: "layout-grid",
         },
         {
           id: "leads",
           label: "Pesan",
           ariaLabel: "Pesan masuk",
-          href: `${base}#pesan-masuk`,
+          href: `${base}/leads`,
           icon: "inbox",
           badgeCount: unread > 0 ? unread : undefined,
         },
@@ -281,7 +269,7 @@ export function getMobileBottomTabs(
           id: "theme",
           label: "Tema",
           ariaLabel: "Tema dan Plugin",
-          href: `${base}#tema`,
+          href: `${base}/appearance`,
           icon: "palette",
         },
         {
@@ -294,24 +282,24 @@ export function getMobileBottomTabs(
 
     case "agency":
       return [
-        { id: "home", label: "Ringkasan", href: `${base}`, icon: "home" },
+        { id: "home", label: "Ringkasan", href: base || "/agency", icon: "home" },
         {
           id: "clients",
           label: "Klien",
-          href: `${base}#klien`,
+          href: `${base}/clients`,
           icon: "building",
         },
         {
           id: "billing",
           label: "Tagihan",
-          href: `${base}#tagihan`,
+          href: `${base}/billing`,
           icon: "receipt",
         },
         {
-          id: "themes",
-          label: "Tema",
-          href: `${base}#tema`,
-          icon: "palette",
+          id: "plugins",
+          label: "Plugin",
+          href: `${base}/plugins`,
+          icon: "plug",
         },
         {
           id: "more",
@@ -323,7 +311,7 @@ export function getMobileBottomTabs(
 
     case "affiliate":
       return [
-        { id: "home", label: "Ringkasan", href: `${base}`, icon: "home" },
+        { id: "home", label: "Ringkasan", href: base || "/affiliate", icon: "home" },
         {
           id: "links",
           label: "Tautan",
@@ -352,23 +340,23 @@ export function getMobileBottomTabs(
 
     case "console":
       return [
-        { id: "home", label: "Ringkasan", href: `${base}`, icon: "home" },
+        { id: "home", label: "Ringkasan", href: base || "/console", icon: "home" },
         {
           id: "tenants",
           label: "Tenant",
-          href: `${base}#tenant`,
+          href: `${base}/tenants`,
           icon: "building",
         },
         {
           id: "domains",
           label: "Domain",
-          href: `${base}#domain`,
+          href: `${base}/domains`,
           icon: "globe",
         },
         {
           id: "queues",
           label: "Antrean",
-          href: `${base}#antrean`,
+          href: `${base}/jobs`,
           icon: "layers",
         },
         {
@@ -385,12 +373,15 @@ export function getSecondaryDrawerLinks(
   surface: AdminSurface,
   basePath = "",
 ): NavItem[] {
+  const base = basePath.replace(/\/+$/, "");
   if (surface === "dashboard") {
     return [
-      { id: "seo", label: "SEO & Redirect", href: `${basePath}#seo`, icon: "globe" },
-      { id: "insights", label: "Statistik", href: `${basePath}#statistik`, icon: "activity" },
-      { id: "billing", label: "Langganan", href: `${basePath}#langganan`, icon: "receipt" },
-      { id: "security", label: "Akun & Keamanan", href: `${basePath}#keamanan`, icon: "shield-check" },
+      { id: "seo", label: "SEO & Redirect", href: `${base}/seo`, icon: "globe" },
+      { id: "insights", label: "Statistik", href: `${base}/insights`, icon: "activity" },
+      { id: "menus", label: "Menu Navigasi", href: `${base}/menus`, icon: "layout-grid" },
+      { id: "forms", label: "Formulir", href: `${base}/forms`, icon: "file-text" },
+      { id: "billing", label: "Langganan", href: `${base}/billing`, icon: "receipt" },
+      { id: "security", label: "Akun & Keamanan", href: "/account/security", icon: "shield-check" },
     ];
   }
   return [];
