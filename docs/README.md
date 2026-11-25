@@ -30,7 +30,8 @@ Clone both side by side. The code repository never links into the private one wi
 | [DECISIONS.md](../DECISIONS.md) | Decision index `DEC-001..DEC-048`; full ADRs in [adr/](adr/) |
 | [themes/THEME-DEVELOPMENT.md](themes/THEME-DEVELOPMENT.md) | Building a custom or premium theme |
 | [plugins/PLUGIN-DEVELOPMENT.md](plugins/PLUGIN-DEVELOPMENT.md) | Building a first-party plugin |
-| `api/` (from TASK-024) | OpenAPI contract generated from `packages/core` |
+| [api/README.md](api/README.md) & [api/openapi.json](api/openapi.json) | OpenAPI 3.1.1 contract (`258` paths; 100% parity with all `225` shipped `/api/**` + `/mcp` routes) & domain API docs |
+| [gtm/README.md](gtm/README.md) | First-party GTM container template & consent-gated analytics guide |
 
 ### Execution: how work moves
 
@@ -45,11 +46,12 @@ Clone both side by side. The code repository never links into the private one wi
 
 | Document | Owns |
 |---|---|
-| [ARCHITECTURE.md](../ARCHITECTURE.md) | System map as built; outranks PLAN where code and plan differ |
-| [BUILD-LOG.md](../BUILD-LOG.md) | Durable implementation notes and evidence, append-only |
-| [RELEASE.md](../RELEASE.md) | Current release boundary, risk, rollback |
+| [ARCHITECTURE.md](../ARCHITECTURE.md) | System map as built (topology diagram, surface/route map, capabilities & CI proof); outranks PLAN where code and plan differ |
+| [BUILD-LOG.md](../BUILD-LOG.md) | Durable implementation notes and evidence, append-only (archives in [archive/](archive/)) |
+| [RELEASE.md](../RELEASE.md) | Current release boundary (`punyasitus-v1.0.0-rc1`), risk, rollback & pre-deploy external blockers |
 | [OBSERVABILITY.md](../OBSERVABILITY.md) | Post-deploy probes |
-| `operations/`, `security/` (later tasks) | Runbooks and security evidence |
+| [operations/release-checklist.md](operations/release-checklist.md) | Full M1+M2 release gate checklist, `M1-FU-01..08`, and external launch gates (`EXT-01..10`) — plus runbooks in `docs/operations/` (`release.md`, `backup-restore.md`, `hosting.md`, `billing.md`, `email.md`, `mcp.md`, `privacy.md`, `seo-launch.md`, `telemetry-release.md`, `trust-positif.md`, `platform-access.md`) |
+| [security/asvs-5.0-l2-checklist.md](security/asvs-5.0-l2-checklist.md) | Pre-launch security assurance pack: OWASP ASVS 5.0 L2 (`0` `FINDING_REOPEN_REQUIRED`), [surface-inventory.json](security/surface-inventory.json) (`375` routes), [findings-register.md](security/findings-register.md) (`SEC-001..006` `RESOLVED_VERIFIED`), and [zap-scan-report.md](security/zap-scan-report.md) (hosted OWASP ZAP Baseline `PASS`) |
 
 ### Code boundaries
 
@@ -58,11 +60,12 @@ Each module folder has a README naming its owner contract and rules: [apps/web](
 ### Checks
 
 ```bash
-python3 scripts/check-spec.py        # requirements, tasks, index/contract agreement, links, 50 KB budget
-python3 scripts/test-check-spec.py   # checker self-tests
+pnpm spec:check                               # requirements, tasks, index/contract agreement, links, 50 KB budget
+pnpm lint && pnpm typecheck && pnpm build     # ESLint, Astro/TS typecheck, SSR Worker build & Wrangler budget
+pnpm test:unit && pnpm test:integration       # 110 unit suites + 94 Cloudflare workerd D1/DO integration suites
+node scripts/security/run-security-suite.mjs  # 375-route parity + 50-endpoint BOLA + local built-Worker DAST
+node scripts/verify/release-gate.mjs          # Full M1 + M2 static release gate (109 tasks)
 ```
-
-Application checks (`pnpm lint`, `typecheck`, `test:*`, `build`) arrive with TASK-023.
 
 ## Research and history (private `punyasitus-docs`)
 

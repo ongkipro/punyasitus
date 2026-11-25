@@ -1,7 +1,7 @@
 # PunyaSitus
 
-> **Status:** Specification complete, all decisions final (DEC-001..DEC-048); development awaits authorization | **Repository:** public `ongkipro/punyasitus`; research in private `punyasitus-docs` (DEC-044)
-> **Planned stack:** 100% Cloudflare (aligned with `adsbook.id`): Astro SSR + React islands (`shadcn/ui` `base-nova` / `@base-ui/react`) on one Cloudflare Worker, Cloudflare for SaaS (`situsku.click`), `PLATFORM_DB` (D1) + `TenantStore` (SQLite Durable Object per website), Drizzle ORM, Better Auth (Google OAuth + TOTP + MCP), R2 + Images + Containers (`ffmpeg`), Queues (ADR-0009, accepted) | **Started:** 2026-09-26
+> **Status:** **M1 + M2 Release Candidate complete (`109 / 110` roadmap tasks; `4 / 4` hosted GitHub Actions workflows GREEN; `TASK-062` deferred to Release 1.1 per `DEC-035 C16`)** — live Cloudflare/provider/legal gates (`EXT-01..EXT-10`) await owner authorization | **Repository:** public `ongkipro/punyasitus`; research in private `punyasitus-docs` (DEC-044)
+> **Implemented stack:** 100% Cloudflare (aligned with `adsbook.id`): Astro 7 SSR + React 19 islands (`shadcn/ui` `base-nova` / `@base-ui/react`) on one Cloudflare Worker, Cloudflare for SaaS (`situsku.click`), `PLATFORM_DB` (D1, `0001..0033`) + `TenantStore` (SQLite Durable Object per website, `0001..0024`), Drizzle ORM, Better Auth (Google OAuth + TOTP + MCP OAuth 2.1), R2 + Images + Containers (`ffmpeg` stub), Queues + Cron (ADR-0009) | **Started:** 2026-09-26
 
 ## Overview
 
@@ -18,7 +18,7 @@ Four host-isolated surfaces run in one Astro Worker application (ADR-0007, ADR-0
 
 Business model: one website per subscription, 7-day free trial (DEC-023), IDR 179,000 per calendar month or IDR 1,790,000 per year plus the payment channel fee (DEC-035), paid through AutoLaris (DEC-006, DEC-010). Custom brand theme development is the core paid service (DEC-015), requested from the theme menu (DEC-013) and built by following [docs/themes/THEME-DEVELOPMENT.md](./docs/themes/THEME-DEVELOPMENT.md). SEO matches WordPress + All in One SEO, built in (DEC-016).
 
-No feature listed here is implemented yet. Requirements become features only when their tasks pass executable checks.
+All 109 M1 + M2 launch-scope tasks, 6 tracked security findings (`SEC-001..006`), and 8 pre-staging polish items (`M1-FU-01..08`) are implemented and verified locally and on hosted GitHub Actions (`CI`, `Security Assurance`, `Staged Release Dry-Run`, `Production Release Gate`). Live production deployment remains gated behind owner-authorized external staging, provider, and legal checks (`EXT-01..EXT-10` in [docs/operations/release-checklist.md](./docs/operations/release-checklist.md)).
 
 ## Documents
 
@@ -35,7 +35,7 @@ Each document owns its subject; do not restate one inside another.
 - 📝 [DECISIONS.md](./DECISIONS.md) — decision register and [ADRs](./docs/adr/)
 - 🧩 [docs/themes/THEME-DEVELOPMENT.md](./docs/themes/THEME-DEVELOPMENT.md) — how to build a custom brand theme (humans and AI agents) · [docs/plugins/PLUGIN-DEVELOPMENT.md](./docs/plugins/PLUGIN-DEVELOPMENT.md) — plugins
 - 📊 [STATUS.md](./STATUS.md) — current workflow state
-- 🏗️ [ARCHITECTURE.md](./ARCHITECTURE.md) — the shape actually built (empty until code exists)
+- 🏗️ [ARCHITECTURE.md](./ARCHITECTURE.md) — system map as built (topology diagram, surface/route map, workspace layout, capabilities & CI proof)
 - 🚀 [RELEASE.md](./RELEASE.md) · 📡 [OBSERVABILITY.md](./OBSERVABILITY.md) · 📜 [BUILD-LOG.md](./BUILD-LOG.md)
 
 ## Repository layout
@@ -67,42 +67,22 @@ docs/operations, docs/security   Runbooks and security evidence (later tasks)
 .delivery               delivery-ledger evidence (tool-owned)
 ```
 
-## Specification checks
+## Verification checks
 
 ```bash
-python3 scripts/check-spec.py        # requirements, tasks, index/contract agreement, dependencies, links, 50 KB budget
-python3 scripts/test-check-spec.py   # checker self-tests
-```
-
-These prove document structure and traceability only, not application behavior. Application scripts (`pnpm lint`, `typecheck`, `test:*`, `build`) are defined by TASK-023 and do not exist yet.
-
-## Starting development
-
-Development starts only on explicit authorization from Paduka Ongki. Then:
-
-1. Begin with TASK-023 (workspace bootstrap and `workerd` + `TenantStore` DO + `base-nova` spike), then follow `TASKS.md` dependencies through phase M1 (checkpoint TASK-063) and phase M2 to the full release gate TASK-038.
-2. Use local `workerd` (`wrangler dev` / `astro dev`), local D1 (`PLATFORM_DB`), local SQLite Durable Objects (`TenantStore`), local R2, two synthetic tenants, a local mail sink and provider mocks (fake Cloudflare custom-hostname API, fake AutoLaris).
-3. Record evidence in `STATUS.md`, `BUILD-LOG.md` and `.delivery/` per task; never claim completion from a build alone.
-
-Reusable instruction for an AI terminal session:
-
-```text
-Continue PunyaSitus from its repository documents.
-Read AGENTS.md, STATUS.md, PRD.md, DECISIONS.md, PLAN.md, DESIGN.md and TASKS.md.
-Inspect source and executable evidence before assuming a task is complete.
-Select the next authorized dependency-ready task and state the relevant gate.
-Implement within its allowed paths, preserve tenant, host-surface and privacy
-boundaries, run its checks and relevant browser checks, then record evidence.
-Do not invent provider APIs, approvals, credentials, test results or deployment.
-Do not commit, push or deploy without authorization.
+pnpm spec:check                               # requirements, tasks, index/contract agreement, dependencies, links, 50 KB budget
+pnpm lint && pnpm typecheck && pnpm build     # ESLint, Astro/TS typecheck, SSR Worker build & Wrangler budget
+pnpm test:unit && pnpm test:integration       # 110 unit suites + 94 Cloudflare workerd D1/DO integration suites
+node scripts/security/run-security-suite.mjs  # 375-route parity, 50-endpoint cross-tenant BOLA & local DAST
+node scripts/verify/release-gate.mjs          # Full M1 + M2 static release gate (109 tasks)
 ```
 
 ## Open gates
 
-No product decision is open (DEC-045..DEC-048). What remains needs accounts, a live run or a qualified reviewer, and none of it blocks local development: staging infrastructure and the three live verifications in `STATUS.md`, and the legal and tax pre-launch gates of DEC-047. PLAN section 1 owns the list.
+No product decision is open (DEC-045..DEC-048), and all local/CI M1 + M2 engineering gates pass (`4 / 4` hosted GitHub Actions workflows GREEN). What remains requires live accounts, owner authorization, or legal counsel: external staging/provider/legal gates `EXT-01..EXT-10` ([docs/operations/release-checklist.md](./docs/operations/release-checklist.md)) and the three live verifications in [STATUS.md](./STATUS.md).
 
 ## Environment
 
-- **Production:** not provisioned
-- **Staging:** not provisioned
-- **Local:** not set up (TASK-023)
+- **Production:** not provisioned (`EXT-01..EXT-10` gated)
+- **Staging:** not provisioned (`EXT-01..EXT-06` awaiting owner authorization)
+- **Local & Hosted CI:** active & verified (`workerd` D1/DO/R2 + `4 / 4` hosted GitHub Actions workflows GREEN)
